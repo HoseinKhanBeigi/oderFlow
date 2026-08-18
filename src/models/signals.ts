@@ -16,7 +16,7 @@ export interface LargeParticipantFlow {
 
 export interface WindowSnapshot {
   symbol: string;
-  marketType: 'spot' | 'perp' | 'combined';
+  marketType: 'spot' | 'perp' | 'stock' | 'combined';
   price: number;
   window: WindowId;
 
@@ -74,7 +74,7 @@ export interface WindowSnapshot {
 
 export interface MultiWindowSnapshot {
   symbol: string;
-  marketType: 'spot' | 'perp' | 'combined';
+  marketType: 'spot' | 'perp' | 'stock' | 'combined';
   price: number;
   timestamp: number;
   windows: Partial<Record<WindowId, WindowSnapshot>>;

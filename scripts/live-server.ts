@@ -4,8 +4,9 @@ import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { LiveBinanceFeed } from '../src/live/live-feed.js';
-import { DEFAULT_WATCHLIST } from '../src/live/watchlist.js';
+import { DEFAULT_WATCHLIST, EQUITY_PERP_WATCHLIST } from '../src/live/watchlist.js';
 import { DEFAULT_CONFIG } from '../src/config/defaults.js';
+import type { LiveFeedEvent } from '../src/live/live-feed.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC = join(__dirname, '../public');
@@ -18,12 +19,16 @@ const extra = (process.env.SYMBOLS ?? '')
   .filter(Boolean);
 
 const coins = extra.length
-  ? extra.map((symbol) => ({
-      symbol,
-      label: symbol.replace(/USDT$/, ''),
-      minUsd: DEFAULT_WATCHLIST.find((c) => c.symbol === symbol)?.minUsd ?? 1_000,
-    }))
-  : DEFAULT_WATCHLIST;
+  ? extra.map((symbol) => {
+      const known = [...DEFAULT_WATCHLIST, ...EQUITY_PERP_WATCHLIST].find((c) => c.symbol === symbol);
+      return {
+        symbol,
+        label: known?.label ?? symbol.replace(/USDT$/, ''),
+        minUsd: known?.minUsd ?? 1_000,
+        venue: known?.venue ?? ('crypto' as const),
+      };
+    })
+  : [...DEFAULT_WATCHLIST, ...EQUITY_PERP_WATCHLIST];
 
 const MIME: Record<string, string> = {
   '.html': 'text/html',
@@ -42,7 +47,10 @@ const server = createServer(async (req, res) => {
   if (req.url === '/api/config') {
     json(res, {
       coins,
+      crypto: coins.filter((c) => c.venue === 'crypto'),
+      stocks: coins.filter((c) => c.venue === 'equity'),
       market: MARKET,
+      stockSource: 'binance-perp',
       port: PORT,
       tiers: DEFAULT_CONFIG.largeTradeThresholds,
       relative: {
@@ -74,21 +82,24 @@ const server = createServer(async (req, res) => {
 
 const wss = new WebSocketServer({ server, path: '/ws' });
 
-wss.on('connection', () => {});
-
-feed.on((ev) => {
+function broadcast(ev: LiveFeedEvent): void {
   const raw = JSON.stringify(ev);
   for (const client of wss.clients) {
     if (client.readyState === WebSocket.OPEN) client.send(raw);
   }
-});
+}
 
+feed.on(broadcast);
 feed.start();
 
 server.listen(PORT, () => {
+  const crypto = coins.filter((c) => c.venue === 'crypto');
+  const equity = coins.filter((c) => c.venue === 'equity');
   console.log(`\n  Order Flow Dashboard`);
   console.log(`  http://localhost:${PORT}`);
-  console.log(`  ${coins.map((c) => c.label).join(' · ')} · ${MARKET}\n`);
+  console.log(`  Crypto perp (Binance): ${crypto.map((c) => c.label).join(' · ')}`);
+  console.log(`  Equity perp (Binance): ${equity.map((c) => c.label).join(' · ')}`);
+  console.log(`  SpaceX is not listed on Binance.\n`);
 });
 
 function json(res: ServerResponse, data: unknown): void {

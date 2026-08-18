@@ -11,7 +11,7 @@
 import WebSocket from 'ws';
 import { OrderFlowEngine } from '../src/engine/order-flow-engine.js';
 import { BinanceFuturesAdapter, BinanceSpotAdapter } from '../src/exchange/binance-adapters.js';
-import { BINANCE_FUTURES_WS, BINANCE_SPOT_WS, streamName } from '../src/exchange/types.js';
+import { BINANCE_FUTURES_WS_RAW, BINANCE_SPOT_WS, streamName, unwrapBinancePayload } from '../src/exchange/types.js';
 import { formatQuote, formatTapeTime } from '../src/core/integrity.js';
 import type { MarketTrade } from '../src/models/trade.js';
 import type { BinanceAggTrade, BinanceBookTicker, BinanceTrade } from '../src/exchange/types.js';
@@ -49,11 +49,13 @@ engine.on((ev) => {
   }
 });
 
-const base = MARKET === 'spot' ? BINANCE_SPOT_WS : BINANCE_FUTURES_WS;
 // Futures `@aggTrade` can be unavailable on some networks; `@trade` is the reliable fallback.
 const tradeChannel = MARKET === 'spot' ? 'aggTrade' : 'trade';
 const streams = [streamName(SYMBOL, tradeChannel), streamName(SYMBOL, 'bookTicker')].join('/');
-const url = `${base}?streams=${streams}`;
+const url =
+  MARKET === 'spot'
+    ? `${BINANCE_SPOT_WS}?streams=${streams}`
+    : `${BINANCE_FUTURES_WS_RAW}/${streams}`;
 
 console.log(`${BOLD}Live aggressive flow — Binance ${MARKET}${RESET}`);
 console.log(`Symbol: ${SYMBOL}  |  Stream: ${tradeChannel}  |  Min size: ${formatQuote(MIN_USD)}  |  Ctrl+C to stop\n`);
@@ -63,17 +65,18 @@ console.log(`${DIM}${'─'.repeat(58)}${RESET}`);
 const ws = new WebSocket(url);
 
 ws.on('message', (raw) => {
-  let msg: { stream: string; data: Record<string, unknown> };
+  let parsed: Record<string, unknown>;
   try {
-    msg = JSON.parse(String(raw)) as { stream: string; data: Record<string, unknown> };
+    parsed = JSON.parse(String(raw)) as Record<string, unknown>;
   } catch {
     return;
   }
 
-  const data = msg.data;
-  if (!data?.e) return;
+  const data = unwrapBinancePayload(parsed);
+  if (!data) return;
+  const event = (data.e as string | undefined) ?? (data.b && data.a ? 'bookTicker' : undefined);
 
-  if (data.e === 'aggTrade') {
+  if (event === 'aggTrade') {
     const trade =
       MARKET === 'spot'
         ? spotAdapter.normalizeAggTrade(data as unknown as BinanceAggTrade)
@@ -83,7 +86,7 @@ ws.on('message', (raw) => {
     printAggressiveTrade(trade);
   }
 
-  if (data.e === 'trade') {
+  if (event === 'trade') {
     const trade =
       MARKET === 'spot'
         ? spotAdapter.normalizeTrade(data as unknown as BinanceTrade)
@@ -93,7 +96,7 @@ ws.on('message', (raw) => {
     printAggressiveTrade(trade);
   }
 
-  if (data.e === 'bookTicker') {
+  if (event === 'bookTicker') {
     const book =
       MARKET === 'spot'
         ? spotAdapter.normalizeBookTicker(data as unknown as BinanceBookTicker)

@@ -239,18 +239,21 @@ function applySymbolFilter() {
   renderEvents();
 }
 
-function renderCoinBar(coins) {
-  $('coin-bar').innerHTML = coins
-    .map(
-      (c) => `
+function chipHtml(c) {
+  return `
     <button class="coin-chip ${c.symbol === selectedSymbol ? 'active' : ''}" data-symbol="${c.symbol}" type="button">
       <span class="coin-label">${c.label}</span>
       <span class="coin-delta" id="delta-${c.symbol}">—</span>
-    </button>`,
-    )
-    .join('');
+    </button>`;
+}
 
-  $('coin-bar').addEventListener('click', (e) => {
+function renderCoinBar(assets) {
+  const crypto = assets.filter((c) => c.venue !== 'equity');
+  const stocks = assets.filter((c) => c.venue === 'equity');
+  $('crypto-bar').innerHTML = crypto.map(chipHtml).join('');
+  $('stock-bar').innerHTML = stocks.map(chipHtml).join('');
+
+  document.querySelector('.asset-nav')?.addEventListener('click', (e) => {
     const chip = e.target.closest('.coin-chip');
     if (!chip) return;
     selectedSymbol = chip.dataset.symbol;
@@ -282,17 +285,18 @@ function updateUi() {
 
   $('price').textContent = lastSummary.price > 0 ? `$${fmtPrice(lastSummary.price)}` : '—';
   const coin = config?.coins?.find((c) => c.symbol === lastSummary.symbol);
-  $('symbol-label').textContent = `${coin?.label ?? lastSummary.symbol} · ${lastSummary.market} · tape ≥ ${fmtUsd(coin?.minUsd ?? config?.minUsd ?? 0)}`;
+  const venue =
+    coin?.venue === 'equity' ? 'Binance equity perp' : lastSummary.market === 'perp' ? 'Binance perp' : lastSummary.market;
+  $('symbol-label').textContent = `${coin?.label ?? lastSummary.symbol} · ${venue} · tape ≥ ${fmtUsd(coin?.minUsd ?? 0)}`;
+  $('state-badge').textContent = w.state.replace(/_/g, ' ');
+  $('state-badge').className = `state-badge ${stateClass(w.state)}`;
+  $('state-title').textContent = meta.title;
+  $('state-help').textContent = meta.help;
 
   const ch = w.priceChangePercent;
   const chEl = $('price-change');
   chEl.textContent = `${ch >= 0 ? '+' : ''}${ch.toFixed(3)}% in ${selectedTf}`;
   chEl.className = `price-change ${ch > 0 ? 'up' : ch < 0 ? 'down' : ''}`;
-
-  $('state-badge').textContent = w.state.replace(/_/g, ' ');
-  $('state-badge').className = `state-badge ${stateClass(w.state)}`;
-  $('state-title').textContent = meta.title;
-  $('state-help').textContent = meta.help;
 
   $('flow-window-label').textContent = TF_LABEL[selectedTf] ?? selectedTf;
 

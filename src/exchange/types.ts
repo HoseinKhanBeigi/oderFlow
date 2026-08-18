@@ -77,5 +77,22 @@ export function streamName(symbol: string, channel: string): string {
 
 export const BINANCE_SPOT_WS = 'wss://stream.binance.com:9443/stream';
 export const BINANCE_FUTURES_WS = 'wss://fstream.binance.com/stream';
+/** Single / combined raw path — required for TradFi equity perps (AMZNUSDT, AAPLUSDT, …). */
+export const BINANCE_FUTURES_WS_RAW = 'wss://fstream.binance.com/ws';
+
+/** Combined stream wraps `{ stream, data }`; `/ws/<stream>` sends `data` at the top level. */
+export function unwrapBinancePayload(msg: Record<string, unknown>): Record<string, unknown> | null {
+  const nested = msg.data;
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    return nested as Record<string, unknown>;
+  }
+  if (
+    typeof msg.e === 'string' ||
+    (typeof msg.s === 'string' && (msg.p != null || (msg.b != null && msg.a != null)))
+  ) {
+    return msg;
+  }
+  return null;
+}
 
 export type AdapterMarket = MarketType;

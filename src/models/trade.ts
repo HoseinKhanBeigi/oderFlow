@@ -1,6 +1,6 @@
 export type AggressorSide = 'BUY' | 'SELL';
 
-export type MarketType = 'spot' | 'perp';
+export type MarketType = 'spot' | 'perp' | 'stock';
 
 export type RelativeSizeClass = 'NORMAL' | 'LARGE' | 'VERY_LARGE' | 'EXTREME';
 

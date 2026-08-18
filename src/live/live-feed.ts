@@ -1,7 +1,13 @@
 import WebSocket from 'ws';
 import { OrderFlowEngine } from '../engine/order-flow-engine.js';
 import { BinanceFuturesAdapter, BinanceSpotAdapter } from '../exchange/binance-adapters.js';
-import { BINANCE_FUTURES_WS, BINANCE_SPOT_WS, streamName } from '../exchange/types.js';
+import {
+  BINANCE_FUTURES_WS,
+  BINANCE_FUTURES_WS_RAW,
+  BINANCE_SPOT_WS,
+  streamName,
+  unwrapBinancePayload,
+} from '../exchange/types.js';
 import type { MarketTrade, MarketType } from '../models/trade.js';
 import type { WindowSnapshot } from '../models/signals.js';
 import type { BinanceAggTrade, BinanceBookTicker, BinanceTrade } from '../exchange/types.js';
@@ -79,7 +85,7 @@ export type LiveFeedListener = (event: LiveFeedEvent) => void;
 export class LiveBinanceFeed {
   readonly engine: OrderFlowEngine;
   readonly coins: WatchCoin[];
-  private ws: WebSocket | null = null;
+  private readonly sockets: WebSocket[] = [];
   private closed = false;
   private lastSummary = 0;
   private readonly tradeCount = new Map<string, number>();
@@ -143,85 +149,122 @@ export class LiveBinanceFeed {
 
   stop(): void {
     this.closed = true;
-    this.ws?.close();
-    this.ws = null;
+    this.closeSockets();
     this.emit({ type: 'status', connected: false, message: 'Stopped' });
   }
 
+  private closeSockets(): void {
+    for (const ws of this.sockets.splice(0)) {
+      ws.removeAllListeners();
+      ws.close();
+    }
+  }
+
   private connect(): void {
-    const { market } = this.config;
-    const base = market === 'spot' ? BINANCE_SPOT_WS : BINANCE_FUTURES_WS;
-    const tradeChannel = market === 'spot' ? 'aggTrade' : 'trade';
-    const streams = this.coins.flatMap((c) => [
-      streamName(c.symbol, tradeChannel),
-      streamName(c.symbol, 'bookTicker'),
-    ]);
-    const url = `${base}?streams=${streams.join('/')}`;
-
+    this.closeSockets();
     this.emit({ type: 'status', connected: false, message: 'Connecting…' });
+    const { market } = this.config;
+    const tradeChannel = market === 'spot' ? 'aggTrade' : 'trade';
 
+    if (market === 'spot') {
+      this.openCombined(BINANCE_SPOT_WS, this.coins, tradeChannel, 'spot');
+      return;
+    }
+
+    const crypto = this.coins.filter((c) => c.venue !== 'equity');
+    const equity = this.coins.filter((c) => c.venue === 'equity');
+    if (crypto.length) this.openCombined(BINANCE_FUTURES_WS, crypto, 'trade', 'crypto perp');
+    // TradFi equity perps (https://www.binance.com/en/futures/AMZNUSDT) need /ws/, not combined /stream.
+    if (equity.length) this.openRawCombined(equity, 'trade', 'equity perp');
+  }
+
+  private streamList(coins: WatchCoin[], tradeChannel: string): string {
+    return coins
+      .flatMap((c) => [streamName(c.symbol, tradeChannel), streamName(c.symbol, 'bookTicker')])
+      .join('/');
+  }
+
+  private openCombined(base: string, coins: WatchCoin[], tradeChannel: string, label: string): void {
+    this.openSocket(`${base}?streams=${this.streamList(coins, tradeChannel)}`, label);
+  }
+
+  private openRawCombined(coins: WatchCoin[], tradeChannel: string, label: string): void {
+    this.openSocket(`${BINANCE_FUTURES_WS_RAW}/${this.streamList(coins, tradeChannel)}`, label);
+  }
+
+  private openSocket(url: string, label: string): void {
     const ws = new WebSocket(url);
-    this.ws = ws;
+    this.sockets.push(ws);
 
     ws.on('open', () => {
       this.emit({
         type: 'status',
         connected: true,
-        message: `Live — ${this.coins.length} coins · Binance ${market}`,
+        message: `Live — ${this.coins.length} symbols · Binance ${this.config.market}`,
       });
     });
 
-    ws.on('message', (raw) => {
-      let msg: { data?: Record<string, unknown> };
-      try {
-        msg = JSON.parse(String(raw)) as { data?: Record<string, unknown> };
-      } catch {
-        return;
-      }
-      const data = msg.data;
-      if (!data) return;
-      const event = (data.e as string | undefined) ?? (data.b && data.a ? 'bookTicker' : undefined);
-      const symbol = String(data.s ?? '');
-      if (!symbol) return;
-
-      if (event === 'aggTrade') {
-        const trade =
-          market === 'spot'
-            ? this.spot.normalizeAggTrade(data as unknown as BinanceAggTrade)
-            : this.futures.normalizeAggTrade(data as unknown as BinanceAggTrade);
-        this.handleTrade(trade);
-      }
-
-      if (event === 'trade') {
-        const trade =
-          market === 'spot'
-            ? this.spot.normalizeTrade(data as unknown as BinanceTrade)
-            : this.futures.normalizeTrade(data as unknown as BinanceTrade);
-        this.handleTrade(trade);
-      }
-
-      if (event === 'bookTicker') {
-        const book =
-          market === 'spot'
-            ? this.spot.normalizeBookTicker(data as unknown as BinanceBookTicker)
-            : this.futures.normalizeBookTicker(data as unknown as BinanceBookTicker);
-        if (!this.coins.some((c) => c.symbol === book.symbol)) return;
-        this.engine.ingestBookSnapshot(book);
-      }
-
-      const now = Date.now();
-      if (now - this.lastSummary >= this.config.summaryMs) {
-        this.lastSummary = now;
-        this.emitAllSummaries(now);
-      }
-    });
+    ws.on('message', (raw) => this.onSocketMessage(raw));
 
     ws.on('close', () => {
-      this.emit({ type: 'status', connected: false, message: 'Disconnected — reconnecting…' });
-      if (!this.closed) setTimeout(() => this.connect(), 2_000);
+      const idx = this.sockets.indexOf(ws);
+      if (idx >= 0) this.sockets.splice(idx, 1);
+      if (this.closed) return;
+      if (this.sockets.length === 0) {
+        this.emit({ type: 'status', connected: false, message: `Disconnected (${label}) — reconnecting…` });
+      }
+      setTimeout(() => {
+        if (!this.closed) this.openSocket(url, label);
+      }, 2_000);
     });
 
     ws.on('error', () => ws.close());
+  }
+
+  private onSocketMessage(raw: WebSocket.RawData): void {
+    const { market } = this.config;
+    let msg: Record<string, unknown>;
+    try {
+      msg = JSON.parse(String(raw)) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    const data = unwrapBinancePayload(msg);
+    if (!data) return;
+    const event = (data.e as string | undefined) ?? (data.b && data.a ? 'bookTicker' : undefined);
+    const symbol = String(data.s ?? '');
+    if (!symbol) return;
+
+    if (event === 'aggTrade') {
+      const trade =
+        market === 'spot'
+          ? this.spot.normalizeAggTrade(data as unknown as BinanceAggTrade)
+          : this.futures.normalizeAggTrade(data as unknown as BinanceAggTrade);
+      this.handleTrade(trade);
+    }
+
+    if (event === 'trade') {
+      const trade =
+        market === 'spot'
+          ? this.spot.normalizeTrade(data as unknown as BinanceTrade)
+          : this.futures.normalizeTrade(data as unknown as BinanceTrade);
+      this.handleTrade(trade);
+    }
+
+    if (event === 'bookTicker') {
+      const book =
+        market === 'spot'
+          ? this.spot.normalizeBookTicker(data as unknown as BinanceBookTicker)
+          : this.futures.normalizeBookTicker(data as unknown as BinanceBookTicker);
+      if (!this.coins.some((c) => c.symbol === book.symbol)) return;
+      this.engine.ingestBookSnapshot(book);
+    }
+
+    const now = Date.now();
+    if (now - this.lastSummary >= this.config.summaryMs) {
+      this.lastSummary = now;
+      this.emitAllSummaries(now);
+    }
   }
 
   private handleTrade(trade: MarketTrade): void {
