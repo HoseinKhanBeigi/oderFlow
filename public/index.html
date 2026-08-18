@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Order Flow — Live</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <header class="header">
+    <div class="brand">
+      <span class="logo">◉</span>
+      <div>
+        <h1>Order Flow</h1>
+        <p class="subtitle">Live aggressive execution</p>
+      </div>
+    </div>
+    <div class="header-meta">
+      <div id="status" class="status connecting">Connecting…</div>
+      <div id="symbol-label" class="symbol-label">—</div>
+    </div>
+  </header>
+
+  <main class="grid">
+    <section class="panel hero">
+      <div class="price-block">
+        <span class="label">Price</span>
+        <span id="price" class="price">—</span>
+      </div>
+      <div id="state-badge" class="state-badge">NO_SIGNAL</div>
+      <div class="score-row">
+        <div class="metric">
+          <span class="label">Direction score</span>
+          <span id="score" class="value">0</span>
+        </div>
+        <div class="metric">
+          <span class="label">Confidence</span>
+          <span id="confidence" class="value">—</span>
+        </div>
+        <div class="metric">
+          <span class="label">Impact</span>
+          <span id="impact" class="value">—</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel windows">
+      <h2>Windows</h2>
+      <div class="window-cards" id="window-cards"></div>
+    </section>
+
+    <section class="panel flow-bar">
+      <h2>10s aggressive flow</h2>
+      <div class="bar-wrap">
+        <div id="buy-bar" class="bar buy" style="width:50%"></div>
+        <div id="sell-bar" class="bar sell" style="width:50%"></div>
+      </div>
+      <div class="flow-stats">
+        <div class="flow-stat buy">
+          <span class="label">Buy</span>
+          <span id="buy-vol" class="value">$0</span>
+        </div>
+        <div class="flow-stat delta">
+          <span class="label">Delta</span>
+          <span id="delta" class="value">$0</span>
+        </div>
+        <div class="flow-stat sell">
+          <span class="label">Sell</span>
+          <span id="sell-vol" class="value">$0</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel tape-panel">
+      <div class="panel-head">
+        <h2>Aggressive tape</h2>
+        <span id="tape-count" class="muted">0 prints</span>
+      </div>
+      <div class="tape-header">
+        <span>Time</span><span>Side</span><span>Price</span><span>Size</span><span>Tag</span>
+      </div>
+      <div id="tape" class="tape"></div>
+    </section>
+
+    <section class="panel alerts-panel">
+      <h2>Events</h2>
+      <div id="events" class="events"></div>
+    </section>
+  </main>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

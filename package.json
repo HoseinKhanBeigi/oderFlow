@@ -1,0 +1,31 @@
+{
+  "name": "order-flow",
+  "version": "0.1.0",
+  "description": "Real-time crypto market microstructure engine for large aggressive order flow",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo": "tsx scripts/demo-simulated.ts",
+    "demo:live": "tsx scripts/demo-live.ts",
+    "live": "tsx scripts/demo-live.ts",
+    "dashboard": "tsx scripts/live-server.ts",
+    "ui": "tsx scripts/live-server.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.2"
+  }
+}

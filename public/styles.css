@@ -1,0 +1,225 @@
+:root {
+  --bg: #0a0c10;
+  --panel: #12151c;
+  --border: #1e2430;
+  --text: #e8eaed;
+  --muted: #6b7280;
+  --buy: #22c55e;
+  --buy-dim: rgba(34, 197, 94, 0.15);
+  --sell: #ef4444;
+  --sell-dim: rgba(239, 68, 68, 0.15);
+  --accent: #3b82f6;
+  --warn: #f59e0b;
+  --font: 'Inter', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.4;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.brand { display: flex; align-items: center; gap: 0.75rem; }
+.logo { color: var(--accent); font-size: 1.5rem; }
+.brand h1 { font-size: 1.1rem; font-weight: 600; }
+.subtitle { font-size: 0.75rem; color: var(--muted); }
+
+.header-meta { text-align: right; }
+.symbol-label { font-family: var(--mono); font-size: 0.85rem; color: var(--muted); margin-top: 0.25rem; }
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: var(--border);
+}
+.status::before {
+  content: '';
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.status.live::before { background: var(--buy); box-shadow: 0 0 8px var(--buy); }
+.status.connecting::before { background: var(--warn); animation: pulse 1s infinite; }
+.status.offline::before { background: var(--sell); }
+
+@keyframes pulse { 50% { opacity: 0.4; } }
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto 1fr;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  max-width: 1400px;
+  margin: 0 auto;
+  height: calc(100vh - 72px);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+}
+
+.panel h2 {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+}
+
+.hero {
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.price-block .label { font-size: 0.7rem; color: var(--muted); display: block; }
+.price {
+  font-family: var(--mono);
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+.state-badge {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  background: var(--border);
+  width: fit-content;
+}
+.state-badge.buy-flow { background: var(--buy-dim); color: var(--buy); }
+.state-badge.sell-flow { background: var(--sell-dim); color: var(--sell); }
+.state-badge.absorption { background: rgba(245, 158, 11, 0.15); color: var(--warn); }
+.state-badge.burst { background: rgba(59, 130, 246, 0.15); color: var(--accent); }
+
+.score-row { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+.metric .label { font-size: 0.65rem; color: var(--muted); display: block; }
+.metric .value { font-family: var(--mono); font-size: 1rem; font-weight: 600; }
+
+.windows { grid-column: 2; }
+.window-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; }
+.window-card {
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+}
+.window-card .win-label { font-size: 0.65rem; color: var(--muted); }
+.window-card .win-state { font-family: var(--mono); font-size: 0.7rem; margin: 0.25rem 0; }
+.window-card .win-delta { font-family: var(--mono); font-size: 0.8rem; font-weight: 600; }
+
+.flow-bar { grid-column: 1 / -1; }
+.bar-wrap {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg);
+  margin-bottom: 0.75rem;
+}
+.bar.buy { background: var(--buy); transition: width 0.4s ease; }
+.bar.sell { background: var(--sell); transition: width 0.4s ease; }
+
+.flow-stats { display: flex; justify-content: space-between; }
+.flow-stat .label { font-size: 0.65rem; color: var(--muted); display: block; }
+.flow-stat .value { font-family: var(--mono); font-size: 1.1rem; font-weight: 600; }
+.flow-stat.buy .value { color: var(--buy); }
+.flow-stat.sell .value { color: var(--sell); }
+.flow-stat.delta .value.pos { color: var(--buy); }
+.flow-stat.delta .value.neg { color: var(--sell); }
+
+.tape-panel {
+  grid-column: 1;
+  grid-row: 3;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+.panel-head h2 { margin: 0; }
+.muted { font-size: 0.75rem; color: var(--muted); }
+
+.tape-header, .tape-row {
+  display: grid;
+  grid-template-columns: 72px 56px 1fr 80px 100px;
+  gap: 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  padding: 0.35rem 0;
+}
+
+.tape-header { color: var(--muted); border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+
+.tape {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.tape-row {
+  border-bottom: 1px solid rgba(30, 36, 48, 0.5);
+  animation: fadeIn 0.25s ease;
+}
+.tape-row.buy { background: linear-gradient(90deg, var(--buy-dim) 0%, transparent 60%); }
+.tape-row.sell { background: linear-gradient(90deg, var(--sell-dim) 0%, transparent 60%); }
+.tape-row .side-buy { color: var(--buy); font-weight: 600; }
+.tape-row .side-sell { color: var(--sell); font-weight: 600; }
+.tape-row .tag { color: var(--muted); font-size: 0.7rem; }
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+.alerts-panel {
+  grid-column: 2;
+  grid-row: 3;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.events {
+  flex: 1;
+  overflow-y: auto;
+  font-size: 0.8rem;
+}
+
+.event {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+  animation: fadeIn 0.3s ease;
+}
+.event .time { color: var(--muted); font-family: var(--mono); font-size: 0.7rem; }
+.event.burst { color: var(--accent); }
+.event.alert { color: var(--warn); }
+
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; height: auto; }
+  .hero, .windows, .flow-bar, .tape-panel, .alerts-panel { grid-column: 1; grid-row: auto; }
+  .tape-panel, .alerts-panel { min-height: 280px; }
+}
