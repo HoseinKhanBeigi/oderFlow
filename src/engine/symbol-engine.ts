@@ -41,9 +41,9 @@ export type EngineListener = (event: EngineEvent) => void;
 
 export type EngineEvent =
   | { kind: 'large_trade'; event: LargeAggressiveTradeEvent }
-  | { kind: 'burst'; burst: FlowBurst }
-  | { kind: 'cluster'; cluster: LargeTradeCluster }
-  | { kind: 'iceberg_like'; flag: IcebergLikeFlag }
+  | { kind: 'burst'; burst: FlowBurst; symbol: string }
+  | { kind: 'cluster'; cluster: LargeTradeCluster; symbol: string }
+  | { kind: 'iceberg_like'; flag: IcebergLikeFlag; symbol: string }
   | { kind: 'alert'; alert: AlertEvent }
   | { kind: 'snapshot'; snapshot: WindowSnapshot };
 
@@ -164,10 +164,10 @@ export class SymbolEngine {
     const burst = this.bursts.onTrade(trade, relative.vsMedian);
     if (burst) {
       this.lastBurst = burst;
-      this.emit({ kind: 'burst', burst });
+      this.emit({ kind: 'burst', burst, symbol: this.symbol });
     }
     const cluster = this.clusters.onTrade(trade, isLarge);
-    if (cluster) this.emit({ kind: 'cluster', cluster });
+    if (cluster) this.emit({ kind: 'cluster', cluster, symbol: this.symbol });
 
     this.trackSamePrice(trade);
 
@@ -175,7 +175,7 @@ export class SymbolEngine {
       const flag = this.iceberg.onTrade(trade, this.book);
       if (flag) {
         this.lastIceberg = flag;
-        this.emit({ kind: 'iceberg_like', flag });
+        this.emit({ kind: 'iceberg_like', flag, symbol: this.symbol });
       }
     }
 

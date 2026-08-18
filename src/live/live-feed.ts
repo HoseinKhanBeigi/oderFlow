@@ -5,22 +5,24 @@ import { BINANCE_FUTURES_WS, BINANCE_SPOT_WS, streamName } from '../exchange/typ
 import type { MarketTrade, MarketType } from '../models/trade.js';
 import type { WindowSnapshot } from '../models/signals.js';
 import type { BinanceAggTrade, BinanceBookTicker, BinanceTrade } from '../exchange/types.js';
-import { SymbolEngine } from '../engine/symbol-engine.js';
+import { DEFAULT_WATCHLIST, minUsdFor, type WatchCoin } from './watchlist.js';
 
 export interface LiveFeedConfig {
-  symbol: string;
+  coins: WatchCoin[];
   market: MarketType;
-  minUsd: number;
   summaryMs: number;
 }
 
 export interface TapeItem {
   id: string;
+  symbol: string;
   timestamp: number;
   side: 'BUY' | 'SELL';
   price: number;
   quoteValue: number;
   tag: string;
+  relativeClass: string;
+  tier: number | null;
 }
 
 export interface LiveSummary {
@@ -29,41 +31,89 @@ export interface LiveSummary {
   market: MarketType;
   price: number;
   tradeCount: number;
-  windows: {
-    '10s': WindowSnapshot;
-    '1m': WindowSnapshot;
-    '5m': WindowSnapshot;
-  };
+  windows: Record<'10s' | '30s' | '1m' | '5m' | '15m', WindowSnapshot>;
+}
+
+export interface CoinOverview {
+  symbol: string;
+  label: string;
+  price: number;
+  delta10s: number;
+  state10s: string;
 }
 
 export type LiveFeedEvent =
   | { type: 'status'; connected: boolean; message: string }
   | { type: 'trade'; trade: TapeItem }
   | { type: 'summary'; summary: LiveSummary }
-  | { type: 'burst'; side: 'BUY' | 'SELL'; totalQuoteValue: number; tradeCount: number; durationMs: number }
-  | { type: 'alert'; alertType: string; message: string };
+  | { type: 'overview'; coins: CoinOverview[] }
+  | {
+      type: 'burst';
+      symbol: string;
+      side: 'BUY' | 'SELL';
+      totalQuoteValue: number;
+      tradeCount: number;
+      durationMs: number;
+    }
+  | { type: 'alert'; symbol: string; alertType: string; message: string }
+  | {
+      type: 'large_trade';
+      symbol: string;
+      side: 'BUY' | 'SELL';
+      quoteValue: number;
+      price: number;
+      tier: number | null;
+      relativeClass: string;
+    }
+  | {
+      type: 'state_change';
+      symbol: string;
+      window: string;
+      state: string;
+      delta: number;
+      previousState: string | null;
+    };
 
 export type LiveFeedListener = (event: LiveFeedEvent) => void;
 
 export class LiveBinanceFeed {
   readonly engine: OrderFlowEngine;
-  readonly sym: SymbolEngine;
+  readonly coins: WatchCoin[];
   private ws: WebSocket | null = null;
   private closed = false;
   private lastSummary = 0;
-  private tradeCount = 0;
+  private readonly tradeCount = new Map<string, number>();
+  private readonly lastStates = new Map<string, Partial<Record<'10s' | '1m' | '5m', string>>>();
   private readonly listeners = new Set<LiveFeedListener>();
   private readonly spot = new BinanceSpotAdapter();
   private readonly futures = new BinanceFuturesAdapter();
 
   constructor(readonly config: LiveFeedConfig) {
     this.engine = new OrderFlowEngine();
-    this.sym = this.engine.getSymbol(config.symbol, config.market);
+    this.coins = config.coins;
+    for (const coin of this.coins) {
+      this.engine.getSymbol(coin.symbol, config.market);
+      this.tradeCount.set(coin.symbol, 0);
+      this.lastStates.set(coin.symbol, {});
+    }
 
     this.engine.on((ev) => {
+      if (ev.kind === 'large_trade') {
+        const e = ev.event;
+        this.emit({
+          type: 'large_trade',
+          symbol: e.symbol,
+          side: e.type.includes('BUY') ? 'BUY' : 'SELL',
+          quoteValue: e.quoteValue,
+          price: e.price,
+          tier: e.tier,
+          relativeClass: e.relativeClass,
+        });
+      }
       if (ev.kind === 'burst') {
         this.emit({
           type: 'burst',
+          symbol: ev.symbol,
           side: ev.burst.side,
           totalQuoteValue: ev.burst.totalQuoteValue,
           tradeCount: ev.burst.tradeCount,
@@ -71,7 +121,12 @@ export class LiveBinanceFeed {
         });
       }
       if (ev.kind === 'alert') {
-        this.emit({ type: 'alert', alertType: ev.alert.type, message: ev.alert.message });
+        this.emit({
+          type: 'alert',
+          symbol: ev.alert.symbol,
+          alertType: ev.alert.type,
+          message: ev.alert.message,
+        });
       }
     });
   }
@@ -94,11 +149,14 @@ export class LiveBinanceFeed {
   }
 
   private connect(): void {
-    const { symbol, market } = this.config;
+    const { market } = this.config;
     const base = market === 'spot' ? BINANCE_SPOT_WS : BINANCE_FUTURES_WS;
     const tradeChannel = market === 'spot' ? 'aggTrade' : 'trade';
-    const streams = [streamName(symbol, tradeChannel), streamName(symbol, 'bookTicker')].join('/');
-    const url = `${base}?streams=${streams}`;
+    const streams = this.coins.flatMap((c) => [
+      streamName(c.symbol, tradeChannel),
+      streamName(c.symbol, 'bookTicker'),
+    ]);
+    const url = `${base}?streams=${streams.join('/')}`;
 
     this.emit({ type: 'status', connected: false, message: 'Connecting…' });
 
@@ -109,7 +167,7 @@ export class LiveBinanceFeed {
       this.emit({
         type: 'status',
         connected: true,
-        message: `Live — Binance ${market} (${tradeChannel})`,
+        message: `Live — ${this.coins.length} coins · Binance ${market}`,
       });
     });
 
@@ -121,9 +179,12 @@ export class LiveBinanceFeed {
         return;
       }
       const data = msg.data;
-      if (!data?.e) return;
+      if (!data) return;
+      const event = (data.e as string | undefined) ?? (data.b && data.a ? 'bookTicker' : undefined);
+      const symbol = String(data.s ?? '');
+      if (!symbol) return;
 
-      if (data.e === 'aggTrade') {
+      if (event === 'aggTrade') {
         const trade =
           market === 'spot'
             ? this.spot.normalizeAggTrade(data as unknown as BinanceAggTrade)
@@ -131,7 +192,7 @@ export class LiveBinanceFeed {
         this.handleTrade(trade);
       }
 
-      if (data.e === 'trade') {
+      if (event === 'trade') {
         const trade =
           market === 'spot'
             ? this.spot.normalizeTrade(data as unknown as BinanceTrade)
@@ -139,18 +200,19 @@ export class LiveBinanceFeed {
         this.handleTrade(trade);
       }
 
-      if (data.e === 'bookTicker') {
+      if (event === 'bookTicker') {
         const book =
           market === 'spot'
             ? this.spot.normalizeBookTicker(data as unknown as BinanceBookTicker)
             : this.futures.normalizeBookTicker(data as unknown as BinanceBookTicker);
+        if (!this.coins.some((c) => c.symbol === book.symbol)) return;
         this.engine.ingestBookSnapshot(book);
       }
 
       const now = Date.now();
       if (now - this.lastSummary >= this.config.summaryMs) {
         this.lastSummary = now;
-        this.emitSummary(now);
+        this.emitAllSummaries(now);
       }
     });
 
@@ -163,45 +225,89 @@ export class LiveBinanceFeed {
   }
 
   private handleTrade(trade: MarketTrade): void {
+    if (!this.coins.some((c) => c.symbol === trade.symbol)) return;
     this.engine.ingestTrade(trade);
-    this.tradeCount += 1;
+    const next = (this.tradeCount.get(trade.symbol) ?? 0) + 1;
+    this.tradeCount.set(trade.symbol, next);
 
-    if (trade.quoteValue < this.config.minUsd) return;
+    const floor = minUsdFor(trade.symbol, this.coins);
+    if (trade.quoteValue < floor) return;
 
-    const rel = this.sym.largeTrades.relativeSize(trade.quoteValue);
-    const tier = this.sym.largeTrades.absoluteTier(trade.quoteValue);
+    const engine = this.engine.getSymbol(trade.symbol, this.config.market);
+    const rel = engine.largeTrades.relativeSize(trade.quoteValue);
+    const tier = engine.largeTrades.absoluteTier(trade.quoteValue);
     let tag = rel.classification !== 'NORMAL' ? rel.classification : '';
     if (tier) tag = tag ? `${tag} T${tier}` : `T${tier}`;
 
     this.emit({
       type: 'trade',
       trade: {
-        id: `${trade.tradeId ?? trade.timestamp}-${this.tradeCount}`,
+        id: `${trade.symbol}-${trade.tradeId ?? trade.timestamp}-${next}`,
+        symbol: trade.symbol,
         timestamp: trade.timestamp,
         side: trade.side,
         price: trade.price,
         quoteValue: trade.quoteValue,
         tag,
+        relativeClass: rel.classification,
+        tier,
       },
     });
   }
 
-  private emitSummary(now: number): void {
-    this.emit({
-      type: 'summary',
-      summary: {
-        timestamp: now,
-        symbol: this.config.symbol,
-        market: this.config.market,
-        price: this.sym.snapshot('10s', now).price,
-        tradeCount: this.tradeCount,
-        windows: {
-          '10s': this.sym.snapshot('10s', now),
-          '1m': this.sym.snapshot('1m', now),
-          '5m': this.sym.snapshot('5m', now),
+  private emitAllSummaries(now: number): void {
+    const overview: CoinOverview[] = [];
+
+    for (const coin of this.coins) {
+      const engine = this.engine.getSymbol(coin.symbol, this.config.market);
+      const windows = {
+        '10s': engine.snapshot('10s', now),
+        '30s': engine.snapshot('30s', now),
+        '1m': engine.snapshot('1m', now),
+        '5m': engine.snapshot('5m', now),
+        '15m': engine.snapshot('15m', now),
+      };
+
+      const states = this.lastStates.get(coin.symbol) ?? {};
+      for (const key of ['10s', '1m', '5m'] as const) {
+        const w = windows[key];
+        const prev = states[key] ?? null;
+        if (w.state !== prev && w.state !== 'NO_SIGNAL') {
+          this.emit({
+            type: 'state_change',
+            symbol: coin.symbol,
+            window: key,
+            state: w.state,
+            delta: w.delta,
+            previousState: prev,
+          });
+        }
+        states[key] = w.state;
+      }
+      this.lastStates.set(coin.symbol, states);
+
+      overview.push({
+        symbol: coin.symbol,
+        label: coin.label,
+        price: windows['10s'].price,
+        delta10s: windows['10s'].delta,
+        state10s: windows['10s'].state,
+      });
+
+      this.emit({
+        type: 'summary',
+        summary: {
+          timestamp: now,
+          symbol: coin.symbol,
+          market: this.config.market,
+          price: windows['10s'].price,
+          tradeCount: this.tradeCount.get(coin.symbol) ?? 0,
+          windows,
         },
-      },
-    });
+      });
+    }
+
+    this.emit({ type: 'overview', coins: overview });
   }
 
   private emit(event: LiveFeedEvent): void {
@@ -209,6 +315,7 @@ export class LiveBinanceFeed {
   }
 }
 
+export { DEFAULT_WATCHLIST };
 export function defaultMinUsd(symbol: string): number {
-  return symbol.startsWith('BTC') ? 10_000 : 5_000;
+  return minUsdFor(symbol);
 }

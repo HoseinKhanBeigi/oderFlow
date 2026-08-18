@@ -14,7 +14,7 @@
       <span class="logo">◉</span>
       <div>
         <h1>Order Flow</h1>
-        <p class="subtitle">Live aggressive execution</p>
+        <p class="subtitle">Who is aggressively hitting the book right now?</p>
       </div>
     </div>
     <div class="header-meta">
@@ -23,70 +23,150 @@
     </div>
   </header>
 
-  <main class="grid">
-    <section class="panel hero">
-      <div class="price-block">
-        <span class="label">Price</span>
-        <span id="price" class="price">—</span>
-      </div>
-      <div id="state-badge" class="state-badge">NO_SIGNAL</div>
-      <div class="score-row">
-        <div class="metric">
-          <span class="label">Direction score</span>
-          <span id="score" class="value">0</span>
+  <nav class="coin-bar" id="coin-bar"></nav>
+
+  <main class="layout">
+    <!-- Signal panel -->
+    <section class="panel signal-panel">
+      <div class="signal-top">
+        <div>
+          <span class="label">Price</span>
+          <div id="price" class="price">—</div>
+          <div id="price-change" class="price-change">—</div>
         </div>
-        <div class="metric">
+        <div class="signal-badge-wrap">
+          <div id="state-badge" class="state-badge">NO_SIGNAL</div>
+          <div id="state-title" class="state-title">Waiting for data…</div>
+        </div>
+      </div>
+      <p id="state-help" class="state-help">
+        Aggressive flow measures taker trades — buyers crossing the ask or sellers crossing the bid.
+      </p>
+
+      <div class="tf-tabs" id="tf-tabs">
+        <button class="tf-tab active" data-tf="10s">10s impulse</button>
+        <button class="tf-tab" data-tf="1m">1m</button>
+        <button class="tf-tab" data-tf="5m">5m trend</button>
+        <button class="tf-tab" data-tf="15m">15m</button>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <span class="label">Net delta</span>
+          <span id="delta" class="value">$0</span>
+          <span id="delta-pct" class="sub">—</span>
+        </div>
+        <div class="metric-card">
+          <span class="label">Direction</span>
+          <span id="score" class="value">0</span>
+          <span class="sub">−100 sell … +100 buy</span>
+        </div>
+        <div class="metric-card">
+          <span class="label">Price response</span>
+          <span id="impact" class="value">—</span>
+          <span id="impact-help" class="sub">Did flow move price?</span>
+        </div>
+        <div class="metric-card">
           <span class="label">Confidence</span>
           <span id="confidence" class="value">—</span>
+          <span id="flow-multiple" class="sub">—</span>
         </div>
-        <div class="metric">
-          <span class="label">Impact</span>
-          <span id="impact" class="value">—</span>
-        </div>
+      </div>
+
+      <div id="absorption-box" class="absorption-box hidden">
+        <strong id="absorption-title">Absorption detected</strong>
+        <p id="absorption-text"></p>
       </div>
     </section>
 
-    <section class="panel windows">
-      <h2>Windows</h2>
-      <div class="window-cards" id="window-cards"></div>
-    </section>
-
-    <section class="panel flow-bar">
-      <h2>10s aggressive flow</h2>
+    <!-- Flow bar -->
+    <section class="panel flow-panel">
+      <div class="panel-head">
+        <h2>Aggressive volume</h2>
+        <span id="flow-window-label" class="muted">last 10 seconds</span>
+      </div>
+      <div class="bar-labels">
+        <span class="buy-label">Buyers hitting ASK</span>
+        <span class="sell-label">Sellers hitting BID</span>
+      </div>
       <div class="bar-wrap">
         <div id="buy-bar" class="bar buy" style="width:50%"></div>
         <div id="sell-bar" class="bar sell" style="width:50%"></div>
       </div>
       <div class="flow-stats">
         <div class="flow-stat buy">
-          <span class="label">Buy</span>
+          <span class="label">Aggressive buy</span>
           <span id="buy-vol" class="value">$0</span>
         </div>
-        <div class="flow-stat delta">
-          <span class="label">Delta</span>
-          <span id="delta" class="value">$0</span>
-        </div>
         <div class="flow-stat sell">
-          <span class="label">Sell</span>
+          <span class="label">Aggressive sell</span>
           <span id="sell-vol" class="value">$0</span>
         </div>
       </div>
+
+      <h2 class="section-gap">Impulse vs sustained</h2>
+      <p class="hint">Short window = burst now. Long window = is it still going?</p>
+      <div class="compare-row" id="compare-row"></div>
     </section>
 
-    <section class="panel tape-panel">
-      <div class="panel-head">
-        <h2>Aggressive tape</h2>
-        <span id="tape-count" class="muted">0 prints</span>
-      </div>
-      <div class="tape-header">
-        <span>Time</span><span>Side</span><span>Price</span><span>Size</span><span>Tag</span>
-      </div>
-      <div id="tape" class="tape"></div>
-    </section>
+    <!-- Bottom row: tape + events -->
+    <div class="bottom-row">
+      <section class="panel tape-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Live tape</h2>
+            <p class="hint">Aggressive prints for the selected coin</p>
+          </div>
+          <span id="tape-count" class="muted">0 shown</span>
+        </div>
+        <div class="tape-header">
+          <span>Time</span>
+          <span>Action</span>
+          <span>Price</span>
+          <span>Notional</span>
+          <span>Flags</span>
+        </div>
+        <div id="tape" class="tape"></div>
+      </section>
 
-    <section class="panel alerts-panel">
-      <h2>Events</h2>
-      <div id="events" class="events"></div>
+      <section class="panel events-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Live events</h2>
+            <p class="hint">Bursts, large prints, and state changes for this coin</p>
+          </div>
+          <span id="events-count" class="muted">0 events</span>
+        </div>
+        <div id="events" class="events"></div>
+      </section>
+    </div>
+
+    <!-- Legend -->
+    <section class="panel legend-panel">
+      <h2>How to read this</h2>
+      <div class="legend-grid">
+        <div class="legend-block">
+          <h3>Side</h3>
+          <p><span class="pill buy">Aggressive BUY</span> Buyer crossed spread → hit resting sellers on the ask.</p>
+          <p><span class="pill sell">Aggressive SELL</span> Seller crossed spread → hit resting buyers on the bid.</p>
+        </div>
+        <div class="legend-block">
+          <h3>Size tiers (fixed $)</h3>
+          <ul id="tier-legend" class="legend-list"></ul>
+        </div>
+        <div class="legend-block">
+          <h3>Relative flags</h3>
+          <ul class="legend-list">
+            <li><strong>LARGE</strong> — top ~5%</li>
+            <li><strong>VERY_LARGE</strong> — top ~1%</li>
+            <li><strong>EXTREME</strong> — top ~0.1%</li>
+          </ul>
+        </div>
+        <div class="legend-block">
+          <h3>Events</h3>
+          <p>Bursts, large prints, market state changes, and absorption alerts appear in the events panel.</p>
+        </div>
+      </div>
     </section>
   </main>
 

@@ -3,16 +3,27 @@ import { readFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
-import { LiveBinanceFeed, defaultMinUsd } from '../src/live/live-feed.js';
-import type { LiveFeedEvent } from '../src/live/live-feed.js';
+import { LiveBinanceFeed } from '../src/live/live-feed.js';
+import { DEFAULT_WATCHLIST } from '../src/live/watchlist.js';
+import { DEFAULT_CONFIG } from '../src/config/defaults.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC = join(__dirname, '../public');
 const PORT = Number(process.env.PORT ?? 3456);
-
-const SYMBOL = (process.env.SYMBOL ?? 'BTCUSDT').toUpperCase();
 const MARKET = (process.env.MARKET ?? 'perp').toLowerCase() === 'spot' ? 'spot' : 'perp';
-const MIN_USD = Number(process.env.MIN_USD ?? defaultMinUsd(SYMBOL));
+
+const extra = (process.env.SYMBOLS ?? '')
+  .split(',')
+  .map((s) => s.trim().toUpperCase())
+  .filter(Boolean);
+
+const coins = extra.length
+  ? extra.map((symbol) => ({
+      symbol,
+      label: symbol.replace(/USDT$/, ''),
+      minUsd: DEFAULT_WATCHLIST.find((c) => c.symbol === symbol)?.minUsd ?? 1_000,
+    }))
+  : DEFAULT_WATCHLIST;
 
 const MIME: Record<string, string> = {
   '.html': 'text/html',
@@ -22,15 +33,24 @@ const MIME: Record<string, string> = {
 };
 
 const feed = new LiveBinanceFeed({
-  symbol: SYMBOL,
+  coins,
   market: MARKET as 'spot' | 'perp',
-  minUsd: MIN_USD,
   summaryMs: 2_000,
 });
 
 const server = createServer(async (req, res) => {
   if (req.url === '/api/config') {
-    json(res, { symbol: SYMBOL, market: MARKET, minUsd: MIN_USD, port: PORT });
+    json(res, {
+      coins,
+      market: MARKET,
+      port: PORT,
+      tiers: DEFAULT_CONFIG.largeTradeThresholds,
+      relative: {
+        large: DEFAULT_CONFIG.relative.largePercentile,
+        veryLarge: DEFAULT_CONFIG.relative.veryLargePercentile,
+        extreme: DEFAULT_CONFIG.relative.extremePercentile,
+      },
+    });
     return;
   }
 
@@ -54,9 +74,7 @@ const server = createServer(async (req, res) => {
 
 const wss = new WebSocketServer({ server, path: '/ws' });
 
-wss.on('connection', () => {
-  // Events broadcast globally via feed.on below
-});
+wss.on('connection', () => {});
 
 feed.on((ev) => {
   const raw = JSON.stringify(ev);
@@ -70,7 +88,7 @@ feed.start();
 server.listen(PORT, () => {
   console.log(`\n  Order Flow Dashboard`);
   console.log(`  http://localhost:${PORT}`);
-  console.log(`  ${SYMBOL} · ${MARKET} · min ${MIN_USD >= 1_000_000 ? `$${MIN_USD / 1_000_000}M` : MIN_USD >= 1_000 ? `$${MIN_USD / 1_000}K` : `$${MIN_USD}`}\n`);
+  console.log(`  ${coins.map((c) => c.label).join(' · ')} · ${MARKET}\n`);
 });
 
 function json(res: ServerResponse, data: unknown): void {

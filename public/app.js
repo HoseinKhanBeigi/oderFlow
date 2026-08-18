@@ -1,10 +1,48 @@
 const $ = (id) => document.getElementById(id);
 
-const MAX_TAPE = 200;
-const MAX_EVENTS = 50;
+const MAX_TAPE = 150;
+const MAX_EVENTS = 80;
+let eventCount = 0;
 
-let tapeCount = 0;
+let selectedTf = '10s';
+let selectedSymbol = 'BTCUSDT';
+let lastSummary = null;
+const summaries = {};
+const tapeBySymbol = {};
+const eventsBySymbol = {};
+let config = null;
 const seenTradeIds = new Set();
+
+const STATE_META = {
+  NO_SIGNAL: { title: 'Normal activity', help: 'Nothing unusually large or persistent in this window.' },
+  LARGE_BUY_FLOW: { title: 'Heavy aggressive buying', help: 'Large buyers are hitting the ask. Check if price is actually rising (effective) or stalling (absorption).' },
+  LARGE_SELL_FLOW: { title: 'Heavy aggressive selling', help: 'Large sellers are hitting the bid. Check price response.' },
+  PERSISTENT_BUY_FLOW: { title: 'Sustained buying pressure', help: 'Aggressive buying continued over this window — not just one print.' },
+  PERSISTENT_SELL_FLOW: { title: 'Sustained selling pressure', help: 'Aggressive selling continued over this window.' },
+  BUY_BURST: { title: 'Buy burst', help: 'Many aggressive buys clustered in seconds — could be one order split into pieces.' },
+  SELL_BURST: { title: 'Sell burst', help: 'Many aggressive sells clustered in seconds.' },
+  BUYER_ABSORPTION: { title: 'Buyer absorption', help: 'Lots of aggressive buying but price barely rose. Passive sellers may be absorbing buyers.' },
+  SELLER_ABSORPTION: { title: 'Seller absorption', help: 'Lots of aggressive selling but price barely fell. Passive buyers may be absorbing sellers.' },
+  LIQUIDITY_VACUUM_UP: { title: 'Thin asks — price jumping', help: 'Buyers consuming limited ask liquidity; price moving up quickly.' },
+  LIQUIDITY_VACUUM_DOWN: { title: 'Thin bids — price dropping', help: 'Sellers consuming limited bid liquidity; price moving down quickly.' },
+  FLOW_EXHAUSTION_BUY: { title: 'Buy flow fading', help: 'Strong buying was happening but is now decelerating.' },
+  FLOW_EXHAUSTION_SELL: { title: 'Sell flow fading', help: 'Strong selling was happening but is now decelerating.' },
+};
+
+const IMPACT_HELP = {
+  LOW: 'Flow did not move price much — possible absorption',
+  NORMAL: 'Typical price response for this asset',
+  HIGH: 'Price moved more than usual for this flow',
+  EXTREME: 'Unusually strong price reaction',
+};
+
+const TF_LABEL = {
+  '10s': 'last 10 seconds',
+  '30s': 'last 30 seconds',
+  '1m': 'last 1 minute',
+  '5m': 'last 5 minutes',
+  '15m': 'last 15 minutes',
+};
 
 function fmtUsd(n) {
   const abs = Math.abs(n);
@@ -23,106 +61,339 @@ function fmtPrice(p) {
   return p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function fmtTierUsd(n) {
+  if (n >= 1e6) return `$${n / 1e6}M+`;
+  if (n >= 1e3) return `$${n / 1e3}K+`;
+  return `$${n}+`;
+}
+
 function stateClass(state) {
   if (!state || state === 'NO_SIGNAL') return '';
-  if (state.includes('BUY')) return 'buy-flow';
-  if (state.includes('SELL')) return 'sell-flow';
   if (state.includes('ABSORPTION')) return 'absorption';
   if (state.includes('BURST')) return 'burst';
+  if (state.includes('BUY') || state.includes('UP')) return 'buy-flow';
+  if (state.includes('SELL') || state.includes('DOWN')) return 'sell-flow';
   return '';
 }
 
+function decodeFlags(trade) {
+  const badges = [];
+  if (trade.tier) badges.push({ cls: 'tier', text: `T${trade.tier}`, tip: tierTip(trade.tier) });
+  if (trade.relativeClass && trade.relativeClass !== 'NORMAL') {
+    badges.push({ cls: 'rel', text: trade.relativeClass.replace('_', ' '), tip: relativeTip(trade.relativeClass) });
+  }
+  return badges;
+}
+
+function tierTip(t) {
+  if (!config?.tiers) return '';
+  const map = { 1: config.tiers.tier1, 2: config.tiers.tier2, 3: config.tiers.tier3, 4: config.tiers.tier4 };
+  return `Single print ≥ ${fmtTierUsd(map[t] ?? 0)}`;
+}
+
+function relativeTip(cls) {
+  const p = config?.relative;
+  if (!p) return 'Unusually large vs recent trades on this symbol';
+  if (cls === 'LARGE') return `Bigger than ~${p.large}% of recent prints`;
+  if (cls === 'VERY_LARGE') return `Top ~${100 - p.veryLarge}% — bigger than ~${p.veryLarge}% of recent prints`;
+  if (cls === 'EXTREME') return `Top ~${100 - p.extreme}% — extremely rare size for this symbol`;
+  return '';
+}
+
+function renderTierLegend() {
+  if (!config?.tiers) return;
+  const t = config.tiers;
+  $('tier-legend').innerHTML = [
+    ['T1', t.tier1],
+    ['T2', t.tier2],
+    ['T3', t.tier3],
+    ['T4', t.tier4],
+  ]
+    .map(([label, usd]) => `<li><strong>${label}</strong> ${fmtTierUsd(usd)} per print</li>`)
+    .join('');
+}
+
+function coinStore(map, symbol) {
+  if (!map[symbol]) map[symbol] = [];
+  return map[symbol];
+}
+
 function addTapeRow(trade) {
+  if (!trade.symbol) return;
   if (seenTradeIds.has(trade.id)) return;
   seenTradeIds.add(trade.id);
-  if (seenTradeIds.size > MAX_TAPE * 2) seenTradeIds.clear();
+  if (seenTradeIds.size > MAX_TAPE * 8) seenTradeIds.clear();
 
-  tapeCount += 1;
-  $('tape-count').textContent = `${tapeCount} prints`;
+  const list = coinStore(tapeBySymbol, trade.symbol);
+  list.unshift(trade);
+  if (list.length > MAX_TAPE) list.length = MAX_TAPE;
 
-  const row = document.createElement('div');
-  row.className = `tape-row ${trade.side.toLowerCase()}`;
-  row.innerHTML = `
-    <span>${fmtTime(trade.timestamp)}</span>
-    <span class="side-${trade.side.toLowerCase()}">${trade.side}</span>
-    <span>${fmtPrice(trade.price)}</span>
-    <span>${fmtUsd(trade.quoteValue)}</span>
-    <span class="tag">${trade.tag || '—'}</span>
-  `;
-
-  const tape = $('tape');
-  tape.prepend(row);
-  while (tape.children.length > MAX_TAPE) tape.lastChild?.remove();
+  if (trade.symbol === selectedSymbol) renderTape();
 }
 
-function addEvent(text, cls = '') {
-  const el = document.createElement('div');
-  el.className = `event ${cls}`;
-  el.innerHTML = `<div class="time">${fmtTime(Date.now())}</div><div>${text}</div>`;
-  const box = $('events');
-  box.prepend(el);
-  while (box.children.length > MAX_EVENTS) box.lastChild?.remove();
+function tapeRowHtml(trade) {
+  const sideLabel = trade.side === 'BUY' ? 'Aggressive BUY' : 'Aggressive SELL';
+  const sideSub = trade.side === 'BUY' ? 'hit ask' : 'hit bid';
+  const flags = decodeFlags(trade)
+    .map((b) => `<span class="flag ${b.cls}" title="${b.tip}">${b.text}</span>`)
+    .join('');
+  return `
+    <div class="tape-row ${trade.side.toLowerCase()}">
+      <span class="time">${fmtTime(trade.timestamp)}</span>
+      <span class="action">
+        <span class="action-main side-${trade.side.toLowerCase()}">${sideLabel}</span>
+        <span class="action-sub">${sideSub}</span>
+      </span>
+      <span class="price">${fmtPrice(trade.price)}</span>
+      <span class="notional">${fmtUsd(trade.quoteValue)}</span>
+      <span class="flags">${flags || '<span class="flag dim">—</span>'}</span>
+    </div>`;
 }
 
-function updateSummary(s) {
-  const w10 = s.windows['10s'];
-  const w1m = s.windows['1m'];
-  const w5m = s.windows['5m'];
+function renderTape() {
+  const list = tapeBySymbol[selectedSymbol] ?? [];
+  $('tape').innerHTML = list.map(tapeRowHtml).join('');
+  $('tape-count').textContent = `${list.length} shown`;
+}
 
-  $('price').textContent = `$${fmtPrice(s.price)}`;
-  $('symbol-label').textContent = `${s.symbol} · ${s.market}`;
+function addEvent(opts) {
+  if (!opts || !opts.symbol || opts.symbol === '*') return;
 
-  const badge = $('state-badge');
-  badge.textContent = w10.state;
-  badge.className = `state-badge ${stateClass(w10.state)}`;
+  const item = {
+    kind: opts.kind,
+    title: opts.title,
+    detail: opts.detail || '',
+    cls: opts.cls || opts.kind,
+    symbol: opts.symbol,
+    time: Date.now(),
+  };
 
-  $('score').textContent = w10.largeFlowDirectionalScore;
-  $('score').style.color = w10.largeFlowDirectionalScore > 0 ? 'var(--buy)' : w10.largeFlowDirectionalScore < 0 ? 'var(--sell)' : 'inherit';
-  $('confidence').textContent = `${Math.round(w10.confidence * 100)}%`;
-  $('impact').textContent = w10.priceImpactEfficiency;
+  const list = coinStore(eventsBySymbol, item.symbol);
+  list.unshift(item);
+  if (list.length > MAX_EVENTS) list.length = MAX_EVENTS;
 
-  const total = w10.aggressiveBuyVolume + w10.aggressiveSellVolume || 1;
-  $('buy-bar').style.width = `${(w10.aggressiveBuyVolume / total) * 100}%`;
-  $('sell-bar').style.width = `${(w10.aggressiveSellVolume / total) * 100}%`;
+  if (item.symbol === selectedSymbol) renderEvents();
+}
 
-  $('buy-vol').textContent = fmtUsd(w10.aggressiveBuyVolume);
-  $('sell-vol').textContent = fmtUsd(w10.aggressiveSellVolume);
-
-  const deltaEl = $('delta');
-  deltaEl.textContent = fmtUsd(w10.delta);
-  deltaEl.className = `value ${w10.delta >= 0 ? 'pos' : 'neg'}`;
-
-  $('window-cards').innerHTML = [
-    { label: '10s', w: w10 },
-    { label: '1m', w: w1m },
-    { label: '5m', w: w5m },
-  ]
+function renderEvents() {
+  const icons = {
+    burst: '⚡',
+    alert: '⚠',
+    large: '◆',
+    state: '◉',
+    absorption: '⊘',
+    info: '·',
+  };
+  const list = eventsBySymbol[selectedSymbol] ?? [];
+  $('events').innerHTML = list
     .map(
-      ({ label, w }) => `
-    <div class="window-card">
-      <div class="win-label">${label}</div>
-      <div class="win-state">${w.state}</div>
-      <div class="win-delta" style="color:${w.delta >= 0 ? 'var(--buy)' : 'var(--sell)'}">${fmtUsd(w.delta)}</div>
+      (item) => `
+    <div class="event-card ${item.cls}">
+      <div class="event-icon">${icons[item.kind] ?? '·'}</div>
+      <div class="event-body">
+        <div class="event-top">
+          <span class="event-kind">${item.kind.toUpperCase()}</span>
+          <span class="event-time">${fmtTime(item.time)}</span>
+        </div>
+        <div class="event-title">${item.title}</div>
+        ${item.detail ? `<div class="event-detail">${item.detail}</div>` : ''}
+      </div>
     </div>`,
     )
     .join('');
+  $('events-count').textContent = `${list.length} events`;
+}
 
-  if (w10.absorption.detected) {
-    badge.textContent = w10.absorption.type ?? w10.state;
-    badge.className = 'state-badge absorption';
+function clearMainPanels() {
+  lastSummary = null;
+  $('price').textContent = '—';
+  $('price-change').textContent = '—';
+  $('price-change').className = 'price-change';
+  $('state-badge').textContent = 'NO_SIGNAL';
+  $('state-badge').className = 'state-badge';
+  $('state-title').textContent = 'Waiting for this coin…';
+  $('state-help').textContent = 'Each coin has its own tape, events, and price. Nothing is mixed.';
+  $('delta').textContent = '$0';
+  $('delta').className = 'value';
+  $('delta-pct').textContent = '—';
+  $('score').textContent = '0';
+  $('score').style.color = 'inherit';
+  $('impact').textContent = '—';
+  $('confidence').textContent = '—';
+  $('buy-vol').textContent = '$0';
+  $('sell-vol').textContent = '$0';
+  $('buy-bar').style.width = '50%';
+  $('sell-bar').style.width = '50%';
+  $('compare-row').innerHTML = '';
+  $('absorption-box').classList.add('hidden');
+}
+
+function applySymbolFilter() {
+  document.querySelectorAll('.coin-chip').forEach((chip) => {
+    chip.classList.toggle('active', chip.dataset.symbol === selectedSymbol);
+  });
+  lastSummary = summaries[selectedSymbol] ?? null;
+  if (lastSummary) updateUi();
+  else clearMainPanels();
+  renderTape();
+  renderEvents();
+}
+
+function renderCoinBar(coins) {
+  $('coin-bar').innerHTML = coins
+    .map(
+      (c) => `
+    <button class="coin-chip ${c.symbol === selectedSymbol ? 'active' : ''}" data-symbol="${c.symbol}" type="button">
+      <span class="coin-label">${c.label}</span>
+      <span class="coin-delta" id="delta-${c.symbol}">—</span>
+    </button>`,
+    )
+    .join('');
+
+  $('coin-bar').addEventListener('click', (e) => {
+    const chip = e.target.closest('.coin-chip');
+    if (!chip) return;
+    selectedSymbol = chip.dataset.symbol;
+    applySymbolFilter();
+  });
+}
+
+function updateOverview(coins) {
+  for (const c of coins) {
+    const el = $(`delta-${c.symbol}`);
+    if (!el) continue;
+    el.textContent = fmtUsd(c.delta10s);
+    el.className = `coin-delta ${c.delta10s > 0 ? 'pos' : c.delta10s < 0 ? 'neg' : ''}`;
+    const chip = document.querySelector(`.coin-chip[data-symbol="${c.symbol}"]`);
+    if (chip) chip.classList.toggle('hot', c.state10s && c.state10s !== 'NO_SIGNAL');
+  }
+}
+
+function windowData(summary, tf) {
+  return summary?.windows?.[tf] ?? summary?.windows?.['10s'];
+}
+
+function updateUi() {
+  if (!lastSummary || lastSummary.symbol !== selectedSymbol) return;
+  const w = windowData(lastSummary, selectedTf);
+  if (!w) return;
+
+  const meta = STATE_META[w.state] ?? { title: w.state, help: '' };
+
+  $('price').textContent = lastSummary.price > 0 ? `$${fmtPrice(lastSummary.price)}` : '—';
+  const coin = config?.coins?.find((c) => c.symbol === lastSummary.symbol);
+  $('symbol-label').textContent = `${coin?.label ?? lastSummary.symbol} · ${lastSummary.market} · tape ≥ ${fmtUsd(coin?.minUsd ?? config?.minUsd ?? 0)}`;
+
+  const ch = w.priceChangePercent;
+  const chEl = $('price-change');
+  chEl.textContent = `${ch >= 0 ? '+' : ''}${ch.toFixed(3)}% in ${selectedTf}`;
+  chEl.className = `price-change ${ch > 0 ? 'up' : ch < 0 ? 'down' : ''}`;
+
+  $('state-badge').textContent = w.state.replace(/_/g, ' ');
+  $('state-badge').className = `state-badge ${stateClass(w.state)}`;
+  $('state-title').textContent = meta.title;
+  $('state-help').textContent = meta.help;
+
+  $('flow-window-label').textContent = TF_LABEL[selectedTf] ?? selectedTf;
+
+  const deltaEl = $('delta');
+  deltaEl.textContent = fmtUsd(w.delta);
+  deltaEl.className = `value ${w.delta >= 0 ? 'pos' : 'neg'}`;
+
+  const dp = (w.deltaPercent * 100).toFixed(0);
+  $('delta-pct').textContent = w.delta >= 0 ? `${dp}% buy-side dominance` : `${Math.abs(dp)}% sell-side dominance`;
+
+  $('score').textContent = w.largeFlowDirectionalScore;
+  $('score').style.color = w.largeFlowDirectionalScore > 0 ? 'var(--buy)' : w.largeFlowDirectionalScore < 0 ? 'var(--sell)' : 'inherit';
+
+  $('impact').textContent = w.priceImpactEfficiency;
+  $('impact-help').textContent = IMPACT_HELP[w.priceImpactEfficiency] ?? '';
+
+  $('confidence').textContent = `${Math.round(w.confidence * 100)}%`;
+
+  const mult = w.delta >= 0 ? w.flowMultipleBuy : w.flowMultipleSell;
+  $('flow-multiple').textContent =
+    mult > 1 ? `${mult.toFixed(1)}× normal ${w.delta >= 0 ? 'buy' : 'sell'} flow` : 'Near normal volume';
+
+  const total = w.aggressiveBuyVolume + w.aggressiveSellVolume || 1;
+  $('buy-bar').style.width = `${(w.aggressiveBuyVolume / total) * 100}%`;
+  $('sell-bar').style.width = `${(w.aggressiveSellVolume / total) * 100}%`;
+  $('buy-vol').textContent = fmtUsd(w.aggressiveBuyVolume);
+  $('sell-vol').textContent = fmtUsd(w.aggressiveSellVolume);
+
+  const absBox = $('absorption-box');
+  if (w.absorption.detected) {
+    absBox.classList.remove('hidden');
+    $('absorption-title').textContent = w.absorption.type?.replace(/_/g, ' ') ?? 'Absorption';
+    $('absorption-text').textContent =
+      w.absorption.type === 'BUYER_ABSORPTION'
+        ? 'Heavy buying but price is not rising — sellers may be absorbing.'
+        : 'Heavy selling but price is not falling — buyers may be absorbing.';
+  } else {
+    absBox.classList.add('hidden');
+  }
+
+  renderCompare(lastSummary);
+}
+
+function renderCompare(summary) {
+  const impulse = summary.windows['10s'];
+  const sustained = summary.windows['5m'];
+  if (!impulse || !sustained) return;
+
+  const rows = [
+    { label: '10s impulse', w: impulse, desc: 'Right now' },
+    { label: '5m sustained', w: sustained, desc: 'Still going?' },
+  ];
+
+  $('compare-row').innerHTML = rows
+    .map(({ label, w, desc }) => {
+      const meta = STATE_META[w.state]?.title ?? w.state;
+      return `
+      <div class="compare-card">
+        <div class="compare-label">${label} <span class="muted">${desc}</span></div>
+        <div class="compare-state ${stateClass(w.state)}">${meta}</div>
+        <div class="compare-delta" style="color:${w.delta >= 0 ? 'var(--buy)' : 'var(--sell)'}">${fmtUsd(w.delta)} net</div>
+        <div class="compare-sub">${(w.deltaPercent * 100).toFixed(0)}% side dominance · ${w.priceImpactEfficiency} impact</div>
+      </div>`;
+    })
+    .join('');
+}
+
+function updateSummary(s) {
+  summaries[s.symbol] = s;
+  if (s.symbol === selectedSymbol) {
+    lastSummary = s;
+    updateUi();
   }
 }
 
 function setStatus(connected, message) {
   const el = $('status');
-  el.textContent = message;
-  el.className = `status ${connected ? 'live' : message.includes('Connect') ? 'connecting' : 'offline'}`;
+  el.textContent = connected ? 'Live · Binance' : message;
+  el.className = `status ${connected ? 'live' : message.includes('Connect') || message.includes('Reconnect') ? 'connecting' : 'offline'}`;
+}
+
+function setupTabs() {
+  $('tf-tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('.tf-tab');
+    if (!btn) return;
+    selectedTf = btn.dataset.tf;
+    document.querySelectorAll('.tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
+    updateUi();
+  });
 }
 
 async function init() {
+  setupTabs();
   try {
-    const cfg = await fetch('/api/config').then((r) => r.json());
-    $('symbol-label').textContent = `${cfg.symbol} · ${cfg.market}`;
+    config = await fetch('/api/config').then((r) => r.json());
+    if (config.coins?.length) {
+      selectedSymbol = config.coins[0].symbol;
+      renderCoinBar(config.coins);
+    }
+    renderTierLegend();
+    $('symbol-label').textContent = `${selectedSymbol.replace('USDT', '')} · ${config.market}`;
   } catch { /* ignore */ }
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -143,7 +414,6 @@ async function init() {
     switch (ev.type) {
       case 'status':
         setStatus(ev.connected, ev.message);
-        if (ev.connected) addEvent(`Connected — ${ev.message}`);
         break;
       case 'trade':
         addTapeRow(ev.trade);
@@ -151,14 +421,46 @@ async function init() {
       case 'summary':
         updateSummary(ev.summary);
         break;
+      case 'overview':
+        updateOverview(ev.coins);
+        break;
+      case 'large_trade':
+        addEvent({
+          kind: 'large',
+          symbol: ev.symbol,
+          title: `${ev.symbol.replace('USDT', '')} large ${ev.side} — ${fmtUsd(ev.quoteValue)}`,
+          detail: `@ ${fmtPrice(ev.price)}${ev.tier ? ` · Tier ${ev.tier}` : ''}${ev.relativeClass !== 'NORMAL' ? ` · ${ev.relativeClass.replace('_', ' ')}` : ''}`,
+          cls: ev.side === 'BUY' ? 'buy' : 'sell',
+        });
+        break;
+      case 'state_change': {
+        const meta = STATE_META[ev.state] ?? { title: ev.state, help: '' };
+        addEvent({
+          kind: ev.state.includes('ABSORPTION') ? 'absorption' : 'state',
+          symbol: ev.symbol,
+          title: `${ev.symbol.replace('USDT', '')} ${ev.window} → ${meta.title}`,
+          detail: `${meta.help} Net delta ${fmtUsd(ev.delta)}.`,
+          cls: stateClass(ev.state),
+        });
+        break;
+      }
       case 'burst':
-        addEvent(
-          `${ev.side} BURST ${fmtUsd(ev.totalQuoteValue)} · ${ev.tradeCount} trades · ${(ev.durationMs / 1000).toFixed(1)}s`,
-          'burst',
-        );
+        addEvent({
+          kind: 'burst',
+          symbol: ev.symbol,
+          title: `${ev.symbol.replace('USDT', '')} ${ev.side} burst`,
+          detail: `${fmtUsd(ev.totalQuoteValue)} across ${ev.tradeCount} prints in ${(ev.durationMs / 1000).toFixed(1)}s — possible split order`,
+          cls: ev.side === 'BUY' ? 'buy' : 'sell',
+        });
         break;
       case 'alert':
-        addEvent(`${ev.alertType}: ${ev.message}`, 'alert');
+        addEvent({
+          kind: 'alert',
+          symbol: ev.symbol,
+          title: ev.alertType,
+          detail: ev.message,
+          cls: 'alert',
+        });
         break;
     }
   };
