@@ -34,6 +34,10 @@
     </div>
   </nav>
 
+  <div class="open-tabs-bar">
+    <div class="open-tabs" id="open-tabs"></div>
+  </div>
+
   <main class="layout">
     <!-- Signal panel -->
     <section class="panel signal-panel">
@@ -118,6 +122,19 @@
       <div class="compare-row" id="compare-row"></div>
     </section>
 
+    <!-- Chart -->
+    <section class="panel chart-panel">
+      <div class="panel-head">
+        <h2>Price + Order Flow Delta</h2>
+        <div class="chart-tf-tabs" id="chart-tf-tabs">
+          <button class="chart-tf-tab active" data-ctf="1">1m</button>
+          <button class="chart-tf-tab" data-ctf="5">5m</button>
+          <button class="chart-tf-tab" data-ctf="15">15m</button>
+        </div>
+      </div>
+      <div id="tv-chart" style="width:100%;height:460px;overflow:hidden;position:relative;"></div>
+    </section>
+
     <!-- Bottom row: tape + events -->
     <div class="bottom-row">
       <section class="panel tape-panel">
@@ -132,7 +149,7 @@
           <span>Time</span>
           <span>Action</span>
           <span>Price</span>
-          <span>Notional</span>
+          <span>Value $</span>
           <span>Flags</span>
         </div>
         <div id="tape" class="tape"></div>

@@ -453,3 +453,69 @@ body {
 }
 .pill.buy { background: var(--buy-dim); color: var(--buy); }
 .pill.sell { background: var(--sell-dim); color: var(--sell); }
+
+/* Open tabs bar */
+.open-tabs-bar {
+  padding: 0 1rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.open-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  padding: 0.35rem 0;
+}
+.open-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+.open-tab:hover { background: #1c2128; color: var(--text); }
+.open-tab.active {
+  background: #1c2128;
+  color: var(--text);
+  border-color: var(--accent);
+  border-bottom: 2px solid var(--accent);
+}
+.open-tab-label { font-weight: 600; }
+.open-tab-delta { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; }
+.open-tab-delta.pos { color: var(--buy); }
+.open-tab-delta.neg { color: var(--sell); }
+.open-tab-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0 0.15rem;
+  line-height: 1;
+  border-radius: 3px;
+}
+.open-tab-close:hover { color: var(--sell); background: rgba(239,83,80,0.15); }
+
+/* Chart panel */
+.chart-panel { grid-column: 1 / -1; }
+.chart-tf-tabs { display: flex; gap: 0.4rem; }
+.chart-tf-tab {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.72rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.chart-tf-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
