@@ -466,29 +466,32 @@ function setupTabs() {
 
 // ═══════ Footprint / Order Flow Chart (canvas-based) ═══════
 
+const CHART_TFS = [1, 5, 15];
 let chartTfMinutes = 1;
 const footprintStore = {};
 let fpCanvas = null;
 let fpCtx = null;
-/** How many bars back from live (right edge). 0 = latest candles. */
+/** Bars back from the live (right) edge. 0 = latest candle pinned right. */
 let fpPanBars = 0;
 let fpDragging = false;
 let fpDragLastX = 0;
 
-function fpLayout(storeSize, cssWidth) {
-  const leftPad = 10;
-  const priceAxisWidth = 70;
-  const barWidth = Math.max(90, Math.min(160, (cssWidth - 80) / 6));
+function fpLayout(cssWidth) {
+  const leftPad = 8;
+  const priceAxisWidth = 72;
+  const candleW = 7;
+  const cellW = 108;
   const gap = 6;
+  const barWidth = candleW + cellW;
   const stride = barWidth + gap;
   const availW = Math.max(1, cssWidth - priceAxisWidth - leftPad);
   const visibleBars = Math.max(1, Math.floor(availW / stride));
-  const maxPan = Math.max(0, storeSize - visibleBars);
-  return { leftPad, priceAxisWidth, barWidth, gap, stride, availW, visibleBars, maxPan };
+  return { leftPad, priceAxisWidth, candleW, cellW, barWidth, gap, stride, visibleBars };
 }
 
 function clampFpPan(storeSize, cssWidth) {
-  const { maxPan } = fpLayout(storeSize, cssWidth);
+  const { visibleBars } = fpLayout(cssWidth);
+  const maxPan = Math.max(0, storeSize - visibleBars);
   fpPanBars = Math.max(0, Math.min(fpPanBars, maxPan));
   return maxPan;
 }
@@ -496,6 +499,11 @@ function clampFpPan(storeSize, cssWidth) {
 function cssChartWidth() {
   if (!fpCanvas) return 0;
   return fpCanvas.width / devicePixelRatio;
+}
+
+function snapChartToLive() {
+  fpPanBars = 0;
+  drawFootprint();
 }
 
 function initChart() {
@@ -520,11 +528,8 @@ function initChart() {
     e.stopPropagation();
     const W = cssChartWidth();
     const store = getFootprintStore(selectedSymbol);
-    const { stride } = fpLayout(store.size, W);
-    const axis = Math.abs(e.deltaX) >= Math.abs(e.deltaY) ? e.deltaX : 0;
-    // Scroll / swipe left → older bars. Scroll right → back to live.
-    fpPanBars += -axis / stride;
-    if (axis === 0 && e.shiftKey) fpPanBars += e.deltaY / stride;
+    const { stride } = fpLayout(W);
+    fpPanBars += (e.deltaX + e.deltaY) / stride;
     clampFpPan(store.size, W);
     drawFootprint();
   }, { passive: false });
@@ -539,8 +544,8 @@ function initChart() {
     if (!fpDragging) return;
     const W = cssChartWidth();
     const store = getFootprintStore(selectedSymbol);
-    const { stride } = fpLayout(store.size, W);
-    fpPanBars += -(e.clientX - fpDragLastX) / stride;
+    const { stride } = fpLayout(W);
+    fpPanBars += (e.clientX - fpDragLastX) / stride;
     fpDragLastX = e.clientX;
     clampFpPan(store.size, W);
     drawFootprint();
@@ -557,9 +562,9 @@ function initChart() {
     if (!btn) return;
     chartTfMinutes = Number(btn.dataset.ctf);
     document.querySelectorAll('.chart-tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
-    fpPanBars = 0;
-    drawFootprint();
+    snapChartToLive();
   });
+  document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
 }
 
 function resizeFpCanvas() {
@@ -572,15 +577,15 @@ function resizeFpCanvas() {
   drawFootprint();
 }
 
-function getFootprintStore(symbol) {
-  const key = `${symbol}_${chartTfMinutes}`;
+function getFootprintStore(symbol, tf = chartTfMinutes) {
+  const key = `${symbol}_${tf}`;
   if (!footprintStore[key]) footprintStore[key] = new Map();
   return footprintStore[key];
 }
 
-function fpCandleTime(ts) {
+function fpCandleTime(ts, tf = chartTfMinutes) {
   const s = Math.floor(ts / 1000);
-  return s - (s % (chartTfMinutes * 60));
+  return s - (s % (tf * 60));
 }
 
 function tickSize(price) {
@@ -597,25 +602,56 @@ function priceToTick(price, tick) {
 }
 
 function ingestTradeToChart(trade) {
-  const store = getFootprintStore(trade.symbol);
-  const t = fpCandleTime(trade.timestamp);
-  if (!store.has(t)) {
-    store.set(t, { time: t, open: trade.price, high: trade.price, low: trade.price, close: trade.price, levels: new Map(), totalBuy: 0, totalSell: 0 });
-  }
-  const bar = store.get(t);
-  bar.high = Math.max(bar.high, trade.price);
-  bar.low = Math.min(bar.low, trade.price);
-  bar.close = trade.price;
-
   const tick = tickSize(trade.price);
   const level = priceToTick(trade.price, tick);
   const lk = level.toFixed(6);
-  if (!bar.levels.has(lk)) bar.levels.set(lk, { price: level, buy: 0, sell: 0 });
-  const lv = bar.levels.get(lk);
-  if (trade.side === 'BUY') { lv.buy += trade.quoteValue; bar.totalBuy += trade.quoteValue; }
-  else { lv.sell += trade.quoteValue; bar.totalSell += trade.quoteValue; }
-
+  for (const tf of CHART_TFS) {
+    const store = getFootprintStore(trade.symbol, tf);
+    const t = fpCandleTime(trade.timestamp, tf);
+    if (!store.has(t)) {
+      store.set(t, {
+        time: t, open: trade.price, high: trade.price, low: trade.price, close: trade.price,
+        levels: new Map(), totalBuy: 0, totalSell: 0,
+      });
+    }
+    const bar = store.get(t);
+    bar.high = Math.max(bar.high, trade.price);
+    bar.low = Math.min(bar.low, trade.price);
+    bar.close = trade.price;
+    if (!bar.levels.has(lk)) bar.levels.set(lk, { price: level, buy: 0, sell: 0 });
+    const lv = bar.levels.get(lk);
+    if (trade.side === 'BUY') { lv.buy += trade.quoteValue; bar.totalBuy += trade.quoteValue; }
+    else { lv.sell += trade.quoteValue; bar.totalSell += trade.quoteValue; }
+  }
   if (trade.symbol === selectedSymbol) drawFootprint();
+}
+
+function displayBucket(high, low, chartH) {
+  const raw = tickSize((high + low) / 2);
+  const range = Math.max(high - low, raw);
+  const maxRows = Math.max(8, Math.floor(chartH / 16));
+  let bucket = raw;
+  while (range / bucket > maxRows) bucket *= 2;
+  return bucket;
+}
+
+function bucketBarLevels(bar, bucket) {
+  const map = new Map();
+  for (const lv of bar.levels.values()) {
+    const p = priceToTick(lv.price, bucket);
+    const k = p.toFixed(8);
+    if (!map.has(k)) map.set(k, { price: p, buy: 0, sell: 0 });
+    const b = map.get(k);
+    b.buy += lv.buy;
+    b.sell += lv.sell;
+  }
+  return [...map.values()];
+}
+
+function fmtPriceAxis(p) {
+  if (p >= 100) return p.toFixed(2);
+  if (p >= 1) return p.toFixed(3);
+  return p.toFixed(5);
 }
 
 function drawFootprint() {
@@ -627,8 +663,10 @@ function drawFootprint() {
   ctx.fillStyle = '#0d1117';
   ctx.fillRect(0, 0, W, H);
 
+  const liveBtn = document.getElementById('chart-live-btn');
   const store = getFootprintStore(selectedSymbol);
   if (store.size === 0) {
+    liveBtn?.classList.add('hidden');
     ctx.fillStyle = '#8b949e';
     ctx.font = '13px Inter, sans-serif';
     ctx.textAlign = 'center';
@@ -637,12 +675,15 @@ function drawFootprint() {
   }
 
   const bars = [...store.values()].sort((a, b) => a.time - b.time);
-  const { leftPad, priceAxisWidth, barWidth, gap, visibleBars } = fpLayout(bars.length, W);
-  const topPad = 28;
-  const bottomPad = 36;
+  const { leftPad, priceAxisWidth, candleW, cellW, barWidth, stride, visibleBars } = fpLayout(W);
+  const topPad = 22;
+  const bottomPad = 42;
   const chartH = H - topPad - bottomPad;
   clampFpPan(bars.length, W);
-  const endIdx = Math.max(visibleBars, Math.min(bars.length, bars.length - Math.round(fpPanBars)));
+  liveBtn?.classList.toggle('hidden', fpPanBars < 0.15);
+
+  const pan = Math.round(fpPanBars);
+  const endIdx = bars.length - pan;
   const startIdx = Math.max(0, endIdx - visibleBars);
   const visible = bars.slice(startIdx, endIdx);
 
@@ -659,133 +700,138 @@ function drawFootprint() {
     if (bar.high > globalHigh) globalHigh = bar.high;
     if (bar.low < globalLow) globalLow = bar.low;
   }
-  const tick = tickSize((globalHigh + globalLow) / 2);
-  globalHigh = priceToTick(globalHigh, tick) + tick * 2;
-  globalLow = priceToTick(globalLow, tick) - tick * 2;
-  const priceRange = globalHigh - globalLow || 1;
-  const numRows = Math.round(priceRange / tick);
-  const rowH = chartH / Math.max(1, numRows);
+  const bucket = displayBucket(globalHigh, globalLow, chartH);
+  globalHigh = priceToTick(globalHigh, bucket) + bucket * 2;
+  globalLow = priceToTick(globalLow, bucket) - bucket * 2;
+  const priceRange = globalHigh - globalLow || bucket;
+  const numRows = Math.max(1, Math.round(priceRange / bucket));
+  const rowH = chartH / numRows;
 
   function yForPrice(p) {
     return topPad + ((globalHigh - p) / priceRange) * chartH;
   }
 
+  const bucketed = visible.map((bar) => bucketBarLevels(bar, bucket));
   let maxVol = 0;
-  for (const bar of visible) {
-    for (const lv of bar.levels.values()) {
-      const v = Math.max(lv.buy, lv.sell);
+  for (const levels of bucketed) {
+    for (const lv of levels) {
+      const v = lv.buy + lv.sell;
       if (v > maxVol) maxVol = v;
     }
   }
 
   ctx.textBaseline = 'middle';
 
-  // Draw price axis
-  ctx.fillStyle = '#8b949e';
+  const plotRight = W - priceAxisWidth;
+  const steps = Math.floor(priceRange / bucket);
+  const labelEvery = Math.max(1, Math.floor(steps / 16));
   ctx.font = '10px JetBrains Mono, monospace';
   ctx.textAlign = 'right';
-  const steps = Math.floor(priceRange / tick);
-  const labelEvery = Math.max(1, Math.floor(steps / 18));
   for (let i = 0; i <= steps; i += labelEvery) {
-    const p = globalLow + i * tick;
+    const p = globalLow + i * bucket;
     const y = yForPrice(p);
     if (y < topPad || y > topPad + chartH) continue;
-    ctx.fillText(p >= 100 ? p.toFixed(2) : p >= 1 ? p.toFixed(3) : p.toFixed(5), W - 3, y);
     ctx.strokeStyle = '#1c2128';
     ctx.beginPath();
     ctx.moveTo(leftPad, y);
-    ctx.lineTo(W - priceAxisWidth, y);
+    ctx.lineTo(plotRight, y);
     ctx.stroke();
+    ctx.fillStyle = '#8b949e';
+    ctx.fillText(fmtPriceAxis(p), W - 4, y);
   }
 
-  // Draw bars
+  ctx.font = '9px Inter, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#ef5350';
+  ctx.fillText('SELL', leftPad + 2, 10);
+  ctx.fillStyle = '#22c55e';
+  ctx.fillText('BUY', leftPad + 46, 10);
+  if (fpPanBars >= 0.15) {
+    ctx.fillStyle = '#8b949e';
+    ctx.fillText('drag / scroll · Latest jumps to live', leftPad + 86, 10);
+  }
+
   for (let i = 0; i < visible.length; i++) {
     const bar = visible[i];
-    const x = leftPad + i * (barWidth + gap) + gap;
-    const halfBar = barWidth / 2;
+    const levels = bucketed[i];
+    const x = plotRight - (visible.length - i) * stride;
+    const cellX = x + candleW + 2;
+    const half = cellW / 2;
+    const poc = levels.reduce((best, lv) => (lv.buy + lv.sell > best.vol ? { vol: lv.buy + lv.sell, price: lv.price } : best), { vol: 0, price: 0 });
 
-    // Column background
-    ctx.fillStyle = '#161b22';
-    ctx.fillRect(x, topPad, barWidth, chartH);
+    ctx.fillStyle = '#12171f';
+    ctx.fillRect(cellX, topPad, cellW, chartH);
 
-    // Sell = left half, Buy = right half
-    for (const lv of bar.levels.values()) {
+    const up = bar.close >= bar.open;
+    const wickX = x + candleW / 2;
+    ctx.strokeStyle = up ? '#22c55e' : '#ef4444';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(wickX, yForPrice(bar.high));
+    ctx.lineTo(wickX, yForPrice(bar.low));
+    ctx.stroke();
+    const bodyTop = yForPrice(Math.max(bar.open, bar.close));
+    const bodyBot = yForPrice(Math.min(bar.open, bar.close));
+    ctx.fillStyle = up ? '#22c55e' : '#ef4444';
+    ctx.fillRect(x + 1, bodyTop, candleW - 2, Math.max(2, bodyBot - bodyTop));
+
+    ctx.strokeStyle = '#2a3342';
+    ctx.beginPath();
+    ctx.moveTo(cellX + half, topPad);
+    ctx.lineTo(cellX + half, topPad + chartH);
+    ctx.stroke();
+
+    const rh = Math.max(1, rowH - 1);
+    for (const lv of levels) {
       const y = yForPrice(lv.price);
-      const maxBarW = halfBar - 2;
-      const buyW = maxVol > 0 ? (lv.buy / maxVol) * maxBarW : 0;
-      const sellW = maxVol > 0 ? (lv.sell / maxVol) * maxBarW : 0;
-      const rh = rowH - 3;
+      const total = lv.buy + lv.sell;
+      if (total <= 0) continue;
+      const alpha = 0.12 + 0.55 * (total / Math.max(maxVol, 1));
+      const buyWins = lv.buy >= lv.sell;
+      ctx.fillStyle = buyWins ? `rgba(34, 197, 94, ${alpha})` : `rgba(239, 68, 68, ${alpha})`;
+      ctx.fillRect(cellX + 1, y - rh / 2, cellW - 2, rh);
 
-      // Sell bar (left, grows leftward from center)
-      if (sellW > 0) {
-        const intense = lv.sell > maxVol * 0.5;
-        ctx.fillStyle = intense ? '#e2b93d' : '#ef5350';
-        ctx.globalAlpha = intense ? 1 : 0.7;
-        ctx.fillRect(x + halfBar - sellW, y - rh / 2, sellW, rh);
-        ctx.globalAlpha = 1;
+      const imbBuy = lv.buy >= lv.sell * 3 && lv.buy > maxVol * 0.15;
+      const imbSell = lv.sell >= lv.buy * 3 && lv.sell > maxVol * 0.15;
+      if (imbBuy) {
+        ctx.strokeStyle = '#22c55e';
+        ctx.strokeRect(cellX + half, y - rh / 2 + 0.5, half - 1, rh - 1);
+      } else if (imbSell) {
+        ctx.strokeStyle = '#ef4444';
+        ctx.strokeRect(cellX + 1, y - rh / 2 + 0.5, half - 1, rh - 1);
       }
-      // Buy bar (right, grows rightward from center)
-      if (buyW > 0) {
-        const intense = lv.buy > maxVol * 0.5;
-        ctx.fillStyle = intense ? '#e2b93d' : '#26a69a';
-        ctx.globalAlpha = intense ? 1 : 0.7;
-        ctx.fillRect(x + halfBar, y - rh / 2, buyW, rh);
-        ctx.globalAlpha = 1;
+      if (poc.vol > 0 && lv.price === poc.price) {
+        ctx.strokeStyle = '#fbbf24';
+        ctx.strokeRect(cellX + 1, y - rh / 2 + 0.5, cellW - 2, rh - 1);
       }
 
-      // Volume labels — only if row is tall enough to not overlap
-      if (rowH >= 14) {
-        ctx.font = `${Math.min(10, rowH - 4)}px JetBrains Mono, monospace`;
-        if (lv.sell >= 500 && sellW > 12) {
-          ctx.textAlign = 'left';
-          ctx.fillStyle = '#fff';
-          ctx.fillText(fmtVolShort(lv.sell), Math.max(x + 2, x + halfBar - sellW + 2), y);
-        }
-        if (lv.buy >= 500 && buyW > 12) {
-          ctx.textAlign = 'left';
-          ctx.fillStyle = '#fff';
-          ctx.fillText(fmtVolShort(lv.buy), x + halfBar + 2, y);
-        }
+      if (rowH >= 13) {
+        const fs = Math.min(10, Math.max(8, rowH - 6));
+        ctx.font = `${fs}px JetBrains Mono, monospace`;
+        ctx.fillStyle = lv.sell > 0 ? '#fca5a5' : '#4b5563';
+        ctx.textAlign = 'right';
+        ctx.fillText(lv.sell > 0 ? fmtVolShort(lv.sell) : '–', cellX + half - 4, y);
+        ctx.fillStyle = lv.buy > 0 ? '#86efac' : '#4b5563';
+        ctx.textAlign = 'left';
+        ctx.fillText(lv.buy > 0 ? fmtVolShort(lv.buy) : '–', cellX + half + 4, y);
       }
     }
 
-    // Center divider line
-    ctx.strokeStyle = '#484f58';
-    ctx.beginPath();
-    ctx.moveTo(x + halfBar, topPad);
-    ctx.lineTo(x + halfBar, topPad + chartH);
-    ctx.stroke();
-
-    // Column labels: SELL | BUY at top
-    ctx.font = '9px Inter, sans-serif';
-    ctx.fillStyle = '#ef5350';
-    ctx.textAlign = 'right';
-    ctx.fillText('SELL ←', x + halfBar - 3, topPad - 10);
-    ctx.fillStyle = '#26a69a';
-    ctx.textAlign = 'left';
-    ctx.fillText('→ BUY', x + halfBar + 3, topPad - 10);
-
-    // Time label at bottom
-    ctx.fillStyle = '#8b949e';
     ctx.font = '10px JetBrains Mono, monospace';
     ctx.textAlign = 'center';
-    const d = new Date(bar.time * 1000);
-    ctx.fillText(`${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`, x + halfBar, topPad + chartH + 14);
-
-    // Net delta below time
-    const delta = bar.totalBuy - bar.totalSell;
-    ctx.fillStyle = delta >= 0 ? '#26a69a' : '#ef5350';
-    ctx.font = 'bold 11px JetBrains Mono, monospace';
-    const deltaLabel = delta >= 0 ? `+${fmtVolLabel(delta)}` : `-${fmtVolLabel(Math.abs(delta))}`;
-    ctx.fillText(deltaLabel, x + halfBar, topPad + chartH + 28);
-  }
-
-  if (fpPanBars > 0.05) {
     ctx.fillStyle = '#8b949e';
-    ctx.font = '11px Inter, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText('← older   ·   drag or scroll right to return to live', leftPad + 8, topPad + 12);
+    const d = new Date(bar.time * 1000);
+    const cx = x + barWidth / 2;
+    ctx.fillText(`${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`, cx, topPad + chartH + 13);
+
+    const delta = bar.totalBuy - bar.totalSell;
+    ctx.fillStyle = delta >= 0 ? '#22c55e' : '#ef4444';
+    ctx.font = 'bold 10px JetBrains Mono, monospace';
+    const deltaLabel = `${delta >= 0 ? '+' : '-'}${fmtVolLabel(Math.abs(delta))}`;
+    ctx.fillText(deltaLabel, cx, topPad + chartH + 27);
   }
+
+  ctx.lineWidth = 1;
 }
 
 function fmtVolLabel(v) {
@@ -802,8 +848,7 @@ function fmtVolShort(v) {
 }
 
 function rebuildChart() {
-  fpPanBars = 0;
-  drawFootprint();
+  snapChartToLive();
 }
 
 // ═══════ End Footprint Chart ═══════
