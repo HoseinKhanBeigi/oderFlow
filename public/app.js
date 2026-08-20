@@ -221,7 +221,7 @@ function updateBook(book) {
   booksBySymbol[book.symbol] = book;
   if (book.symbol === selectedSymbol) {
     updateBookLegend(book);
-    applySupportResistance(book);
+    applySupportResistance(book, false);
   }
 }
 
@@ -263,7 +263,9 @@ let tvSeries = null;
 let tvReady = false;
 let tvKlineReq = 0;
 let tvLastSr = 0;
+let tvSrSymbol = '';
 let depthTimer = null;
+let pendingSrBook = null;
 const tvPriceLines = [];
 const tvLastCandle = {};
 const WALL_COUNT = 12;
@@ -287,6 +289,28 @@ function decimalsFor(price) {
   return 8;
 }
 
+function makeCandleSeries() {
+  return tvChart.addCandlestickSeries({
+    upColor: '#0ecb81',
+    downColor: '#f6465d',
+    borderVisible: false,
+    wickUpColor: '#0ecb81',
+    wickDownColor: '#f6465d',
+  });
+}
+
+function resetTvSeries() {
+  clearTvPriceLines();
+  if (tvChart && tvSeries) {
+    try {
+      tvChart.removeSeries(tvSeries);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (tvChart) tvSeries = makeCandleSeries();
+}
+
 function initTvChart() {
   const wrap = $('tv-price-chart');
   if (!wrap || !window.LightweightCharts) return;
@@ -307,13 +331,7 @@ function initTvChart() {
     timeScale: { borderColor: '#1e2430', timeVisible: true, secondsVisible: false },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
   });
-  tvSeries = tvChart.addCandlestickSeries({
-    upColor: '#0ecb81',
-    downColor: '#f6465d',
-    borderVisible: false,
-    wickUpColor: '#0ecb81',
-    wickDownColor: '#f6465d',
-  });
+  tvSeries = makeCandleSeries();
 
   const resize = () => {
     const w = wrap.clientWidth;
@@ -356,16 +374,24 @@ function aggregateToMinutes(candles, minutes) {
 }
 
 async function loadTvCandles() {
-  if (!tvSeries) return;
+  if (!tvChart) return;
   const req = ++tvKlineReq;
   const symbol = selectedSymbol;
   const tf = chartTfMinutes;
   tvReady = false;
-  clearTvPriceLines();
+  tvLastSr = 0;
+  tvSrSymbol = '';
+  pendingSrBook = booksBySymbol[symbol] ?? null;
+  resetTvSeries();
 
   try {
-    const rows = await fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${tvIntervalParam()}`).then((r) => r.json());
+    const [rowRes, depthRes] = await Promise.all([
+      fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${tvIntervalParam()}`).then((r) => r.json()),
+      fetch(`/api/depth?symbol=${encodeURIComponent(symbol)}`).then((r) => r.json()).catch(() => null),
+    ]);
     if (req !== tvKlineReq || symbol !== selectedSymbol || tf !== chartTfMinutes) return;
+
+    const rows = rowRes;
     if (!Array.isArray(rows) || !rows.length) return;
 
     let candles = rows
@@ -395,10 +421,37 @@ async function loadTvCandles() {
 
     tvChart.timeScale().fitContent();
     tvReady = true;
-    const book = booksBySymbol[selectedSymbol];
-    if (book) applySupportResistance(book);
+
+    if (depthRes?.bids) {
+      const toLevels = (rowsIn) =>
+        (rowsIn ?? [])
+          .map(([p, q]) => ({ price: Number(p), quantity: Number(q) }))
+          .filter((l) => l.price > 0 && l.quantity > 0);
+      const bids = toLevels(depthRes.bids).sort((a, b) => b.price - a.price);
+      const asks = toLevels(depthRes.asks).sort((a, b) => a.price - b.price);
+      const bestBid = bids[0]?.price ?? 0;
+      const bestAsk = asks[0]?.price ?? 0;
+      const book = {
+        symbol,
+        bids,
+        asks,
+        mid: bestBid && bestAsk ? (bestBid + bestAsk) / 2 : bestBid || bestAsk,
+        spread: bestBid && bestAsk ? bestAsk - bestBid : 0,
+        bidTotal: bids.reduce((s, l) => s + l.quantity, 0),
+        askTotal: asks.reduce((s, l) => s + l.quantity, 0),
+      };
+      booksBySymbol[symbol] = book;
+      updateBookLegend(book);
+      pendingSrBook = book;
+    }
+
+    const book = booksBySymbol[selectedSymbol] ?? pendingSrBook;
+    requestAnimationFrame(() => {
+      if (req !== tvKlineReq) return;
+      applySupportResistance(book, true);
+    });
   } catch {
-    /* keep previous candles */
+    tvReady = req === tvKlineReq;
   }
 }
 
@@ -467,11 +520,19 @@ function withCumulative(levels) {
   });
 }
 
-function applySupportResistance(book) {
-  if (!tvReady || !tvSeries) return;
+function applySupportResistance(book, force = false) {
+  if (!book || book.symbol !== selectedSymbol) {
+    if (book) pendingSrBook = book;
+    return;
+  }
+  if (!tvReady || !tvSeries) {
+    pendingSrBook = book;
+    return;
+  }
   const now = Date.now();
-  if (now - tvLastSr < 250) return;
+  if (!force && tvSrSymbol === selectedSymbol && now - tvLastSr < 250) return;
   tvLastSr = now;
+  tvSrSymbol = selectedSymbol;
 
   const bids = withCumulative([...(book.bids ?? [])].sort((a, b) => b.price - a.price));
   const asks = withCumulative([...(book.asks ?? [])].sort((a, b) => a.price - b.price));
@@ -490,17 +551,22 @@ function applySupportResistance(book) {
 
   clearTvPriceLines();
   const Dashed = LightweightCharts.LineStyle?.Dashed ?? 2;
-  for (const level of [...toLines(bids, 'bid'), ...toLines(asks, 'ask')]) {
-    tvPriceLines.push(
-      tvSeries.createPriceLine({
-        price: level.price,
-        color: level.color,
-        lineWidth: 2,
-        lineStyle: Dashed,
-        axisLabelVisible: true,
-        title: level.title,
-      }),
-    );
+  const levels = [...toLines(bids, 'bid'), ...toLines(asks, 'ask')];
+  for (const level of levels) {
+    try {
+      tvPriceLines.push(
+        tvSeries.createPriceLine({
+          price: level.price,
+          color: level.color,
+          lineWidth: 2,
+          lineStyle: Dashed,
+          axisLabelVisible: true,
+          title: level.title,
+        }),
+      );
+    } catch {
+      /* ignore */
+    }
   }
 }
 
