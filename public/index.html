@@ -44,7 +44,7 @@
       <div class="panel-head">
         <div>
           <h2>Order flow footprint</h2>
-          <p class="hint">Each row is a price. Red left = sellers hitting the bid. Green right = buyers hitting the ask. Latest candle stays on the right.</p>
+          <p class="hint">Red left = sells, green right = buys, in dollars. ≤50x means that $ size cannot use higher Binance leverage. Public trades do not include the trader’s real setting.</p>
         </div>
         <div class="chart-tf-tabs" id="chart-tf-tabs">
           <button class="chart-live-btn hidden" id="chart-live-btn" type="button">Latest</button>
@@ -54,9 +54,19 @@
           <button class="chart-tf-tab" data-ctf="30">30m</button>
           <button class="chart-tf-tab" data-ctf="45">45m</button>
           <button class="chart-tf-tab" data-ctf="60">1h</button>
+          <button class="chart-tf-tab" data-ctf="120">2h</button>
+          <button class="chart-tf-tab" data-ctf="240">4h</button>
         </div>
       </div>
       <div id="tv-chart" style="width:100%;height:520px;overflow:hidden;position:relative;"></div>
+      <div class="chart-legend">
+        <span id="fp-lev-now" class="fp-lev-now">—</span>
+        <span class="legend-item lev-high">75x+ small</span>
+        <span class="legend-item lev-50">≤50x</span>
+        <span class="legend-item lev-25">≤25x</span>
+        <span class="legend-item lev-10">≤10x</span>
+        <span class="legend-item lev-whale">≤5x whale</span>
+      </div>
     </section>
 
     <!-- TradingView price + order book -->
@@ -177,7 +187,7 @@
         <div class="panel-head">
           <div>
             <h2>Live tape</h2>
-            <p class="hint">Aggressive prints for the selected coin</p>
+            <p class="hint">Aggressive prints. Lev is the max Binance leverage allowed for that dollar size.</p>
           </div>
           <span id="tape-count" class="muted">0 shown</span>
         </div>
@@ -186,6 +196,7 @@
           <span>Action</span>
           <span>Price</span>
           <span>Value $</span>
+          <span>Lev</span>
           <span>Flags</span>
         </div>
         <div id="tape" class="tape"></div>

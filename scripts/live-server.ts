@@ -62,6 +62,16 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.url?.startsWith('/api/leverage-brackets')) {
+      try {
+        json(res, await getLeverageBrackets());
+      } catch {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end('{}');
+      }
+      return;
+    }
+
     if (req.url?.startsWith('/api/klines')) {
       const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
       const symbol = (u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase();
@@ -144,6 +154,53 @@ server.listen(PORT, () => {
 function json(res: ServerResponse, data: unknown): void {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
+}
+
+type LevBracket = { floor: number; cap: number; minLev: number; maxLev: number };
+type LevSpec = { max: number; brackets: LevBracket[] };
+
+let levCache: { at: number; data: Record<string, LevSpec> } | null = null;
+
+async function getLeverageBrackets(): Promise<Record<string, LevSpec>> {
+  if (levCache && Date.now() - levCache.at < 15 * 60_000) return levCache.data;
+  const wanted = new Set(coins.map((c) => c.symbol));
+  const r = await fetch('https://www.binance.com/bapi/futures/v1/friendly/future/common/brackets', {
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+  });
+  if (!r.ok) throw new Error(`leverage brackets ${r.status}`);
+  const payload = (await r.json()) as {
+    data?: {
+      brackets?: Array<{
+        symbol?: string;
+        riskBrackets?: Array<{
+          bracketNotionalFloor?: number;
+          bracketNotionalCap?: number;
+          minOpenPosLeverage?: number;
+          maxOpenPosLeverage?: number;
+        }>;
+      }>;
+    };
+  };
+  const out: Record<string, LevSpec> = {};
+  for (const item of payload.data?.brackets ?? []) {
+    if (!item.symbol || !wanted.has(item.symbol)) continue;
+    const brackets = (item.riskBrackets ?? [])
+      .map((b) => ({
+        floor: Number(b.bracketNotionalFloor),
+        cap: Number(b.bracketNotionalCap),
+        minLev: Number(b.minOpenPosLeverage),
+        maxLev: Number(b.maxOpenPosLeverage),
+      }))
+      .filter((b) => Number.isFinite(b.floor) && b.cap > 0 && b.maxLev > 0)
+      .sort((a, b) => a.floor - b.floor);
+    if (!brackets.length) continue;
+    out[item.symbol] = {
+      max: Math.max(...brackets.map((b) => b.maxLev)),
+      brackets,
+    };
+  }
+  if (Object.keys(out).length) levCache = { at: Date.now(), data: out };
+  return out;
 }
 
 process.on('SIGINT', () => {

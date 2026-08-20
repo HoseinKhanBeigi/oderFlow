@@ -327,7 +327,7 @@ body {
 
 .tape-header, .tape-row {
   display: grid;
-  grid-template-columns: 72px 140px 1fr 88px 120px;
+  grid-template-columns: 72px 130px 1fr 80px 52px 100px;
   gap: 0.5rem;
   align-items: center;
   font-size: 0.76rem;
@@ -357,6 +357,18 @@ body {
 .side-buy { color: var(--buy); }
 .side-sell { color: var(--sell); }
 .notional { font-weight: 600; }
+.lev {
+  font-weight: 700;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}
+.lev-high { color: #8b949e; }
+.lev-50, .legend-item.lev-50 { color: #fbbf24; }
+.lev-25, .legend-item.lev-25 { color: #fb923c; }
+.lev-10, .legend-item.lev-10 { color: #f87171; }
+.lev-whale, .legend-item.lev-whale { color: #c084fc; }
+.legend-item.lev-high { color: #8b949e; }
+.fp-lev-now { font-weight: 600; }
 
 .flags { display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .flag {
@@ -524,7 +536,7 @@ body {
 .legend-item.legend-support { color: #0ecb81; }
 .legend-item.legend-resistance { color: #f6465d; }
 .chart-panel { grid-column: 1 / -1; grid-row: 1; }
-.chart-tf-tabs { display: flex; gap: 0.4rem; }
+.chart-tf-tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .sr-tf-tabs {
   flex-wrap: wrap;
   padding: 0 0 0.45rem;

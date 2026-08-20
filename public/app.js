@@ -56,6 +56,53 @@ function fmtUsd(n) {
   return `${sign}$${abs.toFixed(0)}`;
 }
 
+let levBrackets = {};
+
+function leverageForUsd(symbol, usd) {
+  const spec = levBrackets[symbol];
+  if (!spec?.brackets?.length || !Number.isFinite(usd) || usd <= 0) return null;
+  const b = spec.brackets.find((x) => usd >= x.floor && usd < x.cap) ?? spec.brackets[spec.brackets.length - 1];
+  return {
+    minLev: b.minLev,
+    maxLev: b.maxLev,
+    margin: usd / Math.max(b.maxLev, 1),
+    symbolMax: spec.max,
+  };
+}
+
+function levBand(maxLev) {
+  if (maxLev >= 75) return 'high';
+  if (maxLev >= 50) return '50';
+  if (maxLev >= 25) return '25';
+  if (maxLev >= 10) return '10';
+  return 'whale';
+}
+
+function levColor(maxLev) {
+  if (maxLev >= 75) return '#8b949e';
+  if (maxLev >= 50) return '#fbbf24';
+  if (maxLev >= 25) return '#fb923c';
+  if (maxLev >= 10) return '#f87171';
+  return '#c084fc';
+}
+
+function levLabel(info) {
+  return info ? `≤${info.maxLev}x` : '—';
+}
+
+function levTitle(usd, info) {
+  if (!info) return 'Leverage brackets not loaded yet';
+  return `${fmtUsd(usd)} notional fits Binance’s ${info.minLev}–${info.maxLev}x bracket (max ≤${info.maxLev}x). Margin at that max ≈ ${fmtUsd(info.margin)}. Public trades do not include the trader’s actual leverage.`;
+}
+
+async function loadLeverageBrackets() {
+  try {
+    levBrackets = await fetch('/api/leverage-brackets').then((r) => r.json());
+  } catch {
+    levBrackets = {};
+  }
+}
+
 function fmtTime(ts) {
   return new Date(ts).toLocaleTimeString(undefined, { hour12: false });
 }
@@ -143,11 +190,16 @@ function makeTapeRowEl(trade) {
   const flags = decodeFlags(trade)
     .map((b) => `<span class="flag ${b.cls}" title="${b.tip}">${b.text}</span>`)
     .join('');
+  const lev = leverageForUsd(trade.symbol, trade.quoteValue);
+  const levHtml = lev
+    ? `<span class="lev lev-${levBand(lev.maxLev)}" title="${levTitle(trade.quoteValue, lev)}">${levLabel(lev)}</span>`
+    : '<span class="lev lev-high">—</span>';
   div.innerHTML =
     `<span class="time">${fmtTime(trade.timestamp)}</span>` +
     `<span class="action"><span class="action-main side-${trade.side.toLowerCase()}">${sideLabel}</span><span class="action-sub">${sideSub}</span></span>` +
     `<span class="price">${fmtPrice(trade.price)}</span>` +
     `<span class="notional">${fmtUsd(trade.quoteValue)}</span>` +
+    levHtml +
     `<span class="flags">${flags || '<span class="flag dim">—</span>'}</span>`;
   return div;
 }
@@ -534,25 +586,12 @@ function withCumulative(levels) {
   });
 }
 
-function applySupportResistance(book, force = false) {
-  if (!book || book.symbol !== selectedSymbol) {
-    if (book) pendingSrBook = book;
-    return;
-  }
-  if (!tvReady || !tvSeries) {
-    pendingSrBook = book;
-    return;
-  }
-  const now = Date.now();
-  if (!force && tvSrSymbol === selectedSymbol && now - tvLastSr < 250) return;
-  tvLastSr = now;
-  tvSrSymbol = selectedSymbol;
-
+function srWallsFromBook(book) {
+  if (!book) return [];
   const bids = withCumulative([...(book.bids ?? [])].sort((a, b) => b.price - a.price));
   const asks = withCumulative([...(book.asks ?? [])].sort((a, b) => a.price - b.price));
   const mid = book.mid || 0;
-
-  const toLines = (rows, side) =>
+  const toWalls = (rows, side) =>
     rows
       .filter((l) => (side === 'bid' ? l.price < mid : l.price > mid))
       .sort((a, b) => b.quantity - a.quantity)
@@ -561,12 +600,31 @@ function applySupportResistance(book, force = false) {
         price: l.price,
         color: side === 'bid' ? '#0ecb81' : '#f6465d',
         title: `L${l.idx} · ${fmtBookPrice(l.price)} · ${fmtCompact(l.quantity)} · Σ${fmtCompact(l.cumulative)}`,
+        short: `L${l.idx} ${fmtCompact(l.quantity)}`,
       }));
+  return [...toWalls(bids, 'bid'), ...toWalls(asks, 'ask')];
+}
+
+function applySupportResistance(book, force = false) {
+  if (!book || book.symbol !== selectedSymbol) {
+    if (book) pendingSrBook = book;
+    return;
+  }
+  const now = Date.now();
+  if (!force && tvSrSymbol === selectedSymbol && now - tvLastSr < 250) return;
+  tvLastSr = now;
+  tvSrSymbol = selectedSymbol;
+  lastSrWalls = srWallsFromBook(book);
+  lastSrWallsSymbol = book.symbol;
+
+  if (!tvReady || !tvSeries) {
+    pendingSrBook = book;
+    return;
+  }
 
   clearTvPriceLines();
   const Dashed = LightweightCharts.LineStyle?.Dashed ?? 2;
-  const levels = [...toLines(bids, 'bid'), ...toLines(asks, 'ask')];
-  for (const level of levels) {
+  for (const level of lastSrWalls) {
     try {
       tvPriceLines.push(
         tvSeries.createPriceLine({
@@ -609,6 +667,8 @@ function clearMainPanels() {
 }
 
 function applySymbolFilter() {
+  lastSrWalls = [];
+  lastSrWallsSymbol = '';
   document.querySelectorAll('.coin-chip').forEach((chip) => {
     chip.classList.toggle('active', chip.dataset.symbol === selectedSymbol);
   });
@@ -620,6 +680,7 @@ function applySymbolFilter() {
   loadTvCandles();
   startDepthPoll();
   rebuildChart();
+  seedFootprintKlines();
 }
 
 function chipHtml(c) {
@@ -735,7 +796,7 @@ function updateUi() {
   const coin = config?.coins?.find((c) => c.symbol === lastSummary.symbol);
   const venue =
     coin?.venue === 'equity' ? 'Binance equity perp' : lastSummary.market === 'perp' ? 'Binance perp' : lastSummary.market;
-  $('symbol-label').textContent = `${coin?.label ?? lastSummary.symbol} · ${venue} · tape ≥ ${fmtUsd(coin?.minUsd ?? 0)}`;
+  $('symbol-label').textContent = `${coin?.label ?? lastSummary.symbol} · ${venue} · tape ≥ ${fmtUsd(coin?.minUsd ?? 0)}${levBrackets[lastSummary.symbol]?.max ? ` · max ${levBrackets[lastSummary.symbol].max}x` : ''}`;
   $('state-badge').textContent = w.state.replace(/_/g, ' ');
   $('state-badge').className = `state-badge ${stateClass(w.state)}`;
   $('state-title').textContent = meta.title;
@@ -838,9 +899,11 @@ function setupTabs() {
 
 // ═══════ Footprint / Order Flow Chart (canvas-based) ═══════
 
-const CHART_TFS = [1, 5, 15, 30, 45, 60];
+const CHART_TFS = [1, 5, 15, 30, 45, 60, 120, 240];
 let chartTfMinutes = 1;
 const footprintStore = {};
+const fpKlineSeed = {};
+let fpKlineReq = 0;
 let fpCanvas = null;
 let fpCtx = null;
 /** Bars back from the live (right) edge. 0 = latest candle pinned right. */
@@ -935,6 +998,7 @@ function initChart() {
     chartTfMinutes = Number(btn.dataset.ctf);
     document.querySelectorAll('#chart-tf-tabs .chart-tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
     snapChartToLive();
+    seedFootprintKlines();
   });
   document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
 }
@@ -953,6 +1017,84 @@ function getFootprintStore(symbol, tf = chartTfMinutes) {
   const key = `${symbol}_${tf}`;
   if (!footprintStore[key]) footprintStore[key] = new Map();
   return footprintStore[key];
+}
+
+function getFpKlineSeed(symbol, tf = chartTfMinutes) {
+  const key = `${symbol}_${tf}`;
+  if (!fpKlineSeed[key]) fpKlineSeed[key] = new Map();
+  return fpKlineSeed[key];
+}
+
+function cloneFpBar(bar) {
+  const levels = new Map();
+  for (const [k, v] of bar.levels.entries()) {
+    levels.set(k, { price: v.price, buy: v.buy, sell: v.sell });
+  }
+  return {
+    time: bar.time,
+    open: bar.open,
+    high: bar.high,
+    low: bar.low,
+    close: bar.close,
+    totalBuy: bar.totalBuy,
+    totalSell: bar.totalSell,
+    levels,
+  };
+}
+
+function fpKlineInterval(tf = chartTfMinutes) {
+  if (tf === 240) return '4h';
+  if (tf === 120) return '2h';
+  if (tf === 60) return '1h';
+  if (tf === 45) return '15m';
+  return `${tf}m`;
+}
+
+async function seedFootprintKlines() {
+  const tf = chartTfMinutes;
+  const symbol = selectedSymbol;
+  if (tf < 15) {
+    drawFootprint();
+    return;
+  }
+  const req = ++fpKlineReq;
+  try {
+    const rows = await fetch(
+      `/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${fpKlineInterval(tf)}`,
+    ).then((r) => r.json());
+    if (req !== fpKlineReq || symbol !== selectedSymbol || tf !== chartTfMinutes) return;
+    if (!Array.isArray(rows) || !rows.length) {
+      drawFootprint();
+      return;
+    }
+    let candles = rows
+      .map((k) => ({
+        time: Math.floor(Number(k[0]) / 1000),
+        open: Number(k[1]),
+        high: Number(k[2]),
+        low: Number(k[3]),
+        close: Number(k[4]),
+      }))
+      .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.close));
+    if (tf === 45) candles = aggregateToMinutes(candles, 45);
+    const seed = getFpKlineSeed(symbol, tf);
+    seed.clear();
+    for (const c of candles) {
+      seed.set(c.time, {
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        levels: new Map(),
+        totalBuy: 0,
+        totalSell: 0,
+      });
+    }
+  } catch {
+    /* live 1m rollup still works */
+  }
+  if (req === fpKlineReq) drawFootprint();
 }
 
 function mergeFootprintBar(target, src) {
@@ -994,12 +1136,19 @@ function aggregateFrom1m(symbol, tfMinutes) {
 }
 
 function footprintBars(symbol = selectedSymbol, tf = chartTfMinutes) {
-  const store = getFootprintStore(symbol, tf);
-  if (store.size > 0) return [...store.values()].sort((a, b) => a.time - b.time);
-  if (tf !== 1 && getFootprintStore(symbol, 1).size > 0) {
-    return [...aggregateFrom1m(symbol, tf).values()].sort((a, b) => a.time - b.time);
+  const live = tf === 1
+    ? getFootprintStore(symbol, 1)
+    : aggregateFrom1m(symbol, tf);
+  const seed = tf >= 15 ? getFpKlineSeed(symbol, tf) : new Map();
+  if (seed.size === 0 && live.size === 0) return [];
+
+  const out = new Map();
+  for (const bar of seed.values()) out.set(bar.time, cloneFpBar(bar));
+  for (const bar of live.values()) {
+    if (!out.has(bar.time)) out.set(bar.time, cloneFpBar(bar));
+    else mergeFootprintBar(out.get(bar.time), bar);
   }
-  return [];
+  return [...out.values()].sort((a, b) => a.time - b.time);
 }
 
 function fpCandleTime(ts, tf = chartTfMinutes) {
@@ -1024,24 +1173,22 @@ function ingestTradeToChart(trade) {
   const tick = tickSize(trade.price);
   const level = priceToTick(trade.price, tick);
   const lk = level.toFixed(6);
-  for (const tf of CHART_TFS) {
-    const store = getFootprintStore(trade.symbol, tf);
-    const t = fpCandleTime(trade.timestamp, tf);
-    if (!store.has(t)) {
-      store.set(t, {
-        time: t, open: trade.price, high: trade.price, low: trade.price, close: trade.price,
-        levels: new Map(), totalBuy: 0, totalSell: 0,
-      });
-    }
-    const bar = store.get(t);
-    bar.high = Math.max(bar.high, trade.price);
-    bar.low = Math.min(bar.low, trade.price);
-    bar.close = trade.price;
-    if (!bar.levels.has(lk)) bar.levels.set(lk, { price: level, buy: 0, sell: 0 });
-    const lv = bar.levels.get(lk);
-    if (trade.side === 'BUY') { lv.buy += trade.quoteValue; bar.totalBuy += trade.quoteValue; }
-    else { lv.sell += trade.quoteValue; bar.totalSell += trade.quoteValue; }
+  const store = getFootprintStore(trade.symbol, 1);
+  const t = fpCandleTime(trade.timestamp, 1);
+  if (!store.has(t)) {
+    store.set(t, {
+      time: t, open: trade.price, high: trade.price, low: trade.price, close: trade.price,
+      levels: new Map(), totalBuy: 0, totalSell: 0,
+    });
   }
+  const bar = store.get(t);
+  bar.high = Math.max(bar.high, trade.price);
+  bar.low = Math.min(bar.low, trade.price);
+  bar.close = trade.price;
+  if (!bar.levels.has(lk)) bar.levels.set(lk, { price: level, buy: 0, sell: 0 });
+  const lv = bar.levels.get(lk);
+  if (trade.side === 'BUY') { lv.buy += trade.quoteValue; bar.totalBuy += trade.quoteValue; }
+  else { lv.sell += trade.quoteValue; bar.totalSell += trade.quoteValue; }
   if (trade.symbol === selectedSymbol) {
     drawFootprint();
     ingestTradeToTv(trade);
@@ -1093,6 +1240,11 @@ function drawFootprint() {
     ctx.font = '13px Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('Waiting for trades to build footprint…', W / 2, H / 2);
+    if (chartTfMinutes >= 15) {
+      ctx.font = '12px Inter, sans-serif';
+      ctx.fillText('Loading candle history for this timeframe…', W / 2, H / 2 + 22);
+    }
+    updateFpLevNow(0);
     return;
   }
 
@@ -1211,6 +1363,11 @@ function drawFootprint() {
       const buyWins = lv.buy >= lv.sell;
       ctx.fillStyle = buyWins ? `rgba(34, 197, 94, ${alpha})` : `rgba(239, 68, 68, ${alpha})`;
       ctx.fillRect(cellX + 1, y - rh / 2, cellW - 2, rh);
+      const lev = leverageForUsd(selectedSymbol, total);
+      if (lev && lev.maxLev <= 50) {
+        ctx.fillStyle = levColor(lev.maxLev);
+        ctx.fillRect(cellX + 1, y - rh / 2, 3, rh);
+      }
 
       const imbBuy = lv.buy >= lv.sell * 3 && lv.buy > maxVol * 0.15;
       const imbSell = lv.sell >= lv.buy * 3 && lv.sell > maxVol * 0.15;
@@ -1246,13 +1403,40 @@ function drawFootprint() {
     ctx.fillText(`${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`, cx, topPad + chartH + 13);
 
     const delta = bar.totalBuy - bar.totalSell;
-    ctx.fillStyle = delta >= 0 ? '#22c55e' : '#ef4444';
-    ctx.font = 'bold 10px JetBrains Mono, monospace';
-    const deltaLabel = `${delta >= 0 ? '+' : '-'}${fmtVolLabel(Math.abs(delta))}`;
-    ctx.fillText(deltaLabel, cx, topPad + chartH + 27);
+    const barUsd = bar.totalBuy + bar.totalSell;
+    if (barUsd > 0) {
+      const barLev = leverageForUsd(selectedSymbol, barUsd);
+      ctx.fillStyle = delta >= 0 ? '#22c55e' : '#ef4444';
+      ctx.font = 'bold 10px JetBrains Mono, monospace';
+      const deltaLabel = `${delta >= 0 ? '+' : '-'}${fmtVolLabel(Math.abs(delta))}${barLev ? ` ${levLabel(barLev)}` : ''}`;
+      ctx.fillText(deltaLabel, cx, topPad + chartH + 27);
+    }
   }
 
+  const liveBar = visible[visible.length - 1];
+  updateFpLevNow((liveBar?.totalBuy ?? 0) + (liveBar?.totalSell ?? 0));
+
   ctx.lineWidth = 1;
+}
+
+function updateFpLevNow(flowUsd) {
+  const el = document.getElementById('fp-lev-now');
+  if (!el) return;
+  const spec = levBrackets[selectedSymbol];
+  const tf = chartTfMinutes % 60 === 0 ? `${chartTfMinutes / 60}h` : `${chartTfMinutes}m`;
+  const info = leverageForUsd(selectedSymbol, flowUsd);
+  if (info) {
+    el.textContent = `${tf} flow ${fmtUsd(flowUsd)} · ${levLabel(info)} · margin ≈ ${fmtUsd(info.margin)} at that max`;
+    el.className = `fp-lev-now lev-${levBand(info.maxLev)}`;
+    el.title = levTitle(flowUsd, info);
+  } else if (spec?.max) {
+    el.textContent = `${tf} · symbol max ${spec.max}x · waiting for dollar flow`;
+    el.className = 'fp-lev-now';
+    el.title = '';
+  } else {
+    el.textContent = 'Leverage brackets loading…';
+    el.className = 'fp-lev-now';
+  }
 }
 
 function fmtVolLabel(v) {
@@ -1288,6 +1472,10 @@ async function init() {
     renderTierLegend();
     $('symbol-label').textContent = `${selectedSymbol.replace('USDT', '')} · ${config.market}`;
   } catch { /* ignore */ }
+  await loadLeverageBrackets();
+  seedFootprintKlines();
+  drawFootprint();
+  renderTape();
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -1321,15 +1509,17 @@ async function init() {
       case 'book':
         updateBook(ev);
         break;
-      case 'large_trade':
+      case 'large_trade': {
+        const lev = leverageForUsd(ev.symbol, ev.quoteValue);
         addEvent({
           kind: 'large',
           symbol: ev.symbol,
-          title: `${ev.symbol.replace('USDT', '')} large ${ev.side} — ${fmtUsd(ev.quoteValue)}`,
-          detail: `@ ${fmtPrice(ev.price)}${ev.tier ? ` · Tier ${ev.tier}` : ''}${ev.relativeClass !== 'NORMAL' ? ` · ${ev.relativeClass.replace('_', ' ')}` : ''}`,
+          title: `${ev.symbol.replace('USDT', '')} large ${ev.side} — ${fmtUsd(ev.quoteValue)}${lev ? ` · ${levLabel(lev)}` : ''}`,
+          detail: `@ ${fmtPrice(ev.price)}${ev.tier ? ` · Tier ${ev.tier}` : ''}${ev.relativeClass !== 'NORMAL' ? ` · ${ev.relativeClass.replace('_', ' ')}` : ''}${lev ? ` · margin ≈ ${fmtUsd(lev.margin)} at ${levLabel(lev)}` : ''}`,
           cls: ev.side === 'BUY' ? 'buy' : 'sell',
         });
         break;
+      }
       case 'state_change': {
         const meta = STATE_META[ev.state] ?? { title: ev.state, help: '' };
         addEvent({
