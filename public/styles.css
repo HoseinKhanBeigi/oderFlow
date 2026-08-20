@@ -525,6 +525,10 @@ body {
 .legend-item.legend-resistance { color: #f6465d; }
 .chart-panel { grid-column: 1 / -1; grid-row: 1; }
 .chart-tf-tabs { display: flex; gap: 0.4rem; }
+.sr-tf-tabs {
+  flex-wrap: wrap;
+  padding: 0 0 0.45rem;
+}
 .chart-tf-tab {
   background: var(--card);
   border: 1px solid var(--border);

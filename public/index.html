@@ -63,13 +63,23 @@
     <section class="panel tv-panel">
       <div class="panel-head">
         <div>
-          <h2>Price chart</h2>
-          <p class="hint">TradingView candles with the largest order-book walls. Green = support (buy walls). Red = resistance (sell walls).</p>
+          <h2>Price chart · support & resistance</h2>
+          <p class="hint">TradingView candles with the largest order-book walls. Green = buy walls. Red = sell walls. Timeframe is only for this chart.</p>
         </div>
         <div class="book-meta">
           <span id="book-spread" class="muted">spread —</span>
           <span id="book-imbalance"></span>
         </div>
+      </div>
+      <div class="chart-tf-tabs sr-tf-tabs" id="sr-tf-tabs">
+        <button class="chart-tf-tab" data-stf="1">1m</button>
+        <button class="chart-tf-tab" data-stf="5">5m</button>
+        <button class="chart-tf-tab active" data-stf="15">15m</button>
+        <button class="chart-tf-tab" data-stf="30">30m</button>
+        <button class="chart-tf-tab" data-stf="45">45m</button>
+        <button class="chart-tf-tab" data-stf="60">1h</button>
+        <button class="chart-tf-tab" data-stf="240">4h</button>
+        <button class="chart-tf-tab" data-stf="1440">1d</button>
       </div>
       <div id="tv-price-chart" class="tv-price-chart"></div>
       <div class="chart-legend">

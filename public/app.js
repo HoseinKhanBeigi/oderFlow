@@ -269,15 +269,21 @@ let pendingSrBook = null;
 const tvPriceLines = [];
 const tvLastCandle = {};
 const WALL_COUNT = 12;
+let lastSrWalls = [];
+let lastSrWallsSymbol = '';
+
+let tvTfMinutes = 15;
 
 function tvIntervalParam() {
-  if (chartTfMinutes === 60) return '1h';
-  if (chartTfMinutes === 45) return '15m';
-  return `${chartTfMinutes}m`;
+  if (tvTfMinutes === 1440) return '1d';
+  if (tvTfMinutes === 240) return '4h';
+  if (tvTfMinutes === 60) return '1h';
+  if (tvTfMinutes === 45) return '15m';
+  return `${tvTfMinutes}m`;
 }
 
 function tvIntervalSeconds() {
-  return (chartTfMinutes === 45 ? 45 : chartTfMinutes) * 60;
+  return (tvTfMinutes === 45 ? 45 : tvTfMinutes) * 60;
 }
 
 function decimalsFor(price) {
@@ -343,6 +349,14 @@ function initTvChart() {
   window.addEventListener('resize', resize);
   loadTvCandles();
   startDepthPoll();
+
+  document.getElementById('sr-tf-tabs')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-stf]');
+    if (!btn) return;
+    tvTfMinutes = Number(btn.dataset.stf);
+    document.querySelectorAll('#sr-tf-tabs .chart-tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
+    loadTvCandles();
+  });
 }
 
 function clearTvPriceLines() {
@@ -377,7 +391,7 @@ async function loadTvCandles() {
   if (!tvChart) return;
   const req = ++tvKlineReq;
   const symbol = selectedSymbol;
-  const tf = chartTfMinutes;
+  const tf = tvTfMinutes;
   tvReady = false;
   tvLastSr = 0;
   tvSrSymbol = '';
@@ -389,7 +403,7 @@ async function loadTvCandles() {
       fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${tvIntervalParam()}`).then((r) => r.json()),
       fetch(`/api/depth?symbol=${encodeURIComponent(symbol)}`).then((r) => r.json()).catch(() => null),
     ]);
-    if (req !== tvKlineReq || symbol !== selectedSymbol || tf !== chartTfMinutes) return;
+    if (req !== tvKlineReq || symbol !== selectedSymbol || tf !== tvTfMinutes) return;
 
     const rows = rowRes;
     if (!Array.isArray(rows) || !rows.length) return;
@@ -403,7 +417,7 @@ async function loadTvCandles() {
         close: Number(k[4]),
       }))
       .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.close));
-    if (chartTfMinutes === 45) candles = aggregateToMinutes(candles, 45);
+    if (tvTfMinutes === 45) candles = aggregateToMinutes(candles, 45);
     if (!candles.length) return;
 
     tvSeries.setData(candles);
@@ -457,7 +471,7 @@ async function loadTvCandles() {
 
 function ingestTradeToTv(trade) {
   if (!tvReady || !tvSeries || trade.symbol !== selectedSymbol) return;
-  const key = `${trade.symbol}_${chartTfMinutes}`;
+  const key = `${trade.symbol}_${tvTfMinutes}`;
   const bucket = Math.floor(Date.now() / 1000 / tvIntervalSeconds()) * tvIntervalSeconds();
   let c = tvLastCandle[key];
   if (c && bucket < c.time) return;
@@ -824,7 +838,7 @@ function setupTabs() {
 
 // ═══════ Footprint / Order Flow Chart (canvas-based) ═══════
 
-const CHART_TFS = [1, 5, 15];
+const CHART_TFS = [1, 5, 15, 30, 45, 60];
 let chartTfMinutes = 1;
 const footprintStore = {};
 let fpCanvas = null;
@@ -885,10 +899,10 @@ function initChart() {
     e.preventDefault();
     e.stopPropagation();
     const W = cssChartWidth();
-    const store = getFootprintStore(selectedSymbol);
+    const bars = footprintBars(selectedSymbol);
     const { stride } = fpLayout(W);
     fpPanBars += (e.deltaX + e.deltaY) / stride;
-    clampFpPan(store.size, W);
+    clampFpPan(bars.length, W);
     drawFootprint();
   }, { passive: false });
 
@@ -901,11 +915,11 @@ function initChart() {
   fpCanvas.addEventListener('pointermove', (e) => {
     if (!fpDragging) return;
     const W = cssChartWidth();
-    const store = getFootprintStore(selectedSymbol);
+    const bars = footprintBars(selectedSymbol);
     const { stride } = fpLayout(W);
     fpPanBars += (e.clientX - fpDragLastX) / stride;
     fpDragLastX = e.clientX;
-    clampFpPan(store.size, W);
+    clampFpPan(bars.length, W);
     drawFootprint();
   });
   const endDrag = () => {
@@ -916,12 +930,11 @@ function initChart() {
   fpCanvas.addEventListener('pointercancel', endDrag);
 
   document.getElementById('chart-tf-tabs')?.addEventListener('click', (e) => {
-    const btn = e.target.closest('.chart-tf-tab');
+    const btn = e.target.closest('[data-ctf]');
     if (!btn) return;
     chartTfMinutes = Number(btn.dataset.ctf);
-    document.querySelectorAll('.chart-tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('#chart-tf-tabs .chart-tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
     snapChartToLive();
-    loadTvCandles();
   });
   document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
 }
@@ -940,6 +953,53 @@ function getFootprintStore(symbol, tf = chartTfMinutes) {
   const key = `${symbol}_${tf}`;
   if (!footprintStore[key]) footprintStore[key] = new Map();
   return footprintStore[key];
+}
+
+function mergeFootprintBar(target, src) {
+  target.high = Math.max(target.high, src.high);
+  target.low = Math.min(target.low, src.low);
+  target.close = src.close;
+  target.totalBuy += src.totalBuy;
+  target.totalSell += src.totalSell;
+  for (const lv of src.levels.values()) {
+    const k = lv.price.toFixed(6);
+    if (!target.levels.has(k)) target.levels.set(k, { price: lv.price, buy: 0, sell: 0 });
+    const d = target.levels.get(k);
+    d.buy += lv.buy;
+    d.sell += lv.sell;
+  }
+}
+
+function aggregateFrom1m(symbol, tfMinutes) {
+  const base = getFootprintStore(symbol, 1);
+  const out = new Map();
+  const bucket = tfMinutes * 60;
+  for (const bar of base.values()) {
+    const t = bar.time - (bar.time % bucket);
+    if (!out.has(t)) {
+      out.set(t, {
+        time: t,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        levels: new Map(),
+        totalBuy: 0,
+        totalSell: 0,
+      });
+    }
+    mergeFootprintBar(out.get(t), bar);
+  }
+  return out;
+}
+
+function footprintBars(symbol = selectedSymbol, tf = chartTfMinutes) {
+  const store = getFootprintStore(symbol, tf);
+  if (store.size > 0) return [...store.values()].sort((a, b) => a.time - b.time);
+  if (tf !== 1 && getFootprintStore(symbol, 1).size > 0) {
+    return [...aggregateFrom1m(symbol, tf).values()].sort((a, b) => a.time - b.time);
+  }
+  return [];
 }
 
 function fpCandleTime(ts, tf = chartTfMinutes) {
@@ -1026,8 +1086,8 @@ function drawFootprint() {
   ctx.fillRect(0, 0, W, H);
 
   const liveBtn = document.getElementById('chart-live-btn');
-  const store = getFootprintStore(selectedSymbol);
-  if (store.size === 0) {
+  const bars = footprintBars(selectedSymbol);
+  if (bars.length === 0) {
     liveBtn?.classList.add('hidden');
     ctx.fillStyle = '#8b949e';
     ctx.font = '13px Inter, sans-serif';
@@ -1036,7 +1096,6 @@ function drawFootprint() {
     return;
   }
 
-  const bars = [...store.values()].sort((a, b) => a.time - b.time);
   const { leftPad, priceAxisWidth, candleW, cellW, barWidth, stride, visibleBars } = fpLayout(W);
   const topPad = 22;
   const bottomPad = 42;
