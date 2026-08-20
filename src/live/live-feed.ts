@@ -8,7 +8,7 @@ import {
   streamName,
   unwrapBinancePayload,
 } from '../exchange/types.js';
-import type { MarketTrade, MarketType } from '../models/trade.js';
+import type { MarketTrade, MarketType, OrderBookSnapshot } from '../models/trade.js';
 import type { WindowSnapshot } from '../models/signals.js';
 import type { BinanceAggTrade, BinanceBookTicker, BinanceTrade } from '../exchange/types.js';
 import { DEFAULT_WATCHLIST, minUsdFor, type WatchCoin } from './watchlist.js';
@@ -72,6 +72,16 @@ export type LiveFeedEvent =
       relativeClass: string;
     }
   | {
+      type: 'book';
+      symbol: string;
+      bids: { price: number; quantity: number; quoteValue: number }[];
+      asks: { price: number; quantity: number; quoteValue: number }[];
+      mid: number;
+      spread: number;
+      bidTotal: number;
+      askTotal: number;
+    }
+  | {
       type: 'state_change';
       symbol: string;
       window: string;
@@ -82,12 +92,26 @@ export type LiveFeedEvent =
 
 export type LiveFeedListener = (event: LiveFeedEvent) => void;
 
+function parseBookLevels(rows: unknown): { price: number; quantity: number; quoteValue: number }[] {
+  if (!Array.isArray(rows)) return [];
+  const levels: { price: number; quantity: number; quoteValue: number }[] = [];
+  for (const row of rows) {
+    if (!Array.isArray(row) || row.length < 2) continue;
+    const price = Number(row[0]);
+    const quantity = Number(row[1]);
+    if (!Number.isFinite(price) || !Number.isFinite(quantity) || price <= 0 || quantity <= 0) continue;
+    levels.push({ price, quantity, quoteValue: price * quantity });
+  }
+  return levels;
+}
+
 export class LiveBinanceFeed {
   readonly engine: OrderFlowEngine;
   readonly coins: WatchCoin[];
   private readonly sockets: WebSocket[] = [];
   private closed = false;
   private lastSummary = 0;
+  private readonly lastBookEmit = new Map<string, number>();
   private readonly tradeCount = new Map<string, number>();
   private readonly lastStates = new Map<string, Partial<Record<'10s' | '1m' | '5m', string>>>();
   private readonly listeners = new Set<LiveFeedListener>();
@@ -168,20 +192,31 @@ export class LiveBinanceFeed {
 
     if (market === 'spot') {
       this.openCombined(BINANCE_SPOT_WS, this.coins, tradeChannel, 'spot');
+      this.openSocket(`${BINANCE_SPOT_WS}?streams=${this.depthList(this.coins)}`, 'spot book');
       return;
     }
 
     const crypto = this.coins.filter((c) => c.venue !== 'equity');
     const equity = this.coins.filter((c) => c.venue === 'equity');
-    if (crypto.length) this.openCombined(BINANCE_FUTURES_WS, crypto, 'trade', 'crypto perp');
+    if (crypto.length) {
+      this.openCombined(BINANCE_FUTURES_WS, crypto, 'trade', 'crypto perp');
+      this.openSocket(`${BINANCE_FUTURES_WS}?streams=${this.depthList(crypto)}`, 'crypto book');
+    }
     // TradFi equity perps (https://www.binance.com/en/futures/AMZNUSDT) need /ws/, not combined /stream.
-    if (equity.length) this.openRawCombined(equity, 'trade', 'equity perp');
+    if (equity.length) {
+      this.openRawCombined(equity, 'trade', 'equity perp');
+      this.openSocket(`${BINANCE_FUTURES_WS}?streams=${this.depthList(equity)}`, 'equity book');
+    }
   }
 
   private streamList(coins: WatchCoin[], tradeChannel: string): string {
     return coins
       .flatMap((c) => [streamName(c.symbol, tradeChannel), streamName(c.symbol, 'bookTicker')])
       .join('/');
+  }
+
+  private depthList(coins: WatchCoin[]): string {
+    return coins.map((c) => streamName(c.symbol, 'depth20@100ms')).join('/');
   }
 
   private openCombined(base: string, coins: WatchCoin[], tradeChannel: string, label: string): void {
@@ -229,10 +264,18 @@ export class LiveBinanceFeed {
     } catch {
       return;
     }
+    const stream = String(msg.stream ?? '');
     const data = unwrapBinancePayload(msg);
     if (!data) return;
-    const event = (data.e as string | undefined) ?? (data.b && data.a ? 'bookTicker' : undefined);
-    const symbol = String(data.s ?? '');
+    const event = (data.e as string | undefined) ?? (data.b && data.a && !Array.isArray(data.b) ? 'bookTicker' : undefined);
+    const symbol = String(data.s ?? stream.split('@')[0] ?? '').toUpperCase();
+
+    if (stream.includes('depth20') || (Array.isArray(data.bids) && Array.isArray(data.asks))) {
+      this.handleDepth(symbol, data, market);
+    } else if (event === 'depthUpdate' && Array.isArray(data.b) && Array.isArray(data.a)) {
+      this.handleDepth(symbol, { bids: data.b, asks: data.a, lastUpdateId: data.u }, market);
+    }
+
     if (!symbol) return;
 
     if (event === 'aggTrade') {
@@ -265,6 +308,42 @@ export class LiveBinanceFeed {
       this.lastSummary = now;
       this.emitAllSummaries(now);
     }
+  }
+
+  private handleDepth(symbol: string, data: Record<string, unknown>, market: MarketType): void {
+    if (!symbol || !this.coins.some((c) => c.symbol === symbol)) return;
+    const bids = parseBookLevels(data.bids ?? data.b);
+    const asks = parseBookLevels(data.asks ?? data.a);
+    if (!bids.length && !asks.length) return;
+
+    const snapshot: OrderBookSnapshot = {
+      symbol,
+      marketType: market === 'spot' ? 'spot' : 'perp',
+      timestamp: Date.now(),
+      bids,
+      asks,
+      lastUpdateId: typeof data.lastUpdateId === 'number' ? data.lastUpdateId : undefined,
+    };
+    this.engine.ingestBookSnapshot(snapshot);
+
+    const now = Date.now();
+    if (now - (this.lastBookEmit.get(symbol) ?? 0) < 120) return;
+    this.lastBookEmit.set(symbol, now);
+
+    const bestBid = bids[0]?.price ?? 0;
+    const bestAsk = asks[0]?.price ?? 0;
+    const mid = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : bestBid || bestAsk;
+    const spread = bestBid && bestAsk ? bestAsk - bestBid : 0;
+    this.emit({
+      type: 'book',
+      symbol,
+      bids,
+      asks,
+      mid,
+      spread,
+      bidTotal: bids.reduce((s, l) => s + l.quoteValue, 0),
+      askTotal: asks.reduce((s, l) => s + l.quoteValue, 0),
+    });
   }
 
   private handleTrade(trade: MarketTrade): void {

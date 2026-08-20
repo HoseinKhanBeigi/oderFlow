@@ -44,7 +44,46 @@ const feed = new LiveBinanceFeed({
 });
 
 const server = createServer(async (req, res) => {
-  if (req.url === '/api/config') {
+    if (req.url?.startsWith('/api/depth')) {
+      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+      const symbol = (u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase();
+      const base =
+        MARKET === 'spot'
+          ? 'https://api.binance.com/api/v3/depth'
+          : 'https://fapi.binance.com/fapi/v1/depth';
+      try {
+        const r = await fetch(`${base}?symbol=${encodeURIComponent(symbol)}&limit=100`);
+        const data = await r.json();
+        json(res, data);
+      } catch {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end('{}');
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/klines')) {
+      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+      const symbol = (u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase();
+      const interval = u.searchParams.get('interval') ?? '1m';
+      const base =
+        MARKET === 'spot'
+          ? 'https://api.binance.com/api/v3/klines'
+          : 'https://fapi.binance.com/fapi/v1/klines';
+      try {
+        const r = await fetch(
+          `${base}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=300`,
+        );
+        const data = await r.json();
+        json(res, data);
+      } catch {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end('[]');
+      }
+      return;
+    }
+
+    if (req.url === '/api/config') {
     json(res, {
       coins,
       crypto: coins.filter((c) => c.venue === 'crypto'),

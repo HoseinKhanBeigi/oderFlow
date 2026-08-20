@@ -51,9 +51,31 @@
           <button class="chart-tf-tab active" data-ctf="1">1m</button>
           <button class="chart-tf-tab" data-ctf="5">5m</button>
           <button class="chart-tf-tab" data-ctf="15">15m</button>
+          <button class="chart-tf-tab" data-ctf="30">30m</button>
+          <button class="chart-tf-tab" data-ctf="45">45m</button>
+          <button class="chart-tf-tab" data-ctf="60">1h</button>
         </div>
       </div>
       <div id="tv-chart" style="width:100%;height:520px;overflow:hidden;position:relative;"></div>
+    </section>
+
+    <!-- TradingView price + order book -->
+    <section class="panel tv-panel">
+      <div class="panel-head">
+        <div>
+          <h2>Price chart</h2>
+          <p class="hint">TradingView candles with the largest order-book walls. Green = support (buy walls). Red = resistance (sell walls).</p>
+        </div>
+        <div class="book-meta">
+          <span id="book-spread" class="muted">spread —</span>
+          <span id="book-imbalance"></span>
+        </div>
+      </div>
+      <div id="tv-price-chart" class="tv-price-chart"></div>
+      <div class="chart-legend">
+        <span class="legend-item legend-support">— Support (top 12 buy walls)</span>
+        <span class="legend-item legend-resistance">— Resistance (top 12 sell walls)</span>
+      </div>
     </section>
 
     <!-- Signal panel -->
@@ -200,6 +222,7 @@
     </section>
   </main>
 
+  <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
   <script src="/app.js" type="module"></script>
 </body>
 </html>

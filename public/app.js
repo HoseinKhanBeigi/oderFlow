@@ -10,6 +10,8 @@ let lastSummary = null;
 const summaries = {};
 const tapeBySymbol = {};
 const eventsBySymbol = {};
+const booksBySymbol = {};
+const BOOK_LEVELS = 12;
 let config = null;
 const seenTradeIds = new Set();
 const openTabs = []; // list of { symbol, label }
@@ -214,6 +216,294 @@ function renderEvents() {
   $('events-count').textContent = `${list.length} events`;
 }
 
+function updateBook(book) {
+  if (!book?.symbol) return;
+  booksBySymbol[book.symbol] = book;
+  if (book.symbol === selectedSymbol) {
+    updateBookLegend(book);
+    applySupportResistance(book);
+  }
+}
+
+function updateBookLegend(book) {
+  const spread = book.spread ?? 0;
+  const spreadPct = book.mid ? (spread / book.mid) * 100 : 0;
+  const bidTotal = book.bidTotal ?? 0;
+  const askTotal = book.askTotal ?? 0;
+  const tot = bidTotal + askTotal || 1;
+  const bidPct = Math.round((bidTotal / tot) * 100);
+  if ($('book-spread')) {
+    $('book-spread').textContent = `spread ${fmtBookPrice(spread)} (${spreadPct.toFixed(4)}%)`;
+  }
+  if ($('book-imbalance')) {
+    $('book-imbalance').textContent = bidPct >= 50 ? `${bidPct}% bid heavy` : `${100 - bidPct}% ask heavy`;
+    $('book-imbalance').className = bidPct >= 50 ? 'book-imbalance pos' : 'book-imbalance neg';
+  }
+}
+
+function fmtBookPrice(p) {
+  if (!Number.isFinite(p)) return '—';
+  if (p >= 1000) return p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (p >= 1) return p.toFixed(4);
+  return p.toFixed(8);
+}
+
+function fmtCompact(qty) {
+  const abs = Math.abs(qty);
+  const trim = (v, d = 2) => v.toFixed(d).replace(/\.?0+$/, '');
+  if (abs >= 1e9) return `${trim(qty / 1e9)}B`;
+  if (abs >= 1e6) return `${trim(qty / 1e6)}M`;
+  if (abs >= 1e3) return `${trim(qty / 1e3)}K`;
+  if (abs >= 1) return trim(qty, 2);
+  return trim(qty, 4);
+}
+
+let tvChart = null;
+let tvSeries = null;
+let tvReady = false;
+let tvKlineReq = 0;
+let tvLastSr = 0;
+let depthTimer = null;
+const tvPriceLines = [];
+const tvLastCandle = {};
+const WALL_COUNT = 12;
+
+function tvIntervalParam() {
+  if (chartTfMinutes === 60) return '1h';
+  if (chartTfMinutes === 45) return '15m';
+  return `${chartTfMinutes}m`;
+}
+
+function tvIntervalSeconds() {
+  return (chartTfMinutes === 45 ? 45 : chartTfMinutes) * 60;
+}
+
+function decimalsFor(price) {
+  if (price >= 1000) return 2;
+  if (price >= 1) return 3;
+  if (price >= 0.1) return 4;
+  if (price >= 0.01) return 5;
+  if (price >= 0.0001) return 6;
+  return 8;
+}
+
+function initTvChart() {
+  const wrap = $('tv-price-chart');
+  if (!wrap || !window.LightweightCharts) return;
+
+  tvChart = LightweightCharts.createChart(wrap, {
+    width: Math.max(wrap.clientWidth, 320),
+    height: Math.max(wrap.clientHeight, 440),
+    layout: {
+      background: { color: '#141820' },
+      textColor: '#848e9c',
+      fontFamily: 'Inter, system-ui, sans-serif',
+    },
+    grid: {
+      vertLines: { color: '#1e2430' },
+      horzLines: { color: '#1e2430' },
+    },
+    rightPriceScale: { borderColor: '#1e2430' },
+    timeScale: { borderColor: '#1e2430', timeVisible: true, secondsVisible: false },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  });
+  tvSeries = tvChart.addCandlestickSeries({
+    upColor: '#0ecb81',
+    downColor: '#f6465d',
+    borderVisible: false,
+    wickUpColor: '#0ecb81',
+    wickDownColor: '#f6465d',
+  });
+
+  const resize = () => {
+    const w = wrap.clientWidth;
+    const h = wrap.clientHeight;
+    if (w < 80 || h < 80) return;
+    tvChart.applyOptions({ width: w, height: h });
+  };
+  new ResizeObserver(resize).observe(wrap);
+  window.addEventListener('resize', resize);
+  loadTvCandles();
+  startDepthPoll();
+}
+
+function clearTvPriceLines() {
+  if (!tvSeries) return;
+  for (const line of tvPriceLines.splice(0)) {
+    try {
+      tvSeries.removePriceLine(line);
+    } catch {
+      /* series may have been reset */
+    }
+  }
+}
+
+function aggregateToMinutes(candles, minutes) {
+  const bucket = minutes * 60;
+  const map = new Map();
+  for (const c of candles) {
+    const t = c.time - (c.time % bucket);
+    const prev = map.get(t);
+    if (!prev) {
+      map.set(t, { time: t, open: c.open, high: c.high, low: c.low, close: c.close });
+    } else {
+      prev.high = Math.max(prev.high, c.high);
+      prev.low = Math.min(prev.low, c.low);
+      prev.close = c.close;
+    }
+  }
+  return [...map.values()];
+}
+
+async function loadTvCandles() {
+  if (!tvSeries) return;
+  const req = ++tvKlineReq;
+  const symbol = selectedSymbol;
+  const tf = chartTfMinutes;
+  tvReady = false;
+  clearTvPriceLines();
+
+  try {
+    const rows = await fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${tvIntervalParam()}`).then((r) => r.json());
+    if (req !== tvKlineReq || symbol !== selectedSymbol || tf !== chartTfMinutes) return;
+    if (!Array.isArray(rows) || !rows.length) return;
+
+    let candles = rows
+      .map((k) => ({
+        time: Math.floor(Number(k[0]) / 1000),
+        open: Number(k[1]),
+        high: Number(k[2]),
+        low: Number(k[3]),
+        close: Number(k[4]),
+      }))
+      .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.close));
+    if (chartTfMinutes === 45) candles = aggregateToMinutes(candles, 45);
+    if (!candles.length) return;
+
+    tvSeries.setData(candles);
+    tvLastCandle[`${symbol}_${tf}`] = candles[candles.length - 1] ?? null;
+
+    const ref = candles[candles.length - 1].close;
+    const precision = decimalsFor(ref);
+    tvSeries.applyOptions({
+      priceFormat: {
+        type: 'price',
+        precision,
+        minMove: Number((10 ** -precision).toFixed(precision)),
+      },
+    });
+
+    tvChart.timeScale().fitContent();
+    tvReady = true;
+    const book = booksBySymbol[selectedSymbol];
+    if (book) applySupportResistance(book);
+  } catch {
+    /* keep previous candles */
+  }
+}
+
+function ingestTradeToTv(trade) {
+  if (!tvReady || !tvSeries || trade.symbol !== selectedSymbol) return;
+  const key = `${trade.symbol}_${chartTfMinutes}`;
+  const bucket = Math.floor(Date.now() / 1000 / tvIntervalSeconds()) * tvIntervalSeconds();
+  let c = tvLastCandle[key];
+  if (c && bucket < c.time) return;
+  if (!c || bucket > c.time) {
+    c = { time: bucket, open: trade.price, high: trade.price, low: trade.price, close: trade.price };
+  } else {
+    c = {
+      ...c,
+      close: trade.price,
+      high: Math.max(c.high, trade.price),
+      low: Math.min(c.low, trade.price),
+    };
+  }
+  tvLastCandle[key] = c;
+  try {
+    tvSeries.update(c);
+  } catch {
+    /* ignore */
+  }
+}
+
+function startDepthPoll() {
+  if (depthTimer) clearInterval(depthTimer);
+  pullDepth();
+  depthTimer = setInterval(pullDepth, 250);
+}
+
+async function pullDepth() {
+  const symbol = selectedSymbol;
+  try {
+    const data = await fetch(`/api/depth?symbol=${encodeURIComponent(symbol)}`).then((r) => r.json());
+    if (symbol !== selectedSymbol || !data?.bids) return;
+    const toLevels = (rows) =>
+      (rows ?? [])
+        .map(([p, q]) => ({ price: Number(p), quantity: Number(q) }))
+        .filter((l) => l.price > 0 && l.quantity > 0);
+    const bids = toLevels(data.bids).sort((a, b) => b.price - a.price);
+    const asks = toLevels(data.asks).sort((a, b) => a.price - b.price);
+    const bestBid = bids[0]?.price ?? 0;
+    const bestAsk = asks[0]?.price ?? 0;
+    updateBook({
+      symbol,
+      bids,
+      asks,
+      mid: bestBid && bestAsk ? (bestBid + bestAsk) / 2 : bestBid || bestAsk,
+      spread: bestBid && bestAsk ? bestAsk - bestBid : 0,
+      bidTotal: bids.reduce((s, l) => s + l.quantity, 0),
+      askTotal: asks.reduce((s, l) => s + l.quantity, 0),
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+function withCumulative(levels) {
+  let running = 0;
+  return levels.map((l, i) => {
+    running += l.quantity;
+    return { ...l, idx: i + 1, cumulative: running };
+  });
+}
+
+function applySupportResistance(book) {
+  if (!tvReady || !tvSeries) return;
+  const now = Date.now();
+  if (now - tvLastSr < 250) return;
+  tvLastSr = now;
+
+  const bids = withCumulative([...(book.bids ?? [])].sort((a, b) => b.price - a.price));
+  const asks = withCumulative([...(book.asks ?? [])].sort((a, b) => a.price - b.price));
+  const mid = book.mid || 0;
+
+  const toLines = (rows, side) =>
+    rows
+      .filter((l) => (side === 'bid' ? l.price < mid : l.price > mid))
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, WALL_COUNT)
+      .map((l) => ({
+        price: l.price,
+        color: side === 'bid' ? '#0ecb81' : '#f6465d',
+        title: `L${l.idx} · ${fmtBookPrice(l.price)} · ${fmtCompact(l.quantity)} · Σ${fmtCompact(l.cumulative)}`,
+      }));
+
+  clearTvPriceLines();
+  const Dashed = LightweightCharts.LineStyle?.Dashed ?? 2;
+  for (const level of [...toLines(bids, 'bid'), ...toLines(asks, 'ask')]) {
+    tvPriceLines.push(
+      tvSeries.createPriceLine({
+        price: level.price,
+        color: level.color,
+        lineWidth: 2,
+        lineStyle: Dashed,
+        axisLabelVisible: true,
+        title: level.title,
+      }),
+    );
+  }
+}
+
 function clearMainPanels() {
   lastSummary = null;
   $('price').textContent = '—';
@@ -247,6 +537,8 @@ function applySymbolFilter() {
   else clearMainPanels();
   renderTape();
   renderEvents();
+  loadTvCandles();
+  startDepthPoll();
   rebuildChart();
 }
 
@@ -563,6 +855,7 @@ function initChart() {
     chartTfMinutes = Number(btn.dataset.ctf);
     document.querySelectorAll('.chart-tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
     snapChartToLive();
+    loadTvCandles();
   });
   document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
 }
@@ -623,7 +916,10 @@ function ingestTradeToChart(trade) {
     if (trade.side === 'BUY') { lv.buy += trade.quoteValue; bar.totalBuy += trade.quoteValue; }
     else { lv.sell += trade.quoteValue; bar.totalSell += trade.quoteValue; }
   }
-  if (trade.symbol === selectedSymbol) drawFootprint();
+  if (trade.symbol === selectedSymbol) {
+    drawFootprint();
+    ingestTradeToTv(trade);
+  }
 }
 
 function displayBucket(high, low, chartH) {
@@ -856,6 +1152,7 @@ function rebuildChart() {
 async function init() {
   setupTabs();
   initChart();
+  initTvChart();
   try {
     config = await fetch('/api/config').then((r) => r.json());
     if (config.coins?.length) {
@@ -895,6 +1192,9 @@ async function init() {
         break;
       case 'overview':
         updateOverview(ev.coins);
+        break;
+      case 'book':
+        updateBook(ev);
         break;
       case 'large_trade':
         addEvent({

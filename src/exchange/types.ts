@@ -88,7 +88,8 @@ export function unwrapBinancePayload(msg: Record<string, unknown>): Record<strin
   }
   if (
     typeof msg.e === 'string' ||
-    (typeof msg.s === 'string' && (msg.p != null || (msg.b != null && msg.a != null)))
+    (typeof msg.s === 'string' && (msg.p != null || (msg.b != null && msg.a != null))) ||
+    (Array.isArray(msg.bids) && Array.isArray(msg.asks))
   ) {
     return msg;
   }
