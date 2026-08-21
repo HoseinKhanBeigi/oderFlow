@@ -642,6 +642,7 @@ function applySymbolFilter() {
   seedFootprintKlines();
   seedBook(selectedSymbol);
   startLiqEstimateLoop();
+  loadYearRing();
 }
 
 function chipHtml(c) {
@@ -1081,6 +1082,385 @@ async function seedFootprintKlines() {
   }
   if (req === fpKlineReq) drawFootprint();
 }
+
+const YEAR_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const RING_MONTHS = 14;
+const RING_DAYS = Math.round((365.25 * RING_MONTHS) / 12);
+let yearRingReq = 0;
+let yearRingTf = '1d';
+
+function fmtPct(n, digits = 2) {
+  if (!Number.isFinite(n)) return '—';
+  const sign = n > 0 ? '+' : '';
+  return `${sign}${n.toFixed(digits)}%`;
+}
+
+function polarXY(cx, cy, r, angleDeg) {
+  const a = ((angleDeg - 90) * Math.PI) / 180;
+  return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+}
+
+function degToRad(angleDeg) {
+  return ((angleDeg - 90) * Math.PI) / 180;
+}
+
+function pointerToBarIndex(evt, svg, n, rot, cx, cy, innerR, outerR) {
+  const ctm = svg.getScreenCTM();
+  if (!ctm || n <= 0) return -1;
+  const p = new DOMPoint(evt.clientX, evt.clientY).matrixTransform(ctm.inverse());
+  const dx = p.x - cx;
+  const dy = p.y - cy;
+  const dist = Math.hypot(dx, dy);
+  if (dist < innerR - 16 || dist > outerR + 28) return -1;
+  let deg = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
+  if (deg < 0) deg += 360;
+  const step = 360 / n;
+  let i = Math.floor((deg - rot) / step);
+  i %= n;
+  if (i < 0) i += n;
+  return i;
+}
+
+function wedgePath(cx, cy, r0, r1, a0, a1) {
+  const [x0, y0] = polarXY(cx, cy, r1, a0);
+  const [x1, y1] = polarXY(cx, cy, r1, a1);
+  const [x2, y2] = polarXY(cx, cy, r0, a1);
+  const [x3, y3] = polarXY(cx, cy, r0, a0);
+  const large = a1 - a0 > 180 ? 1 : 0;
+  return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r1} ${r1} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} L${x2.toFixed(2)} ${y2.toFixed(2)} A${r0} ${r0} 0 ${large} 0 ${x3.toFixed(2)} ${y3.toFixed(2)} Z`;
+}
+
+function svgEl(name, attrs = {}) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', name);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+  return el;
+}
+
+function sameLocalDay(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function dayOfYearUTC(d) {
+  const y = d.getUTCFullYear();
+  return Math.floor((Date.UTC(y, d.getUTCMonth(), d.getUTCDate()) - Date.UTC(y, 0, 1)) / 86400000);
+}
+
+function parseChangeBars(rows) {
+  const candles = rows
+    .map((k) => ({
+      time: Number(k[0]),
+      open: Number(k[1]),
+      high: Number(k[2]),
+      low: Number(k[3]),
+      close: Number(k[4]),
+    }))
+    .filter((c) => Number.isFinite(c.time) && c.close > 0)
+    .sort((a, b) => a.time - b.time);
+  const now = new Date();
+  const bars = [];
+  for (let i = 1; i < candles.length; i++) {
+    const prev = candles[i - 1];
+    const cur = candles[i];
+    const pct = ((cur.close - prev.close) / prev.close) * 100;
+    if (!Number.isFinite(pct)) continue;
+    const date = new Date(cur.time);
+    bars.push({
+      time: cur.time,
+      date,
+      open: cur.open,
+      high: cur.high,
+      low: cur.low,
+      close: cur.close,
+      prevClose: prev.close,
+      pct,
+      isToday: sameLocalDay(date, now),
+    });
+  }
+  return bars;
+}
+
+function changeOver(bars, periodMs) {
+  const last = bars[bars.length - 1];
+  if (!last) return 0;
+  const cutoff = last.time - periodMs;
+  let then = null;
+  for (let i = bars.length - 1; i >= 0; i--) {
+    if (bars[i].time <= cutoff) {
+      then = bars[i];
+      break;
+    }
+  }
+  const base = then ? then.close : bars[0].prevClose;
+  if (!base) return last.pct;
+  return ((last.close - base) / base) * 100;
+}
+
+function tradedAt(bar, price) {
+  if (!Number.isFinite(price) || price <= 0) return false;
+  return bar.low <= price && bar.high >= price;
+}
+
+function hideYearTip() {
+  const tip = $('year-ring-tip');
+  if (tip) tip.classList.add('hidden');
+}
+
+function showYearTip(bar, extra, evt) {
+  const tip = $('year-ring-tip');
+  if (!tip || !bar) return;
+  const cls = bar.pct > 0 ? 'pos' : bar.pct < 0 ? 'neg' : '';
+  const when = bar.date.toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+  const repeats = extra?.count ?? 0;
+  const repeatLine = repeats
+    ? `<span class="tip-ohlc">${fmtPrice(bar.close)} reached on ${repeats} days</span>`
+    : '';
+  tip.innerHTML =
+    `<strong>${when}${bar.isToday ? ' · today' : ''}</strong>` +
+    `<span class="tip-chg ${cls}">${fmtPct(bar.pct)} · ${fmtPrice(bar.close)}</span>` +
+    repeatLine;
+  tip.classList.remove('hidden');
+  tip.style.left = `${Math.min(evt.clientX + 14, window.innerWidth - 220)}px`;
+  tip.style.top = `${Math.min(evt.clientY + 14, window.innerHeight - 80)}px`;
+}
+
+function yearLayers(bars) {
+  const byYear = new Map();
+  for (const b of bars) {
+    const y = b.date.getUTCFullYear();
+    if (!byYear.has(y)) byYear.set(y, []);
+    byYear.get(y).push(b);
+  }
+  return [...byYear.keys()]
+    .sort((a, b) => b - a)
+    .slice(0, 3)
+    .map((year) => ({ year, bars: byYear.get(year) }));
+}
+
+function yearReturn(layer) {
+  if (!layer.bars.length) return 0;
+  const first = layer.bars[0];
+  const last = layer.bars[layer.bars.length - 1];
+  return ((last.close - first.prevClose) / first.prevClose) * 100;
+}
+
+function renderYearRing(bars, symbol) {
+  const host = $('year-ring');
+  const stats = $('year-ring-stats');
+  const meta = $('year-ring-meta');
+  if (!host) return;
+  host.innerHTML = '';
+  if (stats) stats.innerHTML = '';
+  hideYearTip();
+
+  const tfLabel = yearRingTf === '4h' ? '4H' : '1D';
+  if (!bars.length) {
+    host.innerHTML = '<div class="year-ring-empty">No candles yet</div>';
+    if (meta) meta.textContent = '—';
+    return;
+  }
+
+  const last = bars[bars.length - 1];
+  const first = bars[0];
+  const yearPct = ((last.close - first.prevClose) / first.prevClose) * 100;
+  const chg24h = changeOver(bars, 24 * 60 * 60 * 1000);
+  const label = symbol.replace(/USDT$/, '');
+  const n = bars.length;
+  const step = 360 / n;
+  const gap = Math.min(yearRingTf === '4h' ? 0.06 : 0.22, step * 0.2);
+  const rot = -((n - 0.5) * step);
+
+  if (meta) meta.textContent = `${n} ${tfLabel} candles · ${first.date.toLocaleDateString()} → today`;
+
+  const size = 520;
+  const cx = 260;
+  const cy = 260;
+  const innerR = 92;
+  const outerR = 200;
+  const minP = Math.min(...bars.map((b) => b.low));
+  const maxP = Math.max(...bars.map((b) => b.high));
+  const pad = (maxP - minP) * 0.06 || maxP * 0.02;
+  const priceMin = minP - pad;
+  const priceMax = maxP + pad;
+  const priceSpan = priceMax - priceMin || 1;
+  const toR = (price) => innerR + ((price - priceMin) / priceSpan) * (outerR - innerR);
+
+  const canvas = document.createElement('canvas');
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  canvas.width = size * dpr;
+  canvas.height = size * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const svg = svgEl('svg', { viewBox: `0 0 ${size} ${size}`, role: 'img' });
+  svg.setAttribute('aria-label', `${label} ${RING_MONTHS} month candlesticks around a circle`);
+
+  const guidePrices = [priceMin, (priceMin + priceMax) / 2, priceMax];
+  for (const gp of guidePrices) {
+    const r = toR(gp);
+    svg.appendChild(svgEl('circle', { cx, cy, r, fill: 'none', stroke: '#1c2230', 'stroke-width': 1 }));
+    const [gx, gy] = polarXY(cx, cy, r, 270);
+    const gTxt = svgEl('text', {
+      x: (gx - 6).toFixed(1), y: gy.toFixed(1), fill: '#7a8494', 'font-size': 9,
+      'font-family': 'JetBrains Mono, monospace', 'text-anchor': 'end', 'dominant-baseline': 'middle',
+    });
+    gTxt.textContent = fmtPrice(gp);
+    svg.appendChild(gTxt);
+  }
+  svg.appendChild(svgEl('circle', { cx, cy, r: innerR - 8, fill: 'none', stroke: '#1c2230', 'stroke-width': 1 }));
+  svg.appendChild(svgEl('circle', {
+    cx, cy, r: toR(last.close), fill: 'none', stroke: '#60a5fa', 'stroke-width': 1, 'stroke-dasharray': '3 4', 'stroke-opacity': 0.65,
+  }));
+
+  const monthSeen = new Set();
+  for (let i = 0; i < n; i++) {
+    const bar = bars[i];
+    const mid = (i + 0.5) * step + rot;
+    const month = bar.date.getMonth();
+    const ang = ((mid % 360) + 360) % 360;
+    const monthKey = `${bar.date.getFullYear()}-${month}`;
+    if (!monthSeen.has(monthKey) && ang > 14 && ang < 346) {
+      monthSeen.add(monthKey);
+      const [mx, my] = polarXY(cx, cy, outerR + 22, mid);
+      const text = svgEl('text', {
+        x: mx.toFixed(1), y: my.toFixed(1), fill: '#7a8494', 'font-size': 10,
+        'font-family': 'Inter, system-ui, sans-serif', 'text-anchor': 'middle', 'dominant-baseline': 'middle',
+      });
+      text.textContent = `${YEAR_MONTHS[month]} '${String(bar.date.getFullYear()).slice(2)}`;
+      svg.appendChild(text);
+    }
+  }
+
+  const [tx0, ty0] = polarXY(cx, cy, innerR - 10, 0);
+  const [tx1, ty1] = polarXY(cx, cy, outerR + 8, 0);
+  svg.append(
+    svgEl('line', { x1: tx0, y1: ty0, x2: tx1, y2: ty1, stroke: '#60a5fa', 'stroke-width': 1.6 }),
+    svgEl('circle', { cx: tx1, cy: ty1, r: 3.5, fill: '#60a5fa' }),
+  );
+  const todayLbl = svgEl('text', {
+    x: cx, y: 18, fill: '#60a5fa', 'font-size': 11, 'font-weight': 700,
+    'font-family': 'Inter, system-ui, sans-serif', 'text-anchor': 'middle',
+  });
+  todayLbl.textContent = 'TODAY';
+  svg.appendChild(todayLbl);
+
+  const centerName = svgEl('text', {
+    x: cx, y: cy - 16, fill: '#eef0f3', 'font-size': 14, 'font-weight': 600,
+    'font-family': 'Inter, system-ui, sans-serif', 'text-anchor': 'middle',
+  });
+  centerName.textContent = label;
+  const centerPx = svgEl('text', {
+    x: cx, y: cy + 4, fill: '#eef0f3', 'font-size': 15, 'font-weight': 700,
+    'font-family': 'JetBrains Mono, monospace', 'text-anchor': 'middle',
+  });
+  centerPx.textContent = fmtPrice(last.close);
+  const centerChg = svgEl('text', {
+    x: cx, y: cy + 24, fill: chg24h >= 0 ? '#22c55e' : '#ef4444', 'font-size': 16, 'font-weight': 700,
+    'font-family': 'JetBrains Mono, monospace', 'text-anchor': 'middle',
+  });
+  centerChg.textContent = fmtPct(chg24h, 2);
+  svg.append(centerName, centerPx, centerChg);
+  svg.appendChild(svgEl('rect', { x: 0, y: 0, width: size, height: size, fill: 'transparent' }));
+
+  const wickW = n > 500 ? 0.6 : 1.25;
+  const drawCandles = (focusPrice) => {
+    ctx.clearRect(0, 0, size, size);
+    ctx.lineCap = 'round';
+    let hits = 0;
+    for (let i = 0; i < n; i++) {
+      const bar = bars[i];
+      const a0 = i * step + gap / 2 + rot;
+      const a1 = (i + 1) * step - gap / 2 + rot;
+      const mid = (a0 + a1) / 2;
+      const rLow = toR(bar.low);
+      const rHigh = toR(bar.high);
+      const rOpen = toR(bar.open);
+      const rClose = toR(bar.close);
+      const rBody0 = Math.min(rOpen, rClose);
+      const rBody1 = Math.max(Math.max(rOpen, rClose), rBody0 + (n > 500 ? 0.7 : 1.5));
+      const repeat = tradedAt(bar, focusPrice);
+      if (repeat) hits += 1;
+      const color = repeat ? '#fbbf24' : bar.close >= bar.open ? '#22c55e' : '#ef4444';
+      const [wx0, wy0] = polarXY(cx, cy, rLow, mid);
+      const [wx1, wy1] = polarXY(cx, cy, rHigh, mid);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = repeat ? wickW + 0.8 : wickW;
+      ctx.beginPath();
+      ctx.moveTo(wx0, wy0);
+      ctx.lineTo(wx1, wy1);
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rBody1, degToRad(a0), degToRad(a1));
+      ctx.arc(cx, cy, rBody0, degToRad(a1), degToRad(a0), true);
+      ctx.closePath();
+      ctx.fill();
+    }
+    return hits;
+  };
+
+  const nowHits = drawCandles(last.close);
+
+  svg.addEventListener('pointermove', (evt) => {
+    const i = pointerToBarIndex(evt, svg, n, rot, cx, cy, innerR, outerR);
+    if (i < 0) {
+      drawCandles(last.close);
+      hideYearTip();
+      return;
+    }
+    const bar = bars[i];
+    showYearTip(bar, { count: drawCandles(bar.close) }, evt);
+  });
+  svg.addEventListener('pointerleave', () => {
+    drawCandles(last.close);
+    hideYearTip();
+  });
+
+  host.append(canvas, svg);
+  if (!stats) return;
+  stats.innerHTML = [
+    { label: 'This price again', value: fmtPrice(last.close), cls: '', sub: `gold candles · traded on ${nowHits} days` },
+    { label: '24h change', value: fmtPct(chg24h, 2), cls: chg24h >= 0 ? 'pos' : 'neg', sub: 'hover a candle to see that price repeat' },
+    { label: `${RING_MONTHS} month return`, value: fmtPct(yearPct, 1), cls: yearPct >= 0 ? 'pos' : 'neg', sub: `${fmtPrice(first.prevClose)} → ${fmtPrice(last.close)}` },
+    { label: 'Up / down', value: `${bars.filter((b) => b.pct > 0).length} / ${bars.filter((b) => b.pct < 0).length}`, cls: '', sub: `${n} ${tfLabel} candles` },
+  ]
+    .map((c) => `<div class="year-stat"><span class="label">${c.label}</span><span class="value ${c.cls}">${c.value}</span><span class="sub">${c.sub}</span></div>`)
+    .join('');
+}
+
+async function loadYearRing() {
+  const host = $('year-ring');
+  if (!host) return;
+  const symbol = selectedSymbol;
+  const tf = yearRingTf;
+  const keep = tf === '4h' ? RING_DAYS * 6 : RING_DAYS;
+  const req = ++yearRingReq;
+  host.innerHTML = '<div class="year-ring-empty">Loading…</div>';
+  if ($('year-ring-stats')) $('year-ring-stats').innerHTML = '';
+  if ($('year-ring-meta')) $('year-ring-meta').textContent = 'fetching…';
+  try {
+    const rows = await fetch(
+      `/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(tf)}&limit=${keep + 40}&exchange=binance`,
+    ).then((r) => r.json());
+    if (req !== yearRingReq || symbol !== selectedSymbol || tf !== yearRingTf) return;
+    if (!Array.isArray(rows) || rows.length < 2) {
+      renderYearRing([], symbol);
+      return;
+    }
+    renderYearRing(parseChangeBars(rows).slice(-keep), symbol);
+  } catch {
+    if (req !== yearRingReq) return;
+    host.innerHTML = '<div class="year-ring-empty">Could not load candles</div>';
+    if ($('year-ring-meta')) $('year-ring-meta').textContent = 'failed';
+  }
+}
+
+document.getElementById('year-ring-tf')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-ytf]');
+  if (!btn) return;
+  yearRingTf = btn.dataset.ytf;
+  document.querySelectorAll('#year-ring-tf .chart-tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
+  loadYearRing();
+});
 
 function mergeFootprintBar(target, src) {
   target.high = Math.max(target.high, src.high);
@@ -1555,6 +1935,7 @@ async function init() {
   await loadLeverageBrackets();
   startLiqEstimateLoop();
   seedFootprintKlines();
+  loadYearRing();
   drawFootprint();
   renderTape();
 

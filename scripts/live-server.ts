@@ -95,8 +95,10 @@ const server = createServer(async (req, res) => {
       const symbol = (u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase();
       const interval = u.searchParams.get('interval') ?? '1m';
       const exchange = parseExchangeParam(u.searchParams.get('exchange'));
+      const rawLimit = Number(u.searchParams.get('limit') ?? 300);
+      const limit = Number.isFinite(rawLimit) ? Math.min(8000, Math.max(1, Math.floor(rawLimit))) : 300;
       try {
-        json(res, await fetchVenueKlines(exchange, symbol, interval, MARKET, 300));
+        json(res, await fetchKlinesPaged(exchange, symbol, interval, limit));
       } catch {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end('[]');
@@ -168,6 +170,28 @@ server.listen(PORT, () => {
 function parseExchangeParam(raw: string | null): ExchangeId {
   const id = (raw ?? 'binance').toLowerCase();
   return isExchangeId(id) ? id : 'binance';
+}
+
+async function fetchKlinesPaged(exchange: ExchangeId, symbol: string, interval: string, limit: number) {
+  const pageSize = 1500;
+  if (limit <= pageSize) {
+    return fetchVenueKlines(exchange, symbol, interval, MARKET, limit);
+  }
+  const chunks: Array<Array<[number, string, string, string, string, string]>> = [];
+  let endTime: number | undefined;
+  let remaining = limit;
+  for (let i = 0; i < 6 && remaining > 0; i++) {
+    const n = Math.min(pageSize, remaining);
+    const rows = await fetchVenueKlines(exchange, symbol, interval, MARKET, n, endTime);
+    if (!rows.length) break;
+    chunks.unshift(rows);
+    remaining -= rows.length;
+    endTime = rows[0][0] - 1;
+    if (rows.length < n) break;
+  }
+  const merged = new Map<number, [number, string, string, string, string, string]>();
+  for (const row of chunks.flat()) merged.set(row[0], row);
+  return [...merged.values()].sort((a, b) => a[0] - b[0]).slice(-limit);
 }
 
 function json(res: ServerResponse, data: unknown): void {
