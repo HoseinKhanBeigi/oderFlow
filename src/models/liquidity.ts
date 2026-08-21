@@ -33,3 +33,48 @@ export interface IcebergLikeFlag {
   aggressiveQuote: number;
   note: 'possible hidden/replenishing liquidity';
 }
+
+export type LiquidityWallKind = 'ASK_LIQUIDITY_WALL' | 'BID_LIQUIDITY_WALL';
+export type LiquidityWallStatus = 'ACTIVE' | 'CONSUMED' | 'PULLED';
+
+export interface LiquidityWall {
+  kind: LiquidityWallKind;
+  price: number;
+  quoteValue: number;
+  vsNearbyMedian: number;
+  percentile: number;
+  status: LiquidityWallStatus;
+}
+
+export interface LiquidityVacuum {
+  kind: 'UPSIDE_LIQUIDITY_VACUUM' | 'DOWNSIDE_LIQUIDITY_VACUUM';
+  fromPrice: number;
+  toPrice: number;
+  segmentLiquidity: number;
+  relativeDensity: number;
+}
+
+export type MovePotentialEventType =
+  | 'ASK_WALL_DETECTED'
+  | 'BID_WALL_DETECTED'
+  | 'ASK_WALL_CONSUMED'
+  | 'BID_WALL_CONSUMED'
+  | 'ASK_LIQUIDITY_PULLED'
+  | 'BID_LIQUIDITY_PULLED'
+  | 'UPSIDE_LIQUIDITY_VACUUM'
+  | 'DOWNSIDE_LIQUIDITY_VACUUM';
+
+export interface LiquidityDynamicsSnapshot {
+  askConsumptionRate: number;
+  bidConsumptionRate: number;
+  askReplenishmentRate: number;
+  bidReplenishmentRate: number;
+  askPullRate: number;
+  bidPullRate: number;
+  askConsumptionNorm: number;
+  bidConsumptionNorm: number;
+  askReplenishmentNorm: number;
+  bidReplenishmentNorm: number;
+  askPullNorm: number;
+  bidPullNorm: number;
+}

@@ -92,6 +92,11 @@ export type LiveFeedEvent =
       state: string;
       delta: number;
       previousState: string | null;
+    }
+  | {
+      type: 'move_potential';
+      symbol: string;
+      events: string[];
     };
 
 export type LiveFeedListener = (event: LiveFeedEvent) => void;
@@ -118,6 +123,7 @@ export class LiveBinanceFeed {
   private lastSummary = 0;
   private readonly lastBookEmit = new Map<string, number>();
   private readonly tradeCount = new Map<string, number>();
+  private readonly lastMoveEvents = new Map<string, string>();
   private readonly lastStates = new Map<string, Partial<Record<'10s' | '1m' | '5m', string>>>();
   private readonly listeners = new Set<LiveFeedListener>();
   private readonly spot = new BinanceSpotAdapter();
@@ -165,6 +171,13 @@ export class LiveBinanceFeed {
           alertType: ev.alert.type,
           message: ev.alert.message,
         });
+      }
+      if (ev.kind === 'move_potential' && ev.events.length) {
+        const sig = [...ev.events].sort().join(',');
+        if (sig !== this.lastMoveEvents.get(ev.symbol)) {
+          this.lastMoveEvents.set(ev.symbol, sig);
+          this.emit({ type: 'move_potential', symbol: ev.symbol, events: ev.events });
+        }
       }
     });
   }

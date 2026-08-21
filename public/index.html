@@ -44,7 +44,7 @@
       <div class="panel-head">
         <div>
           <h2>Order flow footprint</h2>
-          <p class="hint">Red left = sells, green right = buys, in dollars. All combines CEX + Hyperliquid + dYdX + Bitstamp. Robinhood Crypto has no public tape, so Bitstamp (Robinhood’s exchange) is used. Equity perps stay Binance-only.</p>
+          <p class="hint">Red left = sells, green right = buys. Lines are liquidation levels — remaining % until hit, then LIQUIDATED. Gold = absorption. All combines CEX + Hyperliquid + dYdX + Bitstamp.</p>
         </div>
         <div class="chart-toolbar">
           <div class="chart-tf-tabs" id="chart-ex-tabs">
@@ -73,6 +73,9 @@
       <div id="tv-chart" style="width:100%;height:520px;overflow:hidden;position:relative;"></div>
       <div class="chart-legend">
         <span id="fp-lev-now" class="fp-lev-now">—</span>
+        <span class="legend-item fp-liq-ask">short liq ↑</span>
+        <span class="legend-item fp-liq-bid">long liq ↓</span>
+        <span class="legend-item fp-abs">absorption</span>
         <span class="legend-item lev-high">75x+ small</span>
         <span class="legend-item lev-50">≤50x</span>
         <span class="legend-item lev-25">≤25x</span>
@@ -81,32 +84,25 @@
       </div>
     </section>
 
-    <!-- TradingView price + order book -->
-    <section class="panel tv-panel">
+    <section class="panel move-panel">
       <div class="panel-head">
         <div>
-          <h2>Price chart · support & resistance</h2>
-          <p class="hint">TradingView candles with the largest order-book walls. Green = buy walls. Red = sell walls. Timeframe is only for this chart.</p>
+          <h2>Leverage liquidity</h2>
+          <p class="hint">Remaining % is how far price still has to go. When it gets there the band says LIQUIDATED. Absorption shows when flow is hitting but price is stalling.</p>
         </div>
-        <div class="book-meta">
-          <span id="book-spread" class="muted">spread —</span>
-          <span id="book-imbalance"></span>
+        <span id="liq-now" class="liq-now">—</span>
+      </div>
+      <div id="liq-alert" class="liq-alert">Watching liquidation bands…</div>
+      <div id="liq-abs" class="liq-abs hidden"></div>
+      <div class="liq-map">
+        <div class="liq-col">
+          <h3>Above · short liquidations</h3>
+          <div id="liq-asks" class="liq-asks"></div>
         </div>
-      </div>
-      <div class="chart-tf-tabs sr-tf-tabs" id="sr-tf-tabs">
-        <button class="chart-tf-tab" data-stf="1">1m</button>
-        <button class="chart-tf-tab" data-stf="5">5m</button>
-        <button class="chart-tf-tab active" data-stf="15">15m</button>
-        <button class="chart-tf-tab" data-stf="30">30m</button>
-        <button class="chart-tf-tab" data-stf="45">45m</button>
-        <button class="chart-tf-tab" data-stf="60">1h</button>
-        <button class="chart-tf-tab" data-stf="240">4h</button>
-        <button class="chart-tf-tab" data-stf="1440">1d</button>
-      </div>
-      <div id="tv-price-chart" class="tv-price-chart"></div>
-      <div class="chart-legend">
-        <span class="legend-item legend-support">— Support (top 12 buy walls)</span>
-        <span class="legend-item legend-resistance">— Resistance (top 12 sell walls)</span>
+        <div class="liq-col">
+          <h3>Below · long liquidations</h3>
+          <div id="liq-bids" class="liq-bids"></div>
+        </div>
       </div>
     </section>
 
@@ -250,13 +246,16 @@
         </div>
         <div class="legend-block">
           <h3>Events</h3>
-          <p>Bursts, large prints, market state changes, and absorption alerts appear in the events panel.</p>
+          <p>Bursts, large prints, market state changes, absorption, and liquidity pull / wall events appear in the events panel.</p>
+        </div>
+        <div class="legend-block">
+          <h3>Liquidity</h3>
+          <p>Each band shows how much % is left until that leverage is liquidated. After price reaches it, it says LIQUIDATED. Absorption means aggressive flow is being absorbed and price is stalling.</p>
         </div>
       </div>
     </section>
   </main>
 
-  <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
   <script src="/app.js" type="module"></script>
 </body>
 </html>

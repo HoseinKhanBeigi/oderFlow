@@ -58,6 +58,31 @@ export function book(opts: {
   };
 }
 
+export function bookLadder(opts: {
+  symbol?: string;
+  timestamp: number;
+  mid: number;
+  asks: { price: number; quote: number }[];
+  bids: { price: number; quote: number }[];
+}): OrderBookSnapshot {
+  return {
+    symbol: opts.symbol ?? 'BTCUSDT',
+    marketType: 'perp',
+    timestamp: opts.timestamp,
+    lastUpdateId: 1,
+    bids: opts.bids.map((l) => ({
+      price: l.price,
+      quantity: l.quote / l.price,
+      quoteValue: l.quote,
+    })),
+    asks: opts.asks.map((l) => ({
+      price: l.price,
+      quantity: l.quote / l.price,
+      quoteValue: l.quote,
+    })),
+  };
+}
+
 export function engine(overrides: Parameters<typeof mergeConfig>[0] = {}): OrderFlowEngine {
   return new OrderFlowEngine(overrides);
 }

@@ -14,6 +14,14 @@ export { CVDEngine } from './flow/cvd-engine.js';
 export { LargeTradeTape } from './flow/tape.js';
 
 export { LocalOrderBook } from './liquidity/local-order-book.js';
+export { LiquidityDepthEngine } from './liquidity/liquidity-depth-engine.js';
+export { LiquidityDynamicsEngine } from './liquidity/liquidity-dynamics-engine.js';
+export { LiquidityWallDetector } from './liquidity/liquidity-wall-detector.js';
+export { LiquidityVacuumDetector } from './liquidity/liquidity-vacuum-detector.js';
+export { MovePotentialEngine } from './movement/move-potential-engine.js';
+export { LiquidityTargetGenerator } from './movement/liquidity-target-generator.js';
+export { FlowLiquidityRatio } from './movement/flow-liquidity-ratio.js';
+export { TargetReachabilityEngine } from './movement/target-reachability-engine.js';
 export { BinanceSpotAdapter, BinanceFuturesAdapter } from './exchange/binance-adapters.js';
 export { BybitAdapter } from './exchange/bybit-adapter.js';
 export { OkxAdapter } from './exchange/okx-adapter.js';

@@ -1,4 +1,5 @@
 import type { AggressorSide, MarketState, PriceImpactEfficiency, WindowId } from './trade.js';
+import type { MovePotentialSnapshot } from './movement.js';
 
 export interface AbsorptionResult {
   detected: boolean;
@@ -70,6 +71,7 @@ export interface WindowSnapshot {
   largeParticipantFlowScore: number;
   confidence: number;
   state: MarketState;
+  movePotential: MovePotentialSnapshot;
 }
 
 export interface MultiWindowSnapshot {

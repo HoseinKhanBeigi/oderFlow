@@ -30,6 +30,7 @@ export class StockLiveFeed {
   private readonly tradeCount = new Map<string, number>();
   private readonly lastStates = new Map<string, Partial<Record<'10s' | '1m' | '5m', string>>>();
   private readonly lastYahooVol = new Map<string, number>();
+  private readonly lastMoveEvents = new Map<string, string>();
   private ws: WebSocket | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private summaryTimer: ReturnType<typeof setInterval> | null = null;
@@ -73,6 +74,13 @@ export class StockLiveFeed {
           alertType: ev.alert.type,
           message: ev.alert.message,
         });
+      }
+      if (ev.kind === 'move_potential' && ev.events.length) {
+        const sig = [...ev.events].sort().join(',');
+        if (sig !== this.lastMoveEvents.get(ev.symbol)) {
+          this.lastMoveEvents.set(ev.symbol, sig);
+          this.emit({ type: 'move_potential', symbol: ev.symbol, events: ev.events });
+        }
       }
     });
   }

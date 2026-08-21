@@ -122,6 +122,45 @@ export interface AlertThresholds {
   netFlow10sQuote: number;
 }
 
+export interface ReachabilityWeights {
+  flowToLiquidity: number;
+  flowAcceleration: number;
+  liquidityConsumption: number;
+  liquidityPulling: number;
+  liquidationAcceleration: number;
+  priceEfficiency: number;
+  volatilityDistance: number;
+  structuralAlignment: number;
+}
+
+export interface MovePotentialConfig {
+  /** Percent distances from mid used to build the liquidity path (not BTC-specific dollars). */
+  percentSteps: number[];
+  /** Extra targets at these ATR multiples. */
+  atrMultiples: number[];
+  maxTargetsPerSide: number;
+  nearbyBandPct: number;
+  minAtrPctOfPrice: number;
+  densityThinRatio: number;
+  densityThickRatio: number;
+  densityExtremeRatio: number;
+  pressureModerate: number;
+  pressureStrong: number;
+  pressureVeryStrong: number;
+  reachability: ReachabilityWeights;
+  easyScore: number;
+  moderateScore: number;
+  difficultScore: number;
+  veryDifficultScore: number;
+  directionNeutralBand: number;
+  wallMultiple: number;
+  wallMinPercentile: number;
+  wallLookaround: number;
+  wallDropFraction: number;
+  vacuumDensityRatio: number;
+  pullUnexplainedFraction: number;
+}
+
 export interface IntegrityConfig {
   maxOutOfOrderMs: number;
   bookStaleMs: number;
@@ -152,6 +191,7 @@ export interface EngineConfig {
   confidence: ConfidencePenalties;
   alerts: AlertThresholds;
   integrity: IntegrityConfig;
+  movePotential: MovePotentialConfig;
   historicalBaselineSamples: number;
   accelerationLookbackBuckets: number;
   cvdSlopeMs: number;

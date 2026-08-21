@@ -11,8 +11,6 @@ let lastSummary = null;
 const summaries = {};
 const tapeBySymbol = {};
 const eventsBySymbol = {};
-const booksBySymbol = {};
-const BOOK_LEVELS = 12;
 let config = null;
 const seenTradeIds = new Set();
 const openTabs = []; // list of { symbol, label }
@@ -249,7 +247,7 @@ function renderTape() {
   $('tape-count').textContent = `${list.length} shown`;
 }
 
-const EVENT_ICONS = { burst: '⚡', alert: '⚠', large: '◆', state: '◉', absorption: '⊘', info: '·' };
+const EVENT_ICONS = { burst: '⚡', alert: '⚠', large: '◆', state: '◉', absorption: '⊘', move: '◎', info: '·' };
 
 function addEvent(opts) {
   if (!opts || !opts.symbol || opts.symbol === '*') return;
@@ -298,378 +296,297 @@ function renderEvents() {
   $('events-count').textContent = `${list.length} events`;
 }
 
-function updateBook(book) {
+function fmtMovePrice(p) {
+  if (!Number.isFinite(p)) return '—';
+  if (p >= 1000) return p.toLocaleString('en-US', { maximumFractionDigits: 1 });
+  if (p >= 1) return p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return p.toPrecision(4);
+}
+
+const booksBySymbol = {};
+const liqEstBySymbol = {};
+const liqAnchor = { symbol: '', mid: 0 };
+const liqHits = {};
+let liqEstTimer = null;
+
+function quoteOf(level) {
+  if (Number.isFinite(level.quoteValue) && level.quoteValue > 0) return level.quoteValue;
+  const p = Number(level.price);
+  const q = Number(level.quantity ?? level.qty);
+  return p > 0 && q > 0 ? p * q : 0;
+}
+
+function bandStep(mid) {
+  if (mid >= 10_000) return Math.max(25, Math.round(mid * 0.0015));
+  if (mid >= 100) return Math.max(0.5, mid * 0.002);
+  if (mid >= 1) return mid * 0.003;
+  return mid * 0.004;
+}
+
+function bookNear(levels, price, mid) {
+  const band = Math.max(mid * 0.0025, bandStep(mid));
+  let usd = 0;
+  for (const lvl of levels ?? []) {
+    if (Math.abs(Number(lvl.price) - price) <= band) usd += quoteOf(lvl);
+  }
+  return usd;
+}
+
+function liqWipeFrac(lev) {
+  return 1 / Math.max(lev, 1);
+}
+
+function levSteps(maxLev) {
+  const all = [125, 100, 75, 50, 25, 20, 10, 5];
+  const out = all.filter((l) => l <= maxLev && l >= 5);
+  if (maxLev >= 5 && !out.includes(maxLev)) out.unshift(maxLev);
+  return [...new Set(out)].sort((a, b) => b - a).slice(0, 6);
+}
+
+function levWeight(lev, steps) {
+  const raw = steps.map((l) => (l >= 50 ? 1.35 : l >= 25 ? 1.2 : l >= 10 ? 1 : 0.75));
+  const i = steps.indexOf(lev);
+  const sum = raw.reduce((s, x) => s + x, 0) || 1;
+  return (raw[i] ?? 1) / sum;
+}
+
+function buildLevBands(mid, side, est, book) {
+  const maxLev = levBrackets[selectedSymbol]?.max || 25;
+  const steps = levSteps(maxLev);
+  const ratio = side === 'ask' ? (est?.shortRatio ?? 0.5) : (est?.longRatio ?? 0.5);
+  const oi = est?.oiUsd ?? 0;
+  const levels = side === 'ask' ? book?.asks : book?.bids;
+  return steps
+    .map((lev) => {
+      const dist = liqWipeFrac(lev);
+      const price = side === 'ask' ? mid * (1 + dist) : mid * (1 - dist);
+      return {
+        price,
+        lev,
+        wipe: dist,
+        usd: oi * ratio * levWeight(lev, steps),
+        book: bookNear(levels, price, mid),
+      };
+    })
+    .filter((r) => r.price > 0)
+    .sort((a, b) => (side === 'ask' ? a.price - b.price : b.price - a.price));
+}
+
+function fmtGapPct(gap) {
+  if (!(gap > 0)) return '0%';
+  const pct = gap * 100;
+  return `${pct.toFixed(2)}%`;
+}
+
+function tagBandState(row, now, side) {
+  const key = `${selectedSymbol}:${side}:${row.lev}`;
+  const crossed = side === 'ask' ? now >= row.price : now <= row.price;
+  const gap = Math.abs(now - row.price) / now;
+  const orig = Math.abs((liqAnchor.mid || now) - row.price) / now;
+  const close = !crossed && (gap <= 0.0025 || (orig > 0 && gap / orig <= 0.35));
+  if (crossed) liqHits[key] = Date.now();
+  const held = liqHits[key] && Date.now() - liqHits[key] < 20_000;
+  if (crossed || held) return { ...row, side, gap, state: 'hit', label: 'LIQUIDATED' };
+  if (close) return { ...row, side, gap, state: 'close', label: `${fmtGapPct(gap)} left` };
+  return { ...row, side, gap, state: '', label: `${fmtGapPct(gap)} left` };
+}
+
+function forcedConfirms(side) {
+  const w = lastSummary?.windows?.['10s'];
+  if (!w) return false;
+  const usd = side === 'ask' ? w.forcedBuyVolume : w.forcedSellVolume;
+  return Number(usd) > 25_000;
+}
+
+function liveAbsorption() {
+  const w = lastSummary?.windows?.[selectedTf] || lastSummary?.windows?.['10s'];
+  const a = w?.absorption;
+  if (!a?.detected) return null;
+  const buyer = a.type === 'BUYER_ABSORPTION';
+  return {
+    buyer,
+    title: buyer ? 'Buyer absorption' : 'Seller absorption',
+    text: buyer
+      ? 'Buyer absorption — heavy buying, price not rising (sellers absorbing)'
+      : 'Seller absorption — heavy selling, price not falling (buyers absorbing)',
+  };
+}
+
+function renderLiqBands(el, rows, maxUsd) {
+  if (!el) return;
+  if (!rows.length) {
+    el.innerHTML = '<div class="liq-empty">Waiting for open interest…</div>';
+    return;
+  }
+  const peak = Math.max(maxUsd, 1);
+  el.innerHTML = rows
+    .map((r) => {
+      const pct = Math.max(8, Math.round((r.usd / peak) * 100));
+      const hot = r.usd >= peak * 0.6 && !r.state ? ' hot' : '';
+      const who = r.side === 'ask' ? 'shorts' : 'longs';
+      const tip = r.state === 'hit'
+        ? `≤${r.lev}x ${who} LIQUIDATED at ${fmtMovePrice(r.price)}`
+        : `≤${r.lev}x ${who} · ${fmtGapPct(r.gap)} left`;
+      return `<div class="liq-band${hot}${r.state ? ` ${r.state}` : ''}" title="${tip}">
+        <span class="px">${fmtMovePrice(r.price)}</span>
+        <span class="lev">≤${r.lev}x</span>
+        <span class="usd">${fmtUsd(r.usd)}</span>
+        <span class="st">${r.label}</span>
+        <span class="liq-heat"><i style="width:${pct}%"></i></span>
+      </div>`;
+    })
+    .join('');
+}
+
+function renderLiqAlert(asks, bids) {
+  const el = $('liq-alert');
+  if (!el) return;
+  const hits = [...asks, ...bids].filter((r) => r.state === 'hit');
+  const rest = [...asks, ...bids].filter((r) => r.state !== 'hit').sort((a, b) => a.gap - b.gap);
+  const sideWord = (r) => (r.side === 'ask' ? 'shorts' : 'longs');
+  if (hits.length) {
+    const r = hits.sort((a, b) => a.lev - b.lev)[0];
+    el.className = 'liq-alert hit';
+    el.textContent = `≤${r.lev}x ${sideWord(r)} LIQUIDATED at ${fmtMovePrice(r.price)}`;
+    return;
+  }
+  if (rest[0]) {
+    el.className = rest[0].state === 'close' ? 'liq-alert close' : 'liq-alert';
+    el.textContent = `≤${rest[0].lev}x ${sideWord(rest[0])} · ${fmtGapPct(rest[0].gap)} left`;
+    return;
+  }
+  el.className = 'liq-alert';
+  el.textContent = 'Watching liquidation bands…';
+}
+
+function renderLiqAbs() {
+  const el = $('liq-abs');
+  if (!el) return;
+  const abs = liveAbsorption();
+  if (!abs) {
+    el.className = 'liq-abs hidden';
+    el.textContent = '';
+    return;
+  }
+  el.className = `liq-abs ${abs.buyer ? 'buy' : 'sell'}`;
+  el.textContent = abs.text;
+}
+
+function taggedLiqBands() {
+  const book = booksBySymbol[selectedSymbol];
+  const est = liqEstBySymbol[selectedSymbol];
+  const now = lastSummary?.price || book?.mid || est?.price || 0;
+  if (!now) return { now: 0, asks: [], bids: [] };
+  if (liqAnchor.symbol !== selectedSymbol) {
+    liqAnchor.symbol = selectedSymbol;
+    liqAnchor.mid = now;
+    for (const k of Object.keys(liqHits)) delete liqHits[k];
+  } else if (Math.abs(now - liqAnchor.mid) / now > 0.035) {
+    liqAnchor.mid = now;
+    for (const k of Object.keys(liqHits)) if (k.startsWith(`${selectedSymbol}:`)) delete liqHits[k];
+  }
+  const center = liqAnchor.mid || now;
+  const tagSide = (side) =>
+    buildLevBands(center, side, est, book).map((r) => {
+      const tagged = tagBandState(r, now, side);
+      if (tagged.state !== 'hit' && forcedConfirms(side) && tagged.gap <= 0.004) {
+        tagged.state = 'hit';
+        tagged.label = 'LIQUIDATED';
+        liqHits[`${selectedSymbol}:${side}:${r.lev}`] = Date.now();
+      }
+      return tagged;
+    });
+  return { now, asks: tagSide('ask'), bids: tagSide('bid') };
+}
+
+function renderLiquidityMap() {
+  const { now, asks, bids } = taggedLiqBands();
+  if (!now) {
+    if ($('liq-now')) $('liq-now').textContent = '—';
+    return;
+  }
+  const peak = Math.max(1, ...asks.map((r) => r.usd), ...bids.map((r) => r.usd));
+  const est = liqEstBySymbol[selectedSymbol];
+  const oiTxt = est?.oiUsd ? ` · OI ${fmtUsd(est.oiUsd)}` : '';
+  if ($('liq-now')) $('liq-now').textContent = `now ${fmtMovePrice(now)}${oiTxt}`;
+  renderLiqBands($('liq-asks'), asks, peak);
+  renderLiqBands($('liq-bids'), bids, peak);
+  renderLiqAlert(asks, bids);
+  renderLiqAbs();
+  scheduleFpLiqDraw();
+}
+
+function ingestBook(book) {
   if (!book?.symbol) return;
   booksBySymbol[book.symbol] = book;
-  if (book.symbol === selectedSymbol) {
-    updateBookLegend(book);
-    applySupportResistance(book, false);
-  }
+  if (book.symbol === selectedSymbol) renderLiquidityMap();
 }
 
-function updateBookLegend(book) {
-  const spread = book.spread ?? 0;
-  const spreadPct = book.mid ? (spread / book.mid) * 100 : 0;
-  const bidTotal = book.bidTotal ?? 0;
-  const askTotal = book.askTotal ?? 0;
-  const tot = bidTotal + askTotal || 1;
-  const bidPct = Math.round((bidTotal / tot) * 100);
-  if ($('book-spread')) {
-    $('book-spread').textContent = `spread ${fmtBookPrice(spread)} (${spreadPct.toFixed(4)}%)`;
-  }
-  if ($('book-imbalance')) {
-    $('book-imbalance').textContent = bidPct >= 50 ? `${bidPct}% bid heavy` : `${100 - bidPct}% ask heavy`;
-    $('book-imbalance').className = bidPct >= 50 ? 'book-imbalance pos' : 'book-imbalance neg';
-  }
+function levelsFromDepth(rows) {
+  return (rows ?? [])
+    .map((row) => {
+      const price = Number(row[0] ?? row.price);
+      const quantity = Number(row[1] ?? row.quantity);
+      return { price, quantity, quoteValue: price * quantity };
+    })
+    .filter((l) => l.price > 0 && l.quantity > 0);
 }
 
-function fmtBookPrice(p) {
-  if (!Number.isFinite(p)) return '—';
-  if (p >= 1000) return p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (p >= 1) return p.toFixed(4);
-  return p.toFixed(8);
-}
-
-function fmtCompact(qty) {
-  const abs = Math.abs(qty);
-  const trim = (v, d = 2) => v.toFixed(d).replace(/\.?0+$/, '');
-  if (abs >= 1e9) return `${trim(qty / 1e9)}B`;
-  if (abs >= 1e6) return `${trim(qty / 1e6)}M`;
-  if (abs >= 1e3) return `${trim(qty / 1e3)}K`;
-  if (abs >= 1) return trim(qty, 2);
-  return trim(qty, 4);
-}
-
-let tvChart = null;
-let tvSeries = null;
-let tvReady = false;
-let tvKlineReq = 0;
-let tvLastSr = 0;
-let tvSrSymbol = '';
-let depthTimer = null;
-let pendingSrBook = null;
-const tvPriceLines = [];
-const tvLastCandle = {};
-const WALL_COUNT = 12;
-let lastSrWalls = [];
-let lastSrWallsSymbol = '';
-
-let tvTfMinutes = 15;
-
-function tvIntervalParam() {
-  if (tvTfMinutes === 1440) return '1d';
-  if (tvTfMinutes === 240) return '4h';
-  if (tvTfMinutes === 60) return '1h';
-  if (tvTfMinutes === 45) return '15m';
-  return `${tvTfMinutes}m`;
-}
-
-function tvIntervalSeconds() {
-  return (tvTfMinutes === 45 ? 45 : tvTfMinutes) * 60;
-}
-
-function decimalsFor(price) {
-  if (price >= 1000) return 2;
-  if (price >= 1) return 3;
-  if (price >= 0.1) return 4;
-  if (price >= 0.01) return 5;
-  if (price >= 0.0001) return 6;
-  return 8;
-}
-
-function makeCandleSeries() {
-  return tvChart.addCandlestickSeries({
-    upColor: '#0ecb81',
-    downColor: '#f6465d',
-    borderVisible: false,
-    wickUpColor: '#0ecb81',
-    wickDownColor: '#f6465d',
-  });
-}
-
-function resetTvSeries() {
-  clearTvPriceLines();
-  if (tvChart && tvSeries) {
-    try {
-      tvChart.removeSeries(tvSeries);
-    } catch {
-      /* ignore */
-    }
-  }
-  if (tvChart) tvSeries = makeCandleSeries();
-}
-
-function initTvChart() {
-  const wrap = $('tv-price-chart');
-  if (!wrap || !window.LightweightCharts) return;
-
-  tvChart = LightweightCharts.createChart(wrap, {
-    width: Math.max(wrap.clientWidth, 320),
-    height: Math.max(wrap.clientHeight, 440),
-    layout: {
-      background: { color: '#141820' },
-      textColor: '#848e9c',
-      fontFamily: 'Inter, system-ui, sans-serif',
-    },
-    grid: {
-      vertLines: { color: '#1e2430' },
-      horzLines: { color: '#1e2430' },
-    },
-    rightPriceScale: { borderColor: '#1e2430' },
-    timeScale: { borderColor: '#1e2430', timeVisible: true, secondsVisible: false },
-    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-  });
-  tvSeries = makeCandleSeries();
-
-  const resize = () => {
-    const w = wrap.clientWidth;
-    const h = wrap.clientHeight;
-    if (w < 80 || h < 80) return;
-    tvChart.applyOptions({ width: w, height: h });
-  };
-  new ResizeObserver(resize).observe(wrap);
-  window.addEventListener('resize', resize);
-  loadTvCandles();
-  startDepthPoll();
-
-  document.getElementById('sr-tf-tabs')?.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-stf]');
-    if (!btn) return;
-    tvTfMinutes = Number(btn.dataset.stf);
-    document.querySelectorAll('#sr-tf-tabs .chart-tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
-    loadTvCandles();
-  });
-}
-
-function clearTvPriceLines() {
-  if (!tvSeries) return;
-  for (const line of tvPriceLines.splice(0)) {
-    try {
-      tvSeries.removePriceLine(line);
-    } catch {
-      /* series may have been reset */
-    }
-  }
-}
-
-function aggregateToMinutes(candles, minutes) {
-  const bucket = minutes * 60;
-  const map = new Map();
-  for (const c of candles) {
-    const t = c.time - (c.time % bucket);
-    const prev = map.get(t);
-    if (!prev) {
-      map.set(t, { time: t, open: c.open, high: c.high, low: c.low, close: c.close });
-    } else {
-      prev.high = Math.max(prev.high, c.high);
-      prev.low = Math.min(prev.low, c.low);
-      prev.close = c.close;
-    }
-  }
-  return [...map.values()];
-}
-
-async function loadTvCandles() {
-  if (!tvChart) return;
-  const req = ++tvKlineReq;
-  const symbol = selectedSymbol;
-  const tf = tvTfMinutes;
-  tvReady = false;
-  tvLastSr = 0;
-  tvSrSymbol = '';
-  pendingSrBook = booksBySymbol[symbol] ?? null;
-  resetTvSeries();
-
-  try {
-    const [rowRes, depthRes] = await Promise.all([
-      fetch(`/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${tvIntervalParam()}`).then((r) => r.json()),
-      fetch(`/api/depth?symbol=${encodeURIComponent(symbol)}`).then((r) => r.json()).catch(() => null),
-    ]);
-    if (req !== tvKlineReq || symbol !== selectedSymbol || tf !== tvTfMinutes) return;
-
-    const rows = rowRes;
-    if (!Array.isArray(rows) || !rows.length) return;
-
-    let candles = rows
-      .map((k) => ({
-        time: Math.floor(Number(k[0]) / 1000),
-        open: Number(k[1]),
-        high: Number(k[2]),
-        low: Number(k[3]),
-        close: Number(k[4]),
-      }))
-      .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.close));
-    if (tvTfMinutes === 45) candles = aggregateToMinutes(candles, 45);
-    if (!candles.length) return;
-
-    tvSeries.setData(candles);
-    tvLastCandle[`${symbol}_${tf}`] = candles[candles.length - 1] ?? null;
-
-    const ref = candles[candles.length - 1].close;
-    const precision = decimalsFor(ref);
-    tvSeries.applyOptions({
-      priceFormat: {
-        type: 'price',
-        precision,
-        minMove: Number((10 ** -precision).toFixed(precision)),
-      },
-    });
-
-    tvChart.timeScale().fitContent();
-    tvReady = true;
-
-    if (depthRes?.bids) {
-      const toLevels = (rowsIn) =>
-        (rowsIn ?? [])
-          .map(([p, q]) => ({ price: Number(p), quantity: Number(q) }))
-          .filter((l) => l.price > 0 && l.quantity > 0);
-      const bids = toLevels(depthRes.bids).sort((a, b) => b.price - a.price);
-      const asks = toLevels(depthRes.asks).sort((a, b) => a.price - b.price);
-      const bestBid = bids[0]?.price ?? 0;
-      const bestAsk = asks[0]?.price ?? 0;
-      const book = {
-        symbol,
-        bids,
-        asks,
-        mid: bestBid && bestAsk ? (bestBid + bestAsk) / 2 : bestBid || bestAsk,
-        spread: bestBid && bestAsk ? bestAsk - bestBid : 0,
-        bidTotal: bids.reduce((s, l) => s + l.quantity, 0),
-        askTotal: asks.reduce((s, l) => s + l.quantity, 0),
-      };
-      booksBySymbol[symbol] = book;
-      updateBookLegend(book);
-      pendingSrBook = book;
-    }
-
-    const book = booksBySymbol[selectedSymbol] ?? pendingSrBook;
-    requestAnimationFrame(() => {
-      if (req !== tvKlineReq) return;
-      applySupportResistance(book, true);
-    });
-  } catch {
-    tvReady = req === tvKlineReq;
-  }
-}
-
-function ingestTradeToTv(trade) {
-  if (!tvReady || !tvSeries || trade.symbol !== selectedSymbol) return;
-  const key = `${trade.symbol}_${tvTfMinutes}`;
-  const bucket = Math.floor(Date.now() / 1000 / tvIntervalSeconds()) * tvIntervalSeconds();
-  let c = tvLastCandle[key];
-  if (c && bucket < c.time) return;
-  if (!c || bucket > c.time) {
-    c = { time: bucket, open: trade.price, high: trade.price, low: trade.price, close: trade.price };
-  } else {
-    c = {
-      ...c,
-      close: trade.price,
-      high: Math.max(c.high, trade.price),
-      low: Math.min(c.low, trade.price),
-    };
-  }
-  tvLastCandle[key] = c;
-  try {
-    tvSeries.update(c);
-  } catch {
-    /* ignore */
-  }
-}
-
-function startDepthPoll() {
-  if (depthTimer) clearInterval(depthTimer);
-  pullDepth();
-  depthTimer = setInterval(pullDepth, 250);
-}
-
-async function pullDepth() {
-  const symbol = selectedSymbol;
+async function seedBook(symbol) {
   try {
     const data = await fetch(`/api/depth?symbol=${encodeURIComponent(symbol)}`).then((r) => r.json());
-    if (symbol !== selectedSymbol || !data?.bids) return;
-    const toLevels = (rows) =>
-      (rows ?? [])
-        .map(([p, q]) => ({ price: Number(p), quantity: Number(q) }))
-        .filter((l) => l.price > 0 && l.quantity > 0);
-    const bids = toLevels(data.bids).sort((a, b) => b.price - a.price);
-    const asks = toLevels(data.asks).sort((a, b) => a.price - b.price);
+    if (symbol !== selectedSymbol || !data) return;
+    const bids = levelsFromDepth(data.bids).sort((a, b) => b.price - a.price);
+    const asks = levelsFromDepth(data.asks).sort((a, b) => a.price - b.price);
     const bestBid = bids[0]?.price ?? 0;
     const bestAsk = asks[0]?.price ?? 0;
-    updateBook({
+    ingestBook({
       symbol,
       bids,
       asks,
       mid: bestBid && bestAsk ? (bestBid + bestAsk) / 2 : bestBid || bestAsk,
-      spread: bestBid && bestAsk ? bestAsk - bestBid : 0,
-      bidTotal: bids.reduce((s, l) => s + l.quantity, 0),
-      askTotal: asks.reduce((s, l) => s + l.quantity, 0),
     });
   } catch {
     /* ignore */
   }
 }
 
-function withCumulative(levels) {
-  let running = 0;
-  return levels.map((l, i) => {
-    running += l.quantity;
-    return { ...l, idx: i + 1, cumulative: running };
-  });
+async function loadLiqEstimate(symbol) {
+  try {
+    const data = await fetch(`/api/liq-estimate?symbol=${encodeURIComponent(symbol)}`).then((r) => r.json());
+    if (symbol !== selectedSymbol || !data?.oiUsd) return;
+    liqEstBySymbol[symbol] = data;
+    renderLiquidityMap();
+  } catch {
+    /* ignore */
+  }
 }
 
-function srWallsFromBook(book) {
-  if (!book) return [];
-  const bids = withCumulative([...(book.bids ?? [])].sort((a, b) => b.price - a.price));
-  const asks = withCumulative([...(book.asks ?? [])].sort((a, b) => a.price - b.price));
-  const mid = book.mid || 0;
-  const toWalls = (rows, side) =>
-    rows
-      .filter((l) => (side === 'bid' ? l.price < mid : l.price > mid))
-      .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, WALL_COUNT)
-      .map((l) => ({
-        price: l.price,
-        color: side === 'bid' ? '#0ecb81' : '#f6465d',
-        title: `L${l.idx} · ${fmtBookPrice(l.price)} · ${fmtCompact(l.quantity)} · Σ${fmtCompact(l.cumulative)}`,
-        short: `L${l.idx} ${fmtCompact(l.quantity)}`,
-      }));
-  return [...toWalls(bids, 'bid'), ...toWalls(asks, 'ask')];
+function startLiqEstimateLoop() {
+  if (liqEstTimer) clearInterval(liqEstTimer);
+  loadLiqEstimate(selectedSymbol);
+  liqEstTimer = setInterval(() => loadLiqEstimate(selectedSymbol), 30_000);
 }
 
-function applySupportResistance(book, force = false) {
-  if (!book || book.symbol !== selectedSymbol) {
-    if (book) pendingSrBook = book;
-    return;
-  }
-  const now = Date.now();
-  if (!force && tvSrSymbol === selectedSymbol && now - tvLastSr < 250) return;
-  tvLastSr = now;
-  tvSrSymbol = selectedSymbol;
-  lastSrWalls = srWallsFromBook(book);
-  lastSrWallsSymbol = book.symbol;
+function renderMovePotential() {
+  renderLiquidityMap();
+}
 
-  if (!tvReady || !tvSeries) {
-    pendingSrBook = book;
-    return;
+function clearMovePotential() {
+  liqAnchor.symbol = '';
+  liqAnchor.mid = 0;
+  for (const k of Object.keys(liqHits)) delete liqHits[k];
+  if ($('liq-now')) $('liq-now').textContent = '—';
+  if ($('liq-alert')) {
+    $('liq-alert').className = 'liq-alert';
+    $('liq-alert').textContent = 'Watching liquidation bands…';
   }
-
-  clearTvPriceLines();
-  const Dashed = LightweightCharts.LineStyle?.Dashed ?? 2;
-  for (const level of lastSrWalls) {
-    try {
-      tvPriceLines.push(
-        tvSeries.createPriceLine({
-          price: level.price,
-          color: level.color,
-          lineWidth: 2,
-          lineStyle: Dashed,
-          axisLabelVisible: true,
-          title: level.title,
-        }),
-      );
-    } catch {
-      /* ignore */
-    }
+  if ($('liq-abs')) {
+    $('liq-abs').className = 'liq-abs hidden';
+    $('liq-abs').textContent = '';
   }
+  if ($('liq-asks')) $('liq-asks').innerHTML = '<div class="liq-empty">Waiting for open interest…</div>';
+  if ($('liq-bids')) $('liq-bids').innerHTML = '<div class="liq-empty">Waiting for open interest…</div>';
 }
 
 function clearMainPanels() {
@@ -694,6 +611,7 @@ function clearMainPanels() {
   $('sell-bar').style.width = '50%';
   $('compare-row').innerHTML = '';
   $('absorption-box').classList.add('hidden');
+  clearMovePotential();
 }
 
 function syncExchangeTabs() {
@@ -711,8 +629,6 @@ function syncExchangeTabs() {
 }
 
 function applySymbolFilter() {
-  lastSrWalls = [];
-  lastSrWallsSymbol = '';
   document.querySelectorAll('.coin-chip').forEach((chip) => {
     chip.classList.toggle('active', chip.dataset.symbol === selectedSymbol);
   });
@@ -722,10 +638,10 @@ function applySymbolFilter() {
   syncExchangeTabs();
   renderTape();
   renderEvents();
-  loadTvCandles();
-  startDepthPoll();
   rebuildChart();
   seedFootprintKlines();
+  seedBook(selectedSymbol);
+  startLiqEstimateLoop();
 }
 
 function chipHtml(c) {
@@ -895,6 +811,7 @@ function updateUi() {
     absBox.classList.add('hidden');
   }
 
+  renderMovePotential(w.movePotential);
   renderCompare(lastSummary);
 }
 
@@ -983,6 +900,15 @@ function clampFpPan(storeSize, cssWidth) {
 function cssChartWidth() {
   if (!fpCanvas) return 0;
   return fpCanvas.width / devicePixelRatio;
+}
+
+let fpLiqDrawTimer = null;
+function scheduleFpLiqDraw() {
+  if (fpLiqDrawTimer) return;
+  fpLiqDrawTimer = setTimeout(() => {
+    fpLiqDrawTimer = null;
+    drawFootprint();
+  }, 250);
 }
 
 function snapChartToLive() {
@@ -1264,7 +1190,6 @@ function ingestTradeToChart(trade) {
   else { lv.sell += trade.quoteValue; bar.totalSell += trade.quoteValue; }
   if (trade.symbol === selectedSymbol && tradeMatchesExchange(trade)) {
     drawFootprint();
-    if (tradeExchange(trade) === 'binance') ingestTradeToTv(trade);
   }
 }
 
@@ -1345,6 +1270,15 @@ function drawFootprint() {
   for (const bar of visible) {
     if (bar.high > globalHigh) globalHigh = bar.high;
     if (bar.low < globalLow) globalLow = bar.low;
+  }
+  const liqOverlay = taggedLiqBands();
+  const lastPx = visible[visible.length - 1]?.close || liqOverlay.now;
+  if (lastPx > 0) {
+    for (const r of [...liqOverlay.asks, ...liqOverlay.bids]) {
+      if (Math.abs(r.price - lastPx) / lastPx > 0.03) continue;
+      if (r.price > globalHigh) globalHigh = r.price;
+      if (r.price < globalLow) globalLow = r.price;
+    }
   }
   const bucket = displayBucket(globalHigh, globalLow, chartH);
   globalHigh = priceToTick(globalHigh, bucket) + bucket * 2;
@@ -1488,8 +1422,81 @@ function drawFootprint() {
 
   const liveBar = visible[visible.length - 1];
   updateFpLevNow((liveBar?.totalBuy ?? 0) + (liveBar?.totalSell ?? 0));
+  drawLiqOverlay(ctx, {
+    leftPad,
+    plotRight,
+    yForPrice,
+    topPad,
+    chartH,
+    globalHigh,
+    globalLow,
+    overlay: liqOverlay,
+  });
 
   ctx.lineWidth = 1;
+}
+
+function drawLiqOverlay(ctx, { leftPad, plotRight, yForPrice, topPad, chartH, globalHigh, globalLow, overlay }) {
+  const rows = [...(overlay?.asks ?? []), ...(overlay?.bids ?? [])];
+  if (!rows.length) return;
+  ctx.save();
+  ctx.font = 'bold 10px JetBrains Mono, monospace';
+  ctx.textBaseline = 'middle';
+  let lastY = -99;
+  const sorted = rows
+    .filter((r) => r.price >= globalLow && r.price <= globalHigh)
+    .sort((a, b) => b.price - a.price);
+  for (const r of sorted) {
+    const y = yForPrice(r.price);
+    if (y < topPad + 2 || y > topPad + chartH - 2) continue;
+    const isAsk = r.side === 'ask';
+    const color = r.state === 'hit' ? '#fb7185' : r.state === 'close' ? '#fbbf24' : isAsk ? '#f87171' : '#4ade80';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = r.state === 'hit' ? 2 : r.state === 'close' ? 1.6 : 1;
+    ctx.setLineDash(r.state ? [] : [5, 4]);
+    ctx.globalAlpha = r.state === 'hit' ? 0.95 : 0.7;
+    ctx.beginPath();
+    ctx.moveTo(leftPad, y);
+    ctx.lineTo(plotRight, y);
+    ctx.stroke();
+    if (Math.abs(y - lastY) < 11) continue;
+    lastY = y;
+    const tag = r.state === 'hit' ? `≤${r.lev}x LIQUIDATED` : `≤${r.lev}x ${fmtGapPct(r.gap)} left`;
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
+    const tw = ctx.measureText(tag).width;
+    ctx.fillStyle = 'rgba(13, 17, 23, 0.82)';
+    ctx.fillRect(leftPad + 2, y - 7, tw + 8, 14);
+    ctx.fillStyle = color;
+    ctx.fillText(tag, leftPad + 6, y);
+  }
+  const now = overlay?.now;
+  if (now > 0 && now >= globalLow && now <= globalHigh) {
+    const y = yForPrice(now);
+    ctx.setLineDash([2, 3]);
+    ctx.strokeStyle = '#60a5fa';
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.moveTo(leftPad, y);
+    ctx.lineTo(plotRight, y);
+    ctx.stroke();
+  }
+  const abs = liveAbsorption();
+  if (abs && now > 0 && now >= globalLow && now <= globalHigh) {
+    const y = yForPrice(now);
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = abs.buyer ? '#22c55e' : '#fbbf24';
+    ctx.fillRect(leftPad, y - 10, plotRight - leftPad, 20);
+    ctx.globalAlpha = 1;
+    ctx.font = 'bold 10px JetBrains Mono, monospace';
+    ctx.fillStyle = abs.buyer ? '#86efac' : '#fbbf24';
+    ctx.textAlign = 'center';
+    ctx.fillText(abs.title.toUpperCase(), (leftPad + plotRight) / 2, y);
+  }
+  ctx.restore();
 }
 
 function updateFpLevNow(flowUsd) {
@@ -1534,7 +1541,6 @@ function rebuildChart() {
 async function init() {
   setupTabs();
   initChart();
-  initTvChart();
   try {
     config = await fetch('/api/config').then((r) => r.json());
     if (config.coins?.length) {
@@ -1547,6 +1553,7 @@ async function init() {
     $('symbol-label').textContent = `${selectedSymbol.replace('USDT', '')} · ${config.market}`;
   } catch { /* ignore */ }
   await loadLeverageBrackets();
+  startLiqEstimateLoop();
   seedFootprintKlines();
   drawFootprint();
   renderTape();
@@ -1581,8 +1588,20 @@ async function init() {
         updateOverview(ev.coins);
         break;
       case 'book':
-        updateBook(ev);
+        ingestBook(ev);
         break;
+      case 'move_potential': {
+        const events = ev.events ?? [];
+        if (!events.length) break;
+        addEvent({
+          kind: 'move',
+          symbol: ev.symbol,
+          title: `${ev.symbol.replace('USDT', '')} ${events[0].replace(/_/g, ' ').toLowerCase()}`,
+          detail: events.map((e) => e.replace(/_/g, ' ').toLowerCase()).join(' · '),
+          cls: events.some((e) => e.includes('ASK') || e.includes('UPSIDE')) ? 'buy' : 'sell',
+        });
+        break;
+      }
       case 'large_trade': {
         const lev = leverageForUsd(ev.symbol, ev.quoteValue);
         addEvent({

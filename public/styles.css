@@ -375,6 +375,9 @@ body {
 .lev-10, .legend-item.lev-10 { color: #f87171; }
 .lev-whale, .legend-item.lev-whale { color: #c084fc; }
 .legend-item.lev-high { color: #8b949e; }
+.legend-item.fp-liq-ask { color: #f87171; }
+.legend-item.fp-liq-bid { color: #4ade80; }
+.legend-item.fp-abs { color: #fbbf24; }
 .fp-lev-now { font-weight: 600; }
 
 .flags { display: flex; flex-wrap: wrap; gap: 0.25rem; }
@@ -421,6 +424,7 @@ body {
 .event-card.buy-flow { border-left: 3px solid var(--buy); }
 .event-card.sell-flow { border-left: 3px solid var(--sell); }
 .event-card.info { opacity: 0.75; }
+.event-card.move { border-left: 3px solid var(--accent); }
 
 .event-icon {
   font-size: 1rem;
@@ -444,7 +448,7 @@ body {
 
 .legend-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 1rem;
 }
 
@@ -454,6 +458,7 @@ body {
   .bottom-row { grid-template-columns: 1fr; min-height: auto; }
   .tape-panel, .events-panel { min-height: 320px; }
   .legend-grid { grid-template-columns: 1fr 1fr; }
+  .liq-map { grid-template-columns: 1fr; }
 }
 
 .legend-block { margin-bottom: 0; }
@@ -525,14 +530,81 @@ body {
 }
 .open-tab-close:hover { color: var(--sell); background: rgba(239,83,80,0.15); }
 
-/* Chart panel */
-.tv-panel { grid-column: 1 / -1; grid-row: 2; }
-.tv-price-chart {
-  position: relative;
-  width: 100%;
-  height: 480px;
-  overflow: hidden;
+/* Liquidity map */
+.move-panel { grid-column: 1 / -1; grid-row: 2; }
+.liq-now { font-family: var(--mono); font-size: 0.85rem; color: var(--muted); }
+.liq-alert {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  margin: 0 0 0.7rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  background: var(--panel2);
+  color: var(--muted);
 }
+.liq-alert.close { color: var(--warn); background: rgba(251, 191, 36, 0.12); }
+.liq-alert.hit { color: #fff; background: rgba(239, 68, 68, 0.22); }
+.liq-abs {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  margin: -0.4rem 0 0.7rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  background: rgba(251, 191, 36, 0.12);
+  color: var(--warn);
+}
+.liq-abs.hidden { display: none; }
+.liq-abs.buy { background: rgba(34, 197, 94, 0.12); color: var(--buy); }
+.liq-abs.sell { background: rgba(239, 68, 68, 0.12); color: var(--sell); }
+.liq-map {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
+}
+.liq-col h3 {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+}
+.liq-band {
+  display: grid;
+  grid-template-columns: 5.6rem 2.8rem 4rem 5.6rem 1fr;
+  gap: 0.3rem;
+  align-items: center;
+  margin-bottom: 0.28rem;
+  padding: 0.18rem 0.3rem;
+  border-radius: 5px;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+.liq-band .px { font-weight: 600; }
+.liq-band .lev { color: var(--accent); font-size: 0.68rem; }
+.liq-band .usd { color: var(--muted); text-align: right; }
+.liq-band .st { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.04em; text-align: right; color: var(--muted); }
+.liq-heat { height: 8px; border-radius: 4px; background: var(--panel2); overflow: hidden; }
+.liq-heat > i { display: block; height: 100%; border-radius: 4px; }
+.liq-col.asks .liq-heat > i, .liq-asks .liq-heat > i { background: var(--sell); }
+.liq-bids .liq-heat > i { background: var(--buy); }
+.liq-band.hot .px { color: var(--warn); }
+.liq-band.close {
+  background: rgba(251, 191, 36, 0.1);
+  outline: 1px solid rgba(251, 191, 36, 0.45);
+}
+.liq-band.close .st { color: var(--warn); }
+.liq-band.hit {
+  background: rgba(239, 68, 68, 0.16);
+  outline: 1px solid rgba(239, 68, 68, 0.55);
+  animation: liq-hit-pulse 1.2s ease-in-out infinite;
+}
+.liq-band.hit .st,
+.liq-band.hit .px { color: #fff; }
+@keyframes liq-hit-pulse {
+  0%, 100% { background: rgba(239, 68, 68, 0.16); }
+  50% { background: rgba(239, 68, 68, 0.28); }
+}
+.liq-empty { color: var(--muted); font-size: 0.75rem; padding: 0.35rem 0; }
 .chart-legend {
   display: flex;
   flex-wrap: wrap;
@@ -540,8 +612,6 @@ body {
   padding: 0.45rem 0.2rem 0;
   font-size: 0.72rem;
 }
-.legend-item.legend-support { color: #0ecb81; }
-.legend-item.legend-resistance { color: #f6465d; }
 .chart-panel { grid-column: 1 / -1; grid-row: 1; }
 .chart-toolbar {
   display: flex;
@@ -563,11 +633,6 @@ body {
   opacity: 0.35;
   cursor: not-allowed;
 }
-.sr-tf-tabs {
-  flex-wrap: wrap;
-  padding: 0 0 0.45rem;
-  max-width: none;
-}
 .chart-tf-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .chart-live-btn {
   background: transparent;
@@ -582,41 +647,3 @@ body {
 .chart-live-btn:hover { background: rgba(96, 165, 250, 0.12); }
 .chart-live-btn.hidden { display: none; }
 
-.book-imbalance.pos { color: var(--buy); }
-.book-imbalance.neg { color: var(--sell); }
-.book-totals { display: flex; justify-content: space-between; margin: 0.35rem 0 0.5rem; font-size: 0.78rem; font-weight: 600; }
-.book-total.bid { color: var(--buy); }
-.book-total.ask { color: var(--sell); }
-.order-book { font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; }
-.book-empty { color: var(--muted); text-align: center; padding: 1.2rem 0; }
-.book-side { display: flex; flex-direction: column; gap: 2px; }
-.book-row {
-  display: grid;
-  grid-template-columns: 4.8rem 1fr 7.2rem;
-  align-items: center;
-  gap: 0.4rem;
-  min-height: 1.15rem;
-}
-.book-row.bid { grid-template-columns: 7.2rem 1fr 4.8rem; }
-.book-row.best .book-price { font-weight: 700; }
-.book-size { color: var(--muted); }
-.book-price { color: var(--text); text-align: right; }
-.book-row.bid .book-price { text-align: left; }
-.book-row.ask .book-size { text-align: left; }
-.book-row.bid .book-size { text-align: right; }
-.book-bar-wrap { position: relative; height: 1.05rem; background: #161b22; border-radius: 2px; overflow: hidden; }
-.book-row.ask .book-bar-wrap { display: flex; justify-content: flex-end; }
-.book-bar { display: block; height: 100%; border-radius: 2px; }
-.book-bar.ask { background: rgba(239, 83, 80, 0.45); }
-.book-bar.bid { background: rgba(38, 166, 154, 0.45); }
-.book-row.best .book-bar.ask { background: rgba(239, 83, 80, 0.75); }
-.book-row.best .book-bar.bid { background: rgba(38, 166, 154, 0.75); }
-.book-spread-line {
-  text-align: center;
-  color: var(--muted);
-  font-size: 0.7rem;
-  padding: 0.35rem 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  margin: 0.25rem 0;
-}

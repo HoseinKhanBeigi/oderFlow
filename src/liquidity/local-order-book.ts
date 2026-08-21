@@ -90,14 +90,28 @@ export class LocalOrderBook {
 
   notionalWithin(side: 'bid' | 'ask', mid: number, bandPct: number): number {
     if (mid <= 0) return 0;
-    const map = side === 'bid' ? this.bids : this.asks;
     const bound = side === 'bid' ? mid * (1 - bandPct / 100) : mid * (1 + bandPct / 100);
+    return this.notionalBetween(side, mid, bound);
+  }
+
+  /** Quote notional between two prices, inclusive of the farther bound, exclusive of mid. */
+  notionalBetween(side: 'bid' | 'ask', fromPrice: number, toPrice: number): number {
+    const lo = Math.min(fromPrice, toPrice);
+    const hi = Math.max(fromPrice, toPrice);
+    const map = side === 'bid' ? this.bids : this.asks;
     let sum = 0;
     for (const lvl of map.values()) {
-      if (side === 'bid' && lvl.price >= bound && lvl.price <= mid) sum += lvl.price * lvl.quantity;
-      if (side === 'ask' && lvl.price <= bound && lvl.price >= mid) sum += lvl.price * lvl.quantity;
+      if (side === 'ask' && lvl.price > lo && lvl.price <= hi) sum += lvl.price * lvl.quantity;
+      if (side === 'bid' && lvl.price < hi && lvl.price >= lo) sum += lvl.price * lvl.quantity;
     }
     return sum;
+  }
+
+  sortedLevels(side: 'bid' | 'ask'): BookLevel[] {
+    const map = side === 'bid' ? this.bids : this.asks;
+    const levels = [...map.values()].map(toLevel);
+    levels.sort((a, b) => (side === 'bid' ? b.price - a.price : a.price - b.price));
+    return levels;
   }
 
   empty(): boolean {

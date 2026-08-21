@@ -18,6 +18,10 @@ export type {
   ConsumptionSnapshot,
   FlowLiquidityRegime,
   IcebergLikeFlag,
+  LiquidityWall,
+  LiquidityVacuum,
+  MovePotentialEventType,
+  LiquidityDynamicsSnapshot,
 } from './liquidity.js';
 export { DEFAULT_BPS_BANDS } from './liquidity.js';
 export type {
@@ -28,3 +32,12 @@ export type {
   SpotPerpSnapshot,
   AlertEvent,
 } from './signals.js';
+export type {
+  MoveDirection,
+  PathOfLeastResistance,
+  LiquidityTarget,
+  LiquidityDistanceMap,
+  MovePotentialSnapshot,
+  DirectionAnalysis,
+  MovePotentialAnalysis,
+} from './movement.js';

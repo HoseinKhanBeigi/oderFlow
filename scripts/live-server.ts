@@ -68,6 +68,18 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.url?.startsWith('/api/liq-estimate')) {
+      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+      const symbol = (u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase();
+      try {
+        json(res, await getLiqEstimate(symbol));
+      } catch {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end('{}');
+      }
+      return;
+    }
+
     if (req.url?.startsWith('/api/leverage-brackets')) {
       try {
         json(res, await getLeverageBrackets());
@@ -208,6 +220,47 @@ async function getLeverageBrackets(): Promise<Record<string, LevSpec>> {
   }
   if (Object.keys(out).length) levCache = { at: Date.now(), data: out };
   return out;
+}
+
+type LiqEstimate = {
+  symbol: string;
+  price: number;
+  oiUsd: number;
+  longRatio: number;
+  shortRatio: number;
+};
+
+const liqEstCache = new Map<string, { at: number; data: LiqEstimate }>();
+
+async function getLiqEstimate(symbol: string): Promise<LiqEstimate> {
+  const hit = liqEstCache.get(symbol);
+  if (hit && Date.now() - hit.at < 30_000) return hit.data;
+  const [oiRes, markRes, lsRes] = await Promise.all([
+    fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${encodeURIComponent(symbol)}`),
+    fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${encodeURIComponent(symbol)}`),
+    fetch(
+      `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${encodeURIComponent(symbol)}&period=5m&limit=1`,
+    ),
+  ]);
+  if (!oiRes.ok || !markRes.ok) throw new Error('oi fetch failed');
+  const oi = (await oiRes.json()) as { openInterest?: string };
+  const mark = (await markRes.json()) as { markPrice?: string };
+  const ls = lsRes.ok
+    ? ((await lsRes.json()) as Array<{ longAccount?: string; shortAccount?: string }>)
+    : [];
+  const price = Number(mark.markPrice);
+  const contracts = Number(oi.openInterest);
+  const longRatio = Number(ls[0]?.longAccount);
+  const shortRatio = Number(ls[0]?.shortAccount);
+  const data: LiqEstimate = {
+    symbol,
+    price: Number.isFinite(price) ? price : 0,
+    oiUsd: Number.isFinite(contracts) && Number.isFinite(price) ? contracts * price : 0,
+    longRatio: Number.isFinite(longRatio) && longRatio > 0 ? longRatio : 0.5,
+    shortRatio: Number.isFinite(shortRatio) && shortRatio > 0 ? shortRatio : 0.5,
+  };
+  if (data.oiUsd > 0) liqEstCache.set(symbol, { at: Date.now(), data });
+  return data;
 }
 
 process.on('SIGINT', () => {

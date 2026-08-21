@@ -19,6 +19,7 @@ import { ConsumptionEngine } from '../liquidity/consumption-engine.js';
 import { IcebergLikeDetector } from '../liquidity/iceberg-detector.js';
 import { LiquidityEngine } from '../liquidity/liquidity-engine.js';
 import { LocalOrderBook } from '../liquidity/local-order-book.js';
+import { MovePotentialEngine } from '../movement/move-potential-engine.js';
 import type {
   AlertEvent,
   MultiWindowSnapshot,
@@ -26,7 +27,7 @@ import type {
 } from '../models/signals.js';
 import type { LargeAggressiveTradeEvent, LargeTradeCluster, TapeFilter, TapeEntry } from '../models/flow.js';
 import type { FlowBurst } from '../models/flow.js';
-import type { IcebergLikeFlag } from '../models/liquidity.js';
+import type { IcebergLikeFlag, MovePotentialEventType } from '../models/liquidity.js';
 import type {
   AccelerationLabel,
   LiquidationEvent,
@@ -45,7 +46,8 @@ export type EngineEvent =
   | { kind: 'cluster'; cluster: LargeTradeCluster; symbol: string }
   | { kind: 'iceberg_like'; flag: IcebergLikeFlag; symbol: string }
   | { kind: 'alert'; alert: AlertEvent }
-  | { kind: 'snapshot'; snapshot: WindowSnapshot };
+  | { kind: 'snapshot'; snapshot: WindowSnapshot }
+  | { kind: 'move_potential'; symbol: string; events: MovePotentialEventType[] };
 
 interface SamePriceBuf {
   side: 'BUY' | 'SELL';
@@ -71,6 +73,7 @@ export class SymbolEngine {
   readonly directional: FlowScoreEngine;
   readonly confidence: ConfidenceEngine;
   readonly states: StateClassifier;
+  readonly movePotential: MovePotentialEngine;
 
   private readonly listeners = new Set<EngineListener>();
   private lastBuyVolume = 0;
@@ -111,6 +114,7 @@ export class SymbolEngine {
     this.directional = new FlowScoreEngine(config.directionalWeights);
     this.confidence = new ConfidenceEngine(config.confidence);
     this.states = new StateClassifier(config.vacuum, config.exhaustion);
+    this.movePotential = new MovePotentialEngine(config);
     this.recentTrades = new RingBuffer(config.tradeRingCapacity);
   }
 
@@ -409,10 +413,28 @@ export class SymbolEngine {
       largeParticipantFlowScore: participant.largeParticipantFlowScore,
       confidence: conf,
       state,
+      movePotential: this.movePotential.evaluate({
+        symbol: this.symbol,
+        book: this.book,
+        buyVolume: agg.buyVolume,
+        sellVolume: agg.sellVolume,
+        priceHigh: agg.priceHigh,
+        priceLow: agg.priceLow,
+        impactEfficiency: impact.efficiency,
+        absorption,
+        dataQualityScore: conf,
+      }),
     };
 
     for (const alert of buildAlerts(snap, this.config.alerts, now)) {
       this.emit({ kind: 'alert', alert });
+    }
+    if (snap.movePotential.liquidity.events.length) {
+      this.emit({
+        kind: 'move_potential',
+        symbol: this.symbol,
+        events: snap.movePotential.liquidity.events,
+      });
     }
     return snap;
   }
@@ -502,6 +524,7 @@ export class SymbolEngine {
     this.lastBuyVolume = view.agg.buyVolume;
     this.lastSellVolume = view.agg.sellVolume;
     this.consumption.observe(now, bid, ask, buyDelta, sellDelta);
+    this.movePotential.observe(now, this.book, buyDelta, sellDelta);
   }
 
   private updateFlip(now: number): void {
