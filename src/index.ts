@@ -15,6 +15,14 @@ export { LargeTradeTape } from './flow/tape.js';
 
 export { LocalOrderBook } from './liquidity/local-order-book.js';
 export { BinanceSpotAdapter, BinanceFuturesAdapter } from './exchange/binance-adapters.js';
+export { BybitAdapter } from './exchange/bybit-adapter.js';
+export { OkxAdapter } from './exchange/okx-adapter.js';
+export { BitgetAdapter } from './exchange/bitget-adapter.js';
+export { HyperliquidAdapter } from './exchange/hyperliquid-adapter.js';
+export { DydxAdapter } from './exchange/dydx-adapter.js';
+export { BitstampAdapter } from './exchange/bitstamp-adapter.js';
 export { BinanceMarketDataClient } from './market-data/binance-client.js';
+export { EXCHANGE_IDS, EXCHANGE_LABELS } from './exchange/venues.js';
+export type { ExchangeId } from './exchange/venues.js';
 
 export * from './models/index.js';

@@ -7,6 +7,14 @@ import { LiveBinanceFeed } from '../src/live/live-feed.js';
 import { DEFAULT_WATCHLIST, EQUITY_PERP_WATCHLIST } from '../src/live/watchlist.js';
 import { DEFAULT_CONFIG } from '../src/config/defaults.js';
 import type { LiveFeedEvent } from '../src/live/live-feed.js';
+import {
+  EXCHANGE_LABELS,
+  fetchVenueDepth,
+  fetchVenueKlines,
+  isExchangeId,
+  parseExchangesEnv,
+  type ExchangeId,
+} from '../src/exchange/venues.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC = join(__dirname, '../public');
@@ -30,6 +38,8 @@ const coins = extra.length
     })
   : [...DEFAULT_WATCHLIST, ...EQUITY_PERP_WATCHLIST];
 
+const EXCHANGES = parseExchangesEnv();
+
 const MIME: Record<string, string> = {
   '.html': 'text/html',
   '.css': 'text/css',
@@ -41,20 +51,16 @@ const feed = new LiveBinanceFeed({
   coins,
   market: MARKET as 'spot' | 'perp',
   summaryMs: 2_000,
+  exchanges: EXCHANGES,
 });
 
 const server = createServer(async (req, res) => {
     if (req.url?.startsWith('/api/depth')) {
       const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
       const symbol = (u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase();
-      const base =
-        MARKET === 'spot'
-          ? 'https://api.binance.com/api/v3/depth'
-          : 'https://fapi.binance.com/fapi/v1/depth';
+      const exchange = parseExchangeParam(u.searchParams.get('exchange'));
       try {
-        const r = await fetch(`${base}?symbol=${encodeURIComponent(symbol)}&limit=100`);
-        const data = await r.json();
-        json(res, data);
+        json(res, await fetchVenueDepth(exchange, symbol, MARKET, 100));
       } catch {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end('{}');
@@ -76,16 +82,9 @@ const server = createServer(async (req, res) => {
       const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
       const symbol = (u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase();
       const interval = u.searchParams.get('interval') ?? '1m';
-      const base =
-        MARKET === 'spot'
-          ? 'https://api.binance.com/api/v3/klines'
-          : 'https://fapi.binance.com/fapi/v1/klines';
+      const exchange = parseExchangeParam(u.searchParams.get('exchange'));
       try {
-        const r = await fetch(
-          `${base}?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=300`,
-        );
-        const data = await r.json();
-        json(res, data);
+        json(res, await fetchVenueKlines(exchange, symbol, interval, MARKET, 300));
       } catch {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end('[]');
@@ -100,6 +99,8 @@ const server = createServer(async (req, res) => {
       stocks: coins.filter((c) => c.venue === 'equity'),
       market: MARKET,
       stockSource: 'binance-perp',
+      exchanges: EXCHANGES,
+      exchangeLabels: EXCHANGE_LABELS,
       port: PORT,
       tiers: DEFAULT_CONFIG.largeTradeThresholds,
       relative: {
@@ -146,10 +147,16 @@ server.listen(PORT, () => {
   const equity = coins.filter((c) => c.venue === 'equity');
   console.log(`\n  Order Flow Dashboard`);
   console.log(`  http://localhost:${PORT}`);
-  console.log(`  Crypto perp (Binance): ${crypto.map((c) => c.label).join(' · ')}`);
+  console.log(`  Exchanges: ${EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
+  console.log(`  Crypto perp: ${crypto.map((c) => c.label).join(' · ')}`);
   console.log(`  Equity perp (Binance): ${equity.map((c) => c.label).join(' · ')}`);
   console.log(`  SpaceX is not listed on Binance.\n`);
 });
+
+function parseExchangeParam(raw: string | null): ExchangeId {
+  const id = (raw ?? 'binance').toLowerCase();
+  return isExchangeId(id) ? id : 'binance';
+}
 
 function json(res: ServerResponse, data: unknown): void {
   res.writeHead(200, { 'Content-Type': 'application/json' });

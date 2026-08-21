@@ -8,15 +8,18 @@ import {
   streamName,
   unwrapBinancePayload,
 } from '../exchange/types.js';
+import { EXCHANGE_LABELS, parseExchangesEnv, type ExchangeId } from '../exchange/venues.js';
 import type { MarketTrade, MarketType, OrderBookSnapshot } from '../models/trade.js';
 import type { WindowSnapshot } from '../models/signals.js';
 import type { BinanceAggTrade, BinanceBookTicker, BinanceTrade } from '../exchange/types.js';
 import { DEFAULT_WATCHLIST, minUsdFor, type WatchCoin } from './watchlist.js';
+import { VenueTradeFan } from './venue-trades.js';
 
 export interface LiveFeedConfig {
   coins: WatchCoin[];
   market: MarketType;
   summaryMs: number;
+  exchanges?: ExchangeId[];
 }
 
 export interface TapeItem {
@@ -29,6 +32,7 @@ export interface TapeItem {
   tag: string;
   relativeClass: string;
   tier: number | null;
+  exchange?: ExchangeId;
 }
 
 export interface LiveSummary {
@@ -108,6 +112,7 @@ function parseBookLevels(rows: unknown): { price: number; quantity: number; quot
 export class LiveBinanceFeed {
   readonly engine: OrderFlowEngine;
   readonly coins: WatchCoin[];
+  readonly exchanges: ExchangeId[];
   private readonly sockets: WebSocket[] = [];
   private closed = false;
   private lastSummary = 0;
@@ -117,10 +122,13 @@ export class LiveBinanceFeed {
   private readonly listeners = new Set<LiveFeedListener>();
   private readonly spot = new BinanceSpotAdapter();
   private readonly futures = new BinanceFuturesAdapter();
+  private readonly venueUp: Partial<Record<ExchangeId, boolean>> = {};
+  private venues: VenueTradeFan | null = null;
 
   constructor(readonly config: LiveFeedConfig) {
     this.engine = new OrderFlowEngine();
     this.coins = config.coins;
+    this.exchanges = config.exchanges?.length ? config.exchanges : parseExchangesEnv();
     for (const coin of this.coins) {
       this.engine.getSymbol(coin.symbol, config.market);
       this.tradeCount.set(coin.symbol, 0);
@@ -169,10 +177,23 @@ export class LiveBinanceFeed {
   start(): void {
     this.closed = false;
     this.connect();
+    const extra = this.exchanges.filter((id) => id !== 'binance');
+    if (extra.length) {
+      this.venues = new VenueTradeFan(
+        this.coins,
+        this.config.market,
+        extra,
+        (trade, exchange) => this.handleVenueTrade(trade, exchange),
+        (exchange, connected) => this.setVenueUp(exchange, connected),
+      );
+      this.venues.start();
+    }
   }
 
   stop(): void {
     this.closed = true;
+    this.venues?.stop();
+    this.venues = null;
     this.closeSockets();
     this.emit({ type: 'status', connected: false, message: 'Stopped' });
   }
@@ -231,13 +252,7 @@ export class LiveBinanceFeed {
     const ws = new WebSocket(url);
     this.sockets.push(ws);
 
-    ws.on('open', () => {
-      this.emit({
-        type: 'status',
-        connected: true,
-        message: `Live — ${this.coins.length} symbols · Binance ${this.config.market}`,
-      });
-    });
+    ws.on('open', () => this.setVenueUp('binance', true));
 
     ws.on('message', (raw) => this.onSocketMessage(raw));
 
@@ -245,9 +260,7 @@ export class LiveBinanceFeed {
       const idx = this.sockets.indexOf(ws);
       if (idx >= 0) this.sockets.splice(idx, 1);
       if (this.closed) return;
-      if (this.sockets.length === 0) {
-        this.emit({ type: 'status', connected: false, message: `Disconnected (${label}) — reconnecting…` });
-      }
+      if (this.sockets.length === 0) this.setVenueUp('binance', false);
       setTimeout(() => {
         if (!this.closed) this.openSocket(url, label);
       }, 2_000);
@@ -346,34 +359,60 @@ export class LiveBinanceFeed {
     });
   }
 
-  private handleTrade(trade: MarketTrade): void {
+  private handleTrade(trade: MarketTrade, exchange: ExchangeId = 'binance'): void {
     if (!this.coins.some((c) => c.symbol === trade.symbol)) return;
-    this.engine.ingestTrade(trade);
-    const next = (this.tradeCount.get(trade.symbol) ?? 0) + 1;
-    this.tradeCount.set(trade.symbol, next);
+    if (exchange === 'binance') this.engine.ingestTrade(trade);
+    const seqKey = `${exchange}:${trade.symbol}`;
+    const next = (this.tradeCount.get(seqKey) ?? 0) + 1;
+    this.tradeCount.set(seqKey, next);
+    if (exchange === 'binance') this.tradeCount.set(trade.symbol, next);
 
     const floor = minUsdFor(trade.symbol, this.coins);
     if (trade.quoteValue < floor) return;
 
-    const engine = this.engine.getSymbol(trade.symbol, this.config.market);
-    const rel = engine.largeTrades.relativeSize(trade.quoteValue);
-    const tier = engine.largeTrades.absoluteTier(trade.quoteValue);
-    let tag = rel.classification !== 'NORMAL' ? rel.classification : '';
-    if (tier) tag = tag ? `${tag} T${tier}` : `T${tier}`;
+    let relativeClass = 'NORMAL';
+    let tier: number | null = null;
+    let tag = '';
+    if (exchange === 'binance') {
+      const engine = this.engine.getSymbol(trade.symbol, this.config.market);
+      const rel = engine.largeTrades.relativeSize(trade.quoteValue);
+      tier = engine.largeTrades.absoluteTier(trade.quoteValue);
+      relativeClass = rel.classification;
+      tag = relativeClass !== 'NORMAL' ? relativeClass : '';
+      if (tier) tag = tag ? `${tag} T${tier}` : `T${tier}`;
+    }
 
     this.emit({
       type: 'trade',
       trade: {
-        id: `${trade.symbol}-${trade.tradeId ?? trade.timestamp}-${next}`,
+        id: `${exchange}-${trade.symbol}-${trade.tradeId ?? trade.timestamp}-${next}`,
         symbol: trade.symbol,
         timestamp: trade.timestamp,
         side: trade.side,
         price: trade.price,
         quoteValue: trade.quoteValue,
         tag,
-        relativeClass: rel.classification,
+        relativeClass,
         tier,
+        exchange,
       },
+    });
+  }
+
+  private handleVenueTrade(trade: MarketTrade, exchange: ExchangeId): void {
+    if (this.coins.some((c) => c.symbol === trade.symbol && c.venue === 'equity')) return;
+    this.handleTrade(trade, exchange);
+  }
+
+  private setVenueUp(exchange: ExchangeId, connected: boolean): void {
+    this.venueUp[exchange] = connected;
+    const live = this.exchanges.filter((id) => this.venueUp[id]).map((id) => EXCHANGE_LABELS[id]);
+    this.emit({
+      type: 'status',
+      connected: live.length > 0,
+      message: live.length
+        ? `Live · ${live.join(' · ')}`
+        : `Disconnected (${EXCHANGE_LABELS[exchange]}) — reconnecting…`,
     });
   }
 

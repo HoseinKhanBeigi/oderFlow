@@ -6,6 +6,7 @@ let eventCount = 0;
 
 let selectedTf = '10s';
 let selectedSymbol = 'BTCUSDT';
+let selectedExchange = 'all';
 let lastSummary = null;
 const summaries = {};
 const tapeBySymbol = {};
@@ -46,6 +47,9 @@ const TF_LABEL = {
   '5m': 'last 5 minutes',
   '15m': 'last 15 minutes',
 };
+
+const EX_SHORT = { binance: 'BN', bybit: 'BY', okx: 'OKX', bitget: 'BG', hyperliquid: 'HL', dydx: 'DX', bitstamp: 'BS' };
+const DEFAULT_EXCHANGES = ['binance', 'bybit', 'okx', 'bitget', 'hyperliquid', 'dydx', 'bitstamp'];
 
 function fmtUsd(n) {
   const abs = Math.abs(n);
@@ -168,6 +172,29 @@ function coinStore(map, symbol) {
   return map[symbol];
 }
 
+function tradeExchange(trade) {
+  return trade.exchange || 'binance';
+}
+
+function coinIsEquity(symbol = selectedSymbol) {
+  return config?.coins?.find((c) => c.symbol === symbol)?.venue === 'equity';
+}
+
+function activeExchanges() {
+  const ids = config?.exchanges?.length ? config.exchanges : DEFAULT_EXCHANGES;
+  return coinIsEquity() ? ['binance'] : ids;
+}
+
+function tradeMatchesExchange(trade) {
+  if (coinIsEquity(trade.symbol)) return tradeExchange(trade) === 'binance';
+  if (selectedExchange === 'all') return true;
+  return tradeExchange(trade) === selectedExchange;
+}
+
+function klineExchange() {
+  return selectedExchange === 'all' ? 'binance' : selectedExchange;
+}
+
 function addTapeRow(trade) {
   if (!trade.symbol) return;
   if (seenTradeIds.has(trade.id)) return;
@@ -178,7 +205,7 @@ function addTapeRow(trade) {
   list.unshift(trade);
   if (list.length > MAX_TAPE) list.length = MAX_TAPE;
 
-  if (trade.symbol === selectedSymbol) appendTapeRow(trade);
+  if (trade.symbol === selectedSymbol && tradeMatchesExchange(trade)) appendTapeRow(trade);
 }
 
 function makeTapeRowEl(trade) {
@@ -194,8 +221,11 @@ function makeTapeRowEl(trade) {
   const levHtml = lev
     ? `<span class="lev lev-${levBand(lev.maxLev)}" title="${levTitle(trade.quoteValue, lev)}">${levLabel(lev)}</span>`
     : '<span class="lev lev-high">—</span>';
+  const ex = tradeExchange(trade);
+  const exLabel = EX_SHORT[ex] ?? ex;
   div.innerHTML =
     `<span class="time">${fmtTime(trade.timestamp)}</span>` +
+    `<span class="ex-badge" title="${ex}">${exLabel}</span>` +
     `<span class="action"><span class="action-main side-${trade.side.toLowerCase()}">${sideLabel}</span><span class="action-sub">${sideSub}</span></span>` +
     `<span class="price">${fmtPrice(trade.price)}</span>` +
     `<span class="notional">${fmtUsd(trade.quoteValue)}</span>` +
@@ -214,7 +244,7 @@ function appendTapeRow(trade) {
 function renderTape() {
   const container = $('tape');
   container.innerHTML = '';
-  const list = tapeBySymbol[selectedSymbol] ?? [];
+  const list = (tapeBySymbol[selectedSymbol] ?? []).filter(tradeMatchesExchange);
   for (const trade of list) container.appendChild(makeTapeRowEl(trade));
   $('tape-count').textContent = `${list.length} shown`;
 }
@@ -666,6 +696,20 @@ function clearMainPanels() {
   $('absorption-box').classList.add('hidden');
 }
 
+function syncExchangeTabs() {
+  const enabled = new Set(activeExchanges());
+  const equity = coinIsEquity();
+  if (equity && selectedExchange !== 'binance') selectedExchange = 'binance';
+  if (!equity && selectedExchange !== 'all' && !enabled.has(selectedExchange)) selectedExchange = 'all';
+  document.querySelectorAll('#chart-ex-tabs [data-ex]').forEach((btn) => {
+    const id = btn.dataset.ex;
+    const allowed = id === 'all' ? !equity && enabled.size > 1 : enabled.has(id);
+    btn.hidden = !allowed;
+    btn.disabled = !allowed;
+    btn.classList.toggle('active', id === selectedExchange);
+  });
+}
+
 function applySymbolFilter() {
   lastSrWalls = [];
   lastSrWallsSymbol = '';
@@ -675,6 +719,7 @@ function applySymbolFilter() {
   lastSummary = summaries[selectedSymbol] ?? null;
   if (lastSummary) updateUi();
   else clearMainPanels();
+  syncExchangeTabs();
   renderTape();
   renderEvents();
   loadTvCandles();
@@ -795,7 +840,11 @@ function updateUi() {
   $('price').textContent = lastSummary.price > 0 ? `$${fmtPrice(lastSummary.price)}` : '—';
   const coin = config?.coins?.find((c) => c.symbol === lastSummary.symbol);
   const venue =
-    coin?.venue === 'equity' ? 'Binance equity perp' : lastSummary.market === 'perp' ? 'Binance perp' : lastSummary.market;
+    coin?.venue === 'equity'
+      ? 'Binance equity perp'
+      : selectedExchange === 'all'
+        ? 'multi-exchange'
+        : selectedExchange;
   $('symbol-label').textContent = `${coin?.label ?? lastSummary.symbol} · ${venue} · tape ≥ ${fmtUsd(coin?.minUsd ?? 0)}${levBrackets[lastSummary.symbol]?.max ? ` · max ${levBrackets[lastSummary.symbol].max}x` : ''}`;
   $('state-badge').textContent = w.state.replace(/_/g, ' ');
   $('state-badge').className = `state-badge ${stateClass(w.state)}`;
@@ -883,7 +932,7 @@ function updateSummary(s) {
 
 function setStatus(connected, message) {
   const el = $('status');
-  el.textContent = connected ? 'Live · Binance' : message;
+  el.textContent = connected ? (message || 'Live') : message;
   el.className = `status ${connected ? 'live' : message.includes('Connect') || message.includes('Reconnect') ? 'connecting' : 'offline'}`;
 }
 
@@ -1000,6 +1049,15 @@ function initChart() {
     snapChartToLive();
     seedFootprintKlines();
   });
+  document.getElementById('chart-ex-tabs')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-ex]');
+    if (!btn || btn.disabled) return;
+    selectedExchange = btn.dataset.ex;
+    syncExchangeTabs();
+    snapChartToLive();
+    seedFootprintKlines();
+    renderTape();
+  });
   document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
 }
 
@@ -1013,14 +1071,14 @@ function resizeFpCanvas() {
   drawFootprint();
 }
 
-function getFootprintStore(symbol, tf = chartTfMinutes) {
-  const key = `${symbol}_${tf}`;
+function getFootprintStore(symbol, tf = chartTfMinutes, exchange = 'binance') {
+  const key = `${symbol}_${exchange}_${tf}`;
   if (!footprintStore[key]) footprintStore[key] = new Map();
   return footprintStore[key];
 }
 
-function getFpKlineSeed(symbol, tf = chartTfMinutes) {
-  const key = `${symbol}_${tf}`;
+function getFpKlineSeed(symbol, tf = chartTfMinutes, exchange = klineExchange()) {
+  const key = `${symbol}_${exchange}_${tf}`;
   if (!fpKlineSeed[key]) fpKlineSeed[key] = new Map();
   return fpKlineSeed[key];
 }
@@ -1053,6 +1111,7 @@ function fpKlineInterval(tf = chartTfMinutes) {
 async function seedFootprintKlines() {
   const tf = chartTfMinutes;
   const symbol = selectedSymbol;
+  const exchange = klineExchange();
   if (tf < 15) {
     drawFootprint();
     return;
@@ -1060,9 +1119,9 @@ async function seedFootprintKlines() {
   const req = ++fpKlineReq;
   try {
     const rows = await fetch(
-      `/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${fpKlineInterval(tf)}`,
+      `/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${fpKlineInterval(tf)}&exchange=${encodeURIComponent(exchange)}`,
     ).then((r) => r.json());
-    if (req !== fpKlineReq || symbol !== selectedSymbol || tf !== chartTfMinutes) return;
+    if (req !== fpKlineReq || symbol !== selectedSymbol || tf !== chartTfMinutes || klineExchange() !== exchange) return;
     if (!Array.isArray(rows) || !rows.length) {
       drawFootprint();
       return;
@@ -1077,7 +1136,7 @@ async function seedFootprintKlines() {
       }))
       .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.close));
     if (tf === 45) candles = aggregateToMinutes(candles, 45);
-    const seed = getFpKlineSeed(symbol, tf);
+    const seed = getFpKlineSeed(symbol, tf, exchange);
     seed.clear();
     for (const c of candles) {
       seed.set(c.time, {
@@ -1113,32 +1172,46 @@ function mergeFootprintBar(target, src) {
 }
 
 function aggregateFrom1m(symbol, tfMinutes) {
-  const base = getFootprintStore(symbol, 1);
+  const venues = selectedExchange === 'all' ? activeExchanges() : [selectedExchange];
   const out = new Map();
   const bucket = tfMinutes * 60;
-  for (const bar of base.values()) {
-    const t = bar.time - (bar.time % bucket);
-    if (!out.has(t)) {
-      out.set(t, {
-        time: t,
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        levels: new Map(),
-        totalBuy: 0,
-        totalSell: 0,
-      });
+  for (const ex of venues) {
+    for (const bar of getFootprintStore(symbol, 1, ex).values()) {
+      const t = bar.time - (bar.time % bucket);
+      if (!out.has(t)) {
+        out.set(t, {
+          time: t,
+          open: bar.open,
+          high: bar.high,
+          low: bar.low,
+          close: bar.close,
+          levels: new Map(),
+          totalBuy: 0,
+          totalSell: 0,
+        });
+      }
+      mergeFootprintBar(out.get(t), bar);
     }
-    mergeFootprintBar(out.get(t), bar);
+  }
+  return out;
+}
+
+function live1mStore(symbol) {
+  if (selectedExchange !== 'all') return getFootprintStore(symbol, 1, selectedExchange);
+  const venues = activeExchanges();
+  if (venues.length === 1) return getFootprintStore(symbol, 1, venues[0]);
+  const out = new Map();
+  for (const ex of venues) {
+    for (const bar of getFootprintStore(symbol, 1, ex).values()) {
+      if (!out.has(bar.time)) out.set(bar.time, cloneFpBar(bar));
+      else mergeFootprintBar(out.get(bar.time), bar);
+    }
   }
   return out;
 }
 
 function footprintBars(symbol = selectedSymbol, tf = chartTfMinutes) {
-  const live = tf === 1
-    ? getFootprintStore(symbol, 1)
-    : aggregateFrom1m(symbol, tf);
+  const live = tf === 1 ? live1mStore(symbol) : aggregateFrom1m(symbol, tf);
   const seed = tf >= 15 ? getFpKlineSeed(symbol, tf) : new Map();
   if (seed.size === 0 && live.size === 0) return [];
 
@@ -1173,7 +1246,7 @@ function ingestTradeToChart(trade) {
   const tick = tickSize(trade.price);
   const level = priceToTick(trade.price, tick);
   const lk = level.toFixed(6);
-  const store = getFootprintStore(trade.symbol, 1);
+  const store = getFootprintStore(trade.symbol, 1, tradeExchange(trade));
   const t = fpCandleTime(trade.timestamp, 1);
   if (!store.has(t)) {
     store.set(t, {
@@ -1189,9 +1262,9 @@ function ingestTradeToChart(trade) {
   const lv = bar.levels.get(lk);
   if (trade.side === 'BUY') { lv.buy += trade.quoteValue; bar.totalBuy += trade.quoteValue; }
   else { lv.sell += trade.quoteValue; bar.totalSell += trade.quoteValue; }
-  if (trade.symbol === selectedSymbol) {
+  if (trade.symbol === selectedSymbol && tradeMatchesExchange(trade)) {
     drawFootprint();
-    ingestTradeToTv(trade);
+    if (tradeExchange(trade) === 'binance') ingestTradeToTv(trade);
   }
 }
 
@@ -1470,6 +1543,7 @@ async function init() {
       openTab(config.coins[0].symbol, config.coins[0].label);
     }
     renderTierLegend();
+    syncExchangeTabs();
     $('symbol-label').textContent = `${selectedSymbol.replace('USDT', '')} · ${config.market}`;
   } catch { /* ignore */ }
   await loadLeverageBrackets();
