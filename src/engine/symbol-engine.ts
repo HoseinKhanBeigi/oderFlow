@@ -16,10 +16,14 @@ import { detectPersistentFlow } from '../flow/persistent-flow.js';
 import { RollingFlowEngine } from '../flow/rolling-flow-engine.js';
 import { LargeTradeTape } from '../flow/tape.js';
 import { ConsumptionEngine } from '../liquidity/consumption-engine.js';
+import { DefenseEngine } from '../liquidity/defense-engine.js';
 import { IcebergLikeDetector } from '../liquidity/iceberg-detector.js';
 import { LiquidityEngine } from '../liquidity/liquidity-engine.js';
 import { LocalOrderBook } from '../liquidity/local-order-book.js';
 import { MovePotentialEngine } from '../movement/move-potential-engine.js';
+import { PassiveFlowEngine } from '../passive-flow/passive-flow-engine.js';
+import { FlowWinnerEngine } from '../flow-battle/flow-winner-engine.js';
+import { emptyPassiveMetrics } from '../models/passive.js';
 import type {
   AlertEvent,
   MultiWindowSnapshot,
@@ -37,6 +41,7 @@ import type {
   OrderBookSnapshot,
   WindowId,
 } from '../models/trade.js';
+import { WINDOW_MS } from '../models/trade.js';
 
 export type EngineListener = (event: EngineEvent) => void;
 
@@ -74,6 +79,9 @@ export class SymbolEngine {
   readonly confidence: ConfidenceEngine;
   readonly states: StateClassifier;
   readonly movePotential: MovePotentialEngine;
+  readonly passive: PassiveFlowEngine;
+  readonly defense: DefenseEngine;
+  readonly flowWinner: FlowWinnerEngine;
 
   private readonly listeners = new Set<EngineListener>();
   private lastBuyVolume = 0;
@@ -115,6 +123,9 @@ export class SymbolEngine {
     this.confidence = new ConfidenceEngine(config.confidence);
     this.states = new StateClassifier(config.vacuum, config.exhaustion);
     this.movePotential = new MovePotentialEngine(config);
+    this.passive = new PassiveFlowEngine();
+    this.defense = new DefenseEngine(config.flowBattle);
+    this.flowWinner = new FlowWinnerEngine(config.flowBattle, this.defense);
     this.recentTrades = new RingBuffer(config.tradeRingCapacity);
   }
 
@@ -368,6 +379,49 @@ export class SymbolEngine {
     this.priorAccelBuy = view.largeBuyFlowAcceleration;
     this.priorAccelSell = view.largeSellFlowAcceleration;
 
+    const band = this.config.pressure.nearBandPct;
+    const mid = this.book.mid() || priceEnd;
+    const visibleAsk = this.book.notionalWithin('ask', mid, band);
+    const visibleBid = this.book.notionalWithin('bid', mid, band);
+    const liqWin = this.passive.window(now, WINDOW_MS[window]);
+    const metrics = {
+      ...emptyPassiveMetrics(),
+      passiveBuyExecutedVolume: agg.sellVolume,
+      passiveSellExecutedVolume: agg.buyVolume,
+      bidLiquidityAdded: liqWin.bidLiquidityAdded,
+      askLiquidityAdded: liqWin.askLiquidityAdded,
+      bidLiquidityRemoved: liqWin.bidLiquidityRemoved,
+      askLiquidityRemoved: liqWin.askLiquidityRemoved,
+      bidLiquidityConsumed: rates.bidConsumptionRate,
+      askLiquidityConsumed: rates.askConsumptionRate,
+      bidLiquidityReplenished: rates.bidReplenishmentRate,
+      askLiquidityReplenished: rates.askReplenishmentRate,
+      bidLiquidityInitial: liqWin.bidLiquidityInitial,
+      askLiquidityInitial: liqWin.askLiquidityInitial,
+      bidLiquidityFinal: liqWin.bidLiquidityFinal || visibleBid,
+      askLiquidityFinal: liqWin.askLiquidityFinal || visibleAsk,
+    };
+    const flowBattle = this.flowWinner.analyze({
+      price: priceEnd,
+      aggressiveBuy: agg.buyVolume,
+      aggressiveSell: agg.sellVolume,
+      delta: view.delta.delta,
+      priceChangePercent: impact.percentagePriceChange,
+      impact: impact.efficiency,
+      flowMultipleBuy: Number.isFinite(view.flowMultipleBuy) ? view.flowMultipleBuy : 1,
+      flowMultipleSell: Number.isFinite(view.flowMultipleSell) ? view.flowMultipleSell : 1,
+      buyBurst,
+      sellBurst,
+      persistentBuy: persistent.persistentBuyFlow,
+      persistentSell: persistent.persistentSellFlow,
+      windowMs: WINDOW_MS[window],
+      absorption,
+      iceberg: this.lastIceberg,
+      visibleAsk,
+      visibleBid,
+      metrics,
+    });
+
     const snap: WindowSnapshot = {
       symbol: this.symbol,
       marketType: this.marketType,
@@ -413,6 +467,7 @@ export class SymbolEngine {
       largeParticipantFlowScore: participant.largeParticipantFlowScore,
       confidence: conf,
       state,
+      flowBattle,
       movePotential: this.movePotential.evaluate({
         symbol: this.symbol,
         book: this.book,
@@ -524,6 +579,7 @@ export class SymbolEngine {
     this.lastBuyVolume = view.agg.buyVolume;
     this.lastSellVolume = view.agg.sellVolume;
     this.consumption.observe(now, bid, ask, buyDelta, sellDelta);
+    this.passive.observe(now, bid, ask);
     this.movePotential.observe(now, this.book, buyDelta, sellDelta);
   }
 

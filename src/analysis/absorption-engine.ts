@@ -34,7 +34,7 @@ export class AbsorptionEngine {
     const seller = this.sellerAbsorption(input);
     if (buyer.strength >= seller.strength && buyer.detected) return buyer;
     if (seller.detected) return seller;
-    return { detected: false, type: null, strength: 0, confidence: 0 };
+    return { detected: false, type: null, absorbingSide: null, aggressiveSide: null, strength: 0, confidence: 0 };
   }
 
   samePriceHit(
@@ -66,7 +66,7 @@ export class AbsorptionEngine {
     const lowImpact = input.impactEfficiency === 'LOW' || noLift;
     const burstOk = !this.config.minBurstOrPersistent || input.buyBurst || input.persistentBuy;
     if (!hugeBuy || !lowImpact || !burstOk || input.priceChangePercent < -this.config.maxPriceChangePercent * 3) {
-      return { detected: false, type: null, strength: 0, confidence: 0 };
+      return { detected: false, type: null, absorbingSide: null, aggressiveSide: null, strength: 0, confidence: 0 };
     }
 
     let strength = 0.55;
@@ -90,6 +90,8 @@ export class AbsorptionEngine {
     return {
       detected,
       type: detected ? 'BUYER_ABSORPTION' : null,
+      absorbingSide: detected ? 'PASSIVE_SELLER' : null,
+      aggressiveSide: detected ? 'BUYER' : null,
       strength,
       confidence,
     };
@@ -104,7 +106,7 @@ export class AbsorptionEngine {
     const lowImpact = input.impactEfficiency === 'LOW' || noDrop;
     const burstOk = !this.config.minBurstOrPersistent || input.sellBurst || input.persistentSell;
     if (!hugeSell || !lowImpact || !burstOk || input.priceChangePercent > this.config.maxPriceChangePercent * 3) {
-      return { detected: false, type: null, strength: 0, confidence: 0 };
+      return { detected: false, type: null, absorbingSide: null, aggressiveSide: null, strength: 0, confidence: 0 };
     }
 
     let strength = 0.55;
@@ -128,6 +130,8 @@ export class AbsorptionEngine {
     return {
       detected,
       type: detected ? 'SELLER_ABSORPTION' : null,
+      absorbingSide: detected ? 'PASSIVE_BUYER' : null,
+      aggressiveSide: detected ? 'SELLER' : null,
       strength,
       confidence,
     };

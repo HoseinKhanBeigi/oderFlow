@@ -180,6 +180,16 @@ export const DEFAULT_CONFIG: EngineConfig = {
     pullUnexplainedFraction: 0.55,
   },
 
+  flowBattle: {
+    minAttackQuote: 1_000_000,
+    consumeOverReplenish: 1.5,
+    replenishOverConsume: 1.1,
+    minDefenseScore: 55,
+    minFailureConfidence: 0.55,
+    zoneBps: 5,
+    minExecutionToVisible: 4,
+  },
+
   historicalBaselineSamples: 1_024,
   accelerationLookbackBuckets: 5,
   cvdSlopeMs: 5_000,

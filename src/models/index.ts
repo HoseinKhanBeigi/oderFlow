@@ -33,6 +33,18 @@ export type {
   AlertEvent,
 } from './signals.js';
 export type {
+  FlowWinner,
+  FlowBattleState,
+  FlowBias,
+  PassiveFlowMetrics,
+  FlowWinnerAnalysis,
+  BuyerSellerBattle,
+  PassiveFailureEvent,
+  IcebergLikePassive,
+  PassiveDefenseZone,
+  FlowBattleSnapshot,
+} from './passive.js';
+export type {
   MoveDirection,
   PathOfLeastResistance,
   LiquidityTarget,

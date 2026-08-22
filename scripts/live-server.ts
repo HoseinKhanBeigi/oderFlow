@@ -252,36 +252,55 @@ type LiqEstimate = {
   oiUsd: number;
   longRatio: number;
   shortRatio: number;
+  split: 'position' | 'account' | 'none';
 };
 
 const liqEstCache = new Map<string, { at: number; data: LiqEstimate }>();
 
+function asShare(n: number): number {
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (n > 1 && n <= 100) return n / 100;
+  if (n > 1) return 0;
+  return n;
+}
+
+async function binanceJson<T>(url: string): Promise<T | null> {
+  const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!r.ok) return null;
+  return (await r.json()) as T;
+}
+
 async function getLiqEstimate(symbol: string): Promise<LiqEstimate> {
   const hit = liqEstCache.get(symbol);
   if (hit && Date.now() - hit.at < 30_000) return hit.data;
-  const [oiRes, markRes, lsRes] = await Promise.all([
-    fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${encodeURIComponent(symbol)}`),
-    fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${encodeURIComponent(symbol)}`),
-    fetch(
-      `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${encodeURIComponent(symbol)}&period=5m&limit=1`,
+  const q = encodeURIComponent(symbol);
+  const [oi, mark, pos, acc] = await Promise.all([
+    binanceJson<{ openInterest?: string }>(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${q}`),
+    binanceJson<{ markPrice?: string }>(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${q}`),
+    binanceJson<Array<{ longAccount?: string; shortAccount?: string }>>(
+      `https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=${q}&period=5m&limit=1`,
+    ),
+    binanceJson<Array<{ longAccount?: string; shortAccount?: string }>>(
+      `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${q}&period=5m&limit=1`,
     ),
   ]);
-  if (!oiRes.ok || !markRes.ok) throw new Error('oi fetch failed');
-  const oi = (await oiRes.json()) as { openInterest?: string };
-  const mark = (await markRes.json()) as { markPrice?: string };
-  const ls = lsRes.ok
-    ? ((await lsRes.json()) as Array<{ longAccount?: string; shortAccount?: string }>)
-    : [];
+  if (!oi || !mark) throw new Error('oi fetch failed');
   const price = Number(mark.markPrice);
   const contracts = Number(oi.openInterest);
-  const longRatio = Number(ls[0]?.longAccount);
-  const shortRatio = Number(ls[0]?.shortAccount);
+  const posLong = asShare(Number(pos?.[0]?.longAccount));
+  const posShort = asShare(Number(pos?.[0]?.shortAccount));
+  const accLong = asShare(Number(acc?.[0]?.longAccount));
+  const accShort = asShare(Number(acc?.[0]?.shortAccount));
+  const usePos = posLong > 0 && posShort > 0;
+  const longRatio = usePos ? posLong : accLong > 0 ? accLong : 0.5;
+  const shortRatio = usePos ? posShort : accShort > 0 ? accShort : 0.5;
   const data: LiqEstimate = {
     symbol,
     price: Number.isFinite(price) ? price : 0,
     oiUsd: Number.isFinite(contracts) && Number.isFinite(price) ? contracts * price : 0,
-    longRatio: Number.isFinite(longRatio) && longRatio > 0 ? longRatio : 0.5,
-    shortRatio: Number.isFinite(shortRatio) && shortRatio > 0 ? shortRatio : 0.5,
+    longRatio,
+    shortRatio,
+    split: usePos ? 'position' : accLong > 0 ? 'account' : 'none',
   };
   if (data.oiUsd > 0) liqEstCache.set(symbol, { at: Date.now(), data });
   return data;

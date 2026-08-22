@@ -161,6 +161,16 @@ export interface MovePotentialConfig {
   pullUnexplainedFraction: number;
 }
 
+export interface FlowBattleConfig {
+  minAttackQuote: number;
+  consumeOverReplenish: number;
+  replenishOverConsume: number;
+  minDefenseScore: number;
+  minFailureConfidence: number;
+  zoneBps: number;
+  minExecutionToVisible: number;
+}
+
 export interface IntegrityConfig {
   maxOutOfOrderMs: number;
   bookStaleMs: number;
@@ -192,6 +202,7 @@ export interface EngineConfig {
   alerts: AlertThresholds;
   integrity: IntegrityConfig;
   movePotential: MovePotentialConfig;
+  flowBattle: FlowBattleConfig;
   historicalBaselineSamples: number;
   accelerationLookbackBuckets: number;
   cvdSlopeMs: number;

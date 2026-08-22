@@ -1,9 +1,12 @@
 import type { AggressorSide, MarketState, PriceImpactEfficiency, WindowId } from './trade.js';
 import type { MovePotentialSnapshot } from './movement.js';
+import type { FlowBattleSnapshot } from './passive.js';
 
 export interface AbsorptionResult {
   detected: boolean;
   type: 'BUYER_ABSORPTION' | 'SELLER_ABSORPTION' | null;
+  absorbingSide: 'PASSIVE_SELLER' | 'PASSIVE_BUYER' | null;
+  aggressiveSide: 'BUYER' | 'SELLER' | null;
   strength: number;
   confidence: number;
 }
@@ -72,6 +75,7 @@ export interface WindowSnapshot {
   confidence: number;
   state: MarketState;
   movePotential: MovePotentialSnapshot;
+  flowBattle: FlowBattleSnapshot;
 }
 
 export interface MultiWindowSnapshot {
