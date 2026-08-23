@@ -101,6 +101,12 @@ export type LiveFeedEvent =
 
 export type LiveFeedListener = (event: LiveFeedEvent) => void;
 
+/**
+ * Every normalized trade, before the watchlist `minUsd` tape filter.
+ * The footprint recorder needs the full stream, not just large prints.
+ */
+export type RawTradeListener = (trade: MarketTrade, exchange: ExchangeId) => void;
+
 function parseBookLevels(rows: unknown): { price: number; quantity: number; quoteValue: number }[] {
   if (!Array.isArray(rows)) return [];
   const levels: { price: number; quantity: number; quoteValue: number }[] = [];
@@ -126,6 +132,7 @@ export class LiveBinanceFeed {
   private readonly lastMoveEvents = new Map<string, string>();
   private readonly lastStates = new Map<string, Partial<Record<'10s' | '1m' | '5m', string>>>();
   private readonly listeners = new Set<LiveFeedListener>();
+  private readonly rawTradeListeners = new Set<RawTradeListener>();
   private readonly spot = new BinanceSpotAdapter();
   private readonly futures = new BinanceFuturesAdapter();
   private readonly venueUp: Partial<Record<ExchangeId, boolean>> = {};
@@ -185,6 +192,11 @@ export class LiveBinanceFeed {
   on(listener: LiveFeedListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  onAnyTrade(listener: RawTradeListener): () => void {
+    this.rawTradeListeners.add(listener);
+    return () => this.rawTradeListeners.delete(listener);
   }
 
   start(): void {
@@ -379,6 +391,14 @@ export class LiveBinanceFeed {
     const next = (this.tradeCount.get(seqKey) ?? 0) + 1;
     this.tradeCount.set(seqKey, next);
     if (exchange === 'binance') this.tradeCount.set(trade.symbol, next);
+
+    for (const listener of this.rawTradeListeners) {
+      try {
+        listener(trade, exchange);
+      } catch (err) {
+        console.error('[feed] raw trade listener failed:', err instanceof Error ? err.message : err);
+      }
+    }
 
     const floor = minUsdFor(trade.symbol, this.coins);
     if (trade.quoteValue < floor) return;

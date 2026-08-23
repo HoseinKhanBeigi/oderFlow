@@ -15,6 +15,11 @@ import {
   parseExchangesEnv,
   type ExchangeId,
 } from '../src/exchange/venues.js';
+import { FootprintRecorder } from '../src/storage/footprint-recorder.js';
+import { coverage, loadBars } from '../src/storage/footprint-store.js';
+import { isStorageEnabled } from '../src/storage/db.js';
+import { rollup } from '../src/footprint/rollup.js';
+import { toWire, type FootprintBar } from '../src/footprint/types.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC = join(__dirname, '../public');
@@ -47,12 +52,21 @@ const MIME: Record<string, string> = {
   '.svg': 'image/svg+xml',
 };
 
+const RETENTION_DAYS = Number(process.env.FOOTPRINT_RETENTION_DAYS ?? 30);
+
 const feed = new LiveBinanceFeed({
   coins,
   market: MARKET as 'spot' | 'perp',
   summaryMs: 2_000,
   exchanges: EXCHANGES,
 });
+
+const recorder = new FootprintRecorder({
+  market: MARKET as 'spot' | 'perp',
+  retentionDays: RETENTION_DAYS,
+  flushMs: Number(process.env.FOOTPRINT_FLUSH_MS ?? 15_000),
+});
+feed.onAnyTrade((trade, exchange) => recorder.ingest(trade, exchange));
 
 const server = createServer(async (req, res) => {
     if (req.url?.startsWith('/api/depth')) {
@@ -106,6 +120,36 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.url?.startsWith('/api/footprint/coverage')) {
+      if (!isStorageEnabled()) {
+        json(res, { enabled: false, rows: [] });
+        return;
+      }
+      try {
+        json(res, { enabled: true, retentionDays: RETENTION_DAYS, rows: await coverage(MARKET as 'spot' | 'perp') });
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'coverage failed' }));
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/footprint')) {
+      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+      try {
+        json(res, await getFootprintHistory(u.searchParams));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ enabled: isStorageEnabled(), bars: [], error: err instanceof Error ? err.message : 'query failed' }));
+      }
+      return;
+    }
+
+    if (req.url === '/api/health') {
+      json(res, { ok: true, market: MARKET, storage: recorder.stats(), uptimeSec: Math.round(process.uptime()) });
+      return;
+    }
+
     if (req.url === '/api/config') {
     json(res, {
       coins,
@@ -116,6 +160,7 @@ const server = createServer(async (req, res) => {
       exchanges: EXCHANGES,
       exchangeLabels: EXCHANGE_LABELS,
       port: PORT,
+      history: { enabled: isStorageEnabled(), retentionDays: RETENTION_DAYS },
       tiers: DEFAULT_CONFIG.largeTradeThresholds,
       relative: {
         large: DEFAULT_CONFIG.relative.largePercentile,
@@ -126,7 +171,8 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const path = req.url === '/' ? '/index.html' : (req.url?.split('?')[0] ?? '/index.html');
+  const requested = req.url?.split('?')[0] || '/';
+  const path = requested === '/' ? '/index.html' : requested;
   if (!path.startsWith('/') || path.includes('..')) {
     res.writeHead(400);
     res.end();
@@ -153,8 +199,57 @@ function broadcast(ev: LiveFeedEvent): void {
   }
 }
 
+/**
+ * Live footprint is pushed per subscriber rather than broadcast: a client only
+ * ever renders one symbol, and fanning every symbol out is ~20x the bytes.
+ * Always sent as 1-minute bars — the browser rolls them up to its timeframe.
+ */
+interface FootprintSub {
+  symbol: string;
+  exchanges: ExchangeId[];
+}
+const footprintSubs = new Map<WebSocket, FootprintSub>();
+
+wss.on('connection', (socket) => {
+  socket.on('message', (raw) => {
+    let msg: { type?: string; symbol?: unknown; exchange?: unknown };
+    try {
+      msg = JSON.parse(String(raw)) as typeof msg;
+    } catch {
+      return;
+    }
+    if (msg.type !== 'sub_footprint') return;
+    const symbol = String(msg.symbol ?? '').toUpperCase();
+    if (!coins.some((c) => c.symbol === symbol)) return;
+    footprintSubs.set(socket, {
+      symbol,
+      exchanges: parseFootprintExchanges(typeof msg.exchange === 'string' ? msg.exchange : 'binance'),
+    });
+    sendLiveFootprint(socket);
+  });
+  socket.on('close', () => footprintSubs.delete(socket));
+});
+
+function sendLiveFootprint(socket: WebSocket): void {
+  const sub = footprintSubs.get(socket);
+  if (!sub || socket.readyState !== WebSocket.OPEN) return;
+  const bars: Array<{ exchange: ExchangeId; bar: ReturnType<typeof toWire> }> = [];
+  for (const exchange of sub.exchanges) {
+    const bar = recorder.aggregator.currentBar(sub.symbol, exchange);
+    if (bar) bars.push({ exchange, bar: toWire(bar) });
+  }
+  if (!bars.length) return;
+  socket.send(JSON.stringify({ type: 'footprint_live', symbol: sub.symbol, bars }));
+}
+
+const liveFootprintTimer = setInterval(() => {
+  for (const socket of footprintSubs.keys()) sendLiveFootprint(socket);
+}, Number(process.env.FOOTPRINT_PUSH_MS ?? 1_000));
+liveFootprintTimer.unref?.();
+
 feed.on(broadcast);
 feed.start();
+recorder.start();
 
 server.listen(PORT, () => {
   const crypto = coins.filter((c) => c.venue === 'crypto');
@@ -164,12 +259,87 @@ server.listen(PORT, () => {
   console.log(`  Exchanges: ${EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
   console.log(`  Crypto perp: ${crypto.map((c) => c.label).join(' · ')}`);
   console.log(`  Equity perp (Binance): ${equity.map((c) => c.label).join(' · ')}`);
+  console.log(
+    `  Footprint history: ${isStorageEnabled() ? `Postgres · ${RETENTION_DAYS}d retention` : 'disabled (set DATABASE_URL)'}`,
+  );
   console.log(`  SpaceX is not listed on Binance.\n`);
 });
 
 function parseExchangeParam(raw: string | null): ExchangeId {
   const id = (raw ?? 'binance').toLowerCase();
   return isExchangeId(id) ? id : 'binance';
+}
+
+// ── Footprint history ────────────────────────────────────────────────────────
+
+const MAX_TF_MINUTES = 1440;
+const footprintCache = new Map<string, { at: number; payload: unknown }>();
+
+function parseFootprintExchanges(raw: string | null): ExchangeId[] {
+  const value = (raw ?? 'binance').toLowerCase();
+  if (value === 'all') return EXCHANGES;
+  const ids = value.split(',').map((s) => s.trim()).filter(isExchangeId);
+  return ids.length ? [...new Set(ids)] : ['binance'];
+}
+
+function clampInt(raw: string | null, fallback: number, min: number, max: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+async function getFootprintHistory(params: URLSearchParams): Promise<unknown> {
+  const symbol = (params.get('symbol') ?? 'BTCUSDT').toUpperCase();
+  const exchanges = parseFootprintExchanges(params.get('exchange'));
+  const tf = clampInt(params.get('tf'), 1, 1, MAX_TF_MINUTES);
+  const limit = clampInt(params.get('limit'), 1_500, 1, 5_000);
+  const days = clampInt(params.get('days'), RETENTION_DAYS, 1, RETENTION_DAYS);
+
+  if (!isStorageEnabled()) {
+    return { enabled: false, symbol, tf, bars: [], reason: 'DATABASE_URL not configured' };
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  // History stops at the start of the current minute; that minute is owned by
+  // the live WS feed. Without this split the two sources double-count it.
+  const liveFrom = nowSec - (nowSec % 60);
+
+  const key = `${symbol}|${exchanges.join(',')}|${tf}|${limit}|${days}|${liveFrom}`;
+  const hit = footprintCache.get(key);
+  if (hit && Date.now() - hit.at < 20_000) return hit.payload;
+
+  // Closed bars can still be sitting in the recorder's buffer.
+  await recorder.flush();
+
+  const spanMinutes = Math.min(days * 1440, limit * tf + tf);
+  const fromSec = liveFrom - spanMinutes * 60;
+
+  const rows = await loadBars({
+    symbol,
+    market: MARKET as 'spot' | 'perp',
+    exchanges,
+    fromSec,
+    toSec: liveFrom,
+  });
+
+  const merged: FootprintBar[] = tf === 1 && exchanges.length === 1 ? rows : rollup(rows, tf);
+  const bars = merged.slice(-limit).map(toWire);
+
+  const payload = {
+    enabled: true,
+    symbol,
+    tf,
+    exchanges,
+    retentionDays: RETENTION_DAYS,
+    liveFrom,
+    bars,
+  };
+  footprintCache.set(key, { at: Date.now(), payload });
+  if (footprintCache.size > 200) {
+    const oldest = [...footprintCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+    if (oldest) footprintCache.delete(oldest[0]);
+  }
+  return payload;
 }
 
 async function fetchKlinesPaged(exchange: ExchangeId, symbol: string, interval: string, limit: number) {
@@ -183,10 +353,11 @@ async function fetchKlinesPaged(exchange: ExchangeId, symbol: string, interval: 
   for (let i = 0; i < 6 && remaining > 0; i++) {
     const n = Math.min(pageSize, remaining);
     const rows = await fetchVenueKlines(exchange, symbol, interval, MARKET, n, endTime);
-    if (!rows.length) break;
+    const first = rows[0];
+    if (!first) break;
     chunks.unshift(rows);
     remaining -= rows.length;
-    endTime = rows[0][0] - 1;
+    endTime = first[0] - 1;
     if (rows.length < n) break;
   }
   const merged = new Map<number, [number, string, string, string, string, string]>();
@@ -306,8 +477,18 @@ async function getLiqEstimate(symbol: string): Promise<LiqEstimate> {
   return data;
 }
 
-process.on('SIGINT', () => {
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n  ${signal} — flushing footprint buffer…`);
+  clearInterval(liveFootprintTimer);
   feed.stop();
+  // Railway sends SIGTERM on redeploy; without this the last bars are lost.
+  await recorder.stop().catch(() => undefined);
   server.close();
   process.exit(0);
-});
+}
+
+process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));

@@ -657,6 +657,7 @@ function applySymbolFilter() {
   renderEvents();
   rebuildChart();
   seedFootprintKlines();
+  subscribeFootprint();
   seedBook(selectedSymbol);
   startLiqEstimateLoop();
 }
@@ -908,9 +909,17 @@ function setupTabs() {
 
 const CHART_TFS = [1, 5, 15, 30, 45, 60, 120, 240];
 let chartTfMinutes = 1;
+/** Current in-progress 1m bar per `symbol_exchange_1`, pushed by the server. */
 const footprintStore = {};
+/** Persisted bars from /api/footprint, already rolled up to the active timeframe. */
+const fpHistoryStore = {};
 const fpKlineSeed = {};
 let fpKlineReq = 0;
+let fpHistoryReq = 0;
+let fpHistoryEnabled = false;
+let fpRetentionDays = 30;
+let fpLiveSocket = null;
+let fpLastLiveMinute = 0;
 let fpCanvas = null;
 let fpCtx = null;
 /** Bars back from the live (right) edge. 0 = latest candle pinned right. */
@@ -1023,6 +1032,7 @@ function initChart() {
     syncExchangeTabs();
     snapChartToLive();
     seedFootprintKlines();
+    subscribeFootprint();
     renderTape();
   });
   document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
@@ -1042,6 +1052,14 @@ function getFootprintStore(symbol, tf = chartTfMinutes, exchange = 'binance') {
   const key = `${symbol}_${exchange}_${tf}`;
   if (!footprintStore[key]) footprintStore[key] = new Map();
   return footprintStore[key];
+}
+
+function historyKey(symbol, tf, exchange) {
+  return `${symbol}_${exchange}_${tf}`;
+}
+
+function getFpHistory(symbol = selectedSymbol, tf = chartTfMinutes, exchange = selectedExchange) {
+  return fpHistoryStore[historyKey(symbol, tf, exchange)] ?? new Map();
 }
 
 function getFpKlineSeed(symbol, tf = chartTfMinutes, exchange = klineExchange()) {
@@ -1075,7 +1093,66 @@ function fpKlineInterval(tf = chartTfMinutes) {
   return `${tf}m`;
 }
 
-async function seedFootprintKlines() {
+function wireBarToFp(w) {
+  const levels = new Map();
+  for (const [price, buy, sell] of w.lv ?? []) {
+    levels.set(price.toFixed(6), { price, buy, sell });
+  }
+  return {
+    time: w.t,
+    open: w.o,
+    high: w.h,
+    low: w.l,
+    close: w.c,
+    totalBuy: w.tb ?? 0,
+    totalSell: w.ts ?? 0,
+    levels,
+  };
+}
+
+/**
+ * Loads stored footprint history for the active symbol/timeframe.
+ * The server rolls bars up and stops at the current minute, which the live
+ * WS bar then completes — so the two sources never double-count.
+ */
+async function loadFootprintHistory() {
+  const tf = chartTfMinutes;
+  const symbol = selectedSymbol;
+  const exchange = selectedExchange;
+  const req = ++fpHistoryReq;
+  try {
+    const params = new URLSearchParams({
+      symbol,
+      exchange,
+      tf: String(tf),
+      limit: '1500',
+      days: String(fpRetentionDays),
+    });
+    const data = await fetch(`/api/footprint?${params}`).then((r) => r.json());
+    if (req !== fpHistoryReq) return;
+    if (!data?.enabled) {
+      fpHistoryEnabled = false;
+      seedFromKlines();
+      return;
+    }
+    const map = new Map();
+    for (const w of data.bars ?? []) map.set(w.t, wireBarToFp(w));
+    fpHistoryStore[historyKey(symbol, tf, exchange)] = map;
+  } catch {
+    /* keep whatever history we already had */
+  }
+  if (req === fpHistoryReq) drawFootprint();
+}
+
+function seedFootprintKlines() {
+  if (fpHistoryEnabled) {
+    void loadFootprintHistory();
+    return;
+  }
+  void seedFromKlines();
+}
+
+async function seedFromKlines() {
   const tf = chartTfMinutes;
   const symbol = selectedSymbol;
   const exchange = klineExchange();
@@ -1179,7 +1256,11 @@ function live1mStore(symbol) {
 
 function footprintBars(symbol = selectedSymbol, tf = chartTfMinutes) {
   const live = tf === 1 ? live1mStore(symbol) : aggregateFrom1m(symbol, tf);
-  const seed = tf >= 15 ? getFpKlineSeed(symbol, tf) : new Map();
+  const seed = fpHistoryEnabled
+    ? getFpHistory(symbol, tf, selectedExchange)
+    : tf >= 15
+      ? getFpKlineSeed(symbol, tf)
+      : new Map();
   if (seed.size === 0 && live.size === 0) return [];
 
   const out = new Map();
@@ -1210,6 +1291,10 @@ function priceToTick(price, tick) {
 }
 
 function ingestTradeToChart(trade) {
+  // With persistence on, the server owns the live bar and pushes the complete
+  // footprint. The tape is filtered to large prints, so building from it here
+  // would understate volume and fight the server's bar.
+  if (fpHistoryEnabled) return;
   const tick = tickSize(trade.price);
   const level = priceToTick(trade.price, tick);
   const lk = level.toFixed(6);
@@ -1650,6 +1735,36 @@ function rebuildChart() {
   snapChartToLive();
 }
 
+function subscribeFootprint() {
+  if (!fpHistoryEnabled || fpLiveSocket?.readyState !== WebSocket.OPEN) return;
+  fpLiveSocket.send(JSON.stringify({ type: 'sub_footprint', symbol: selectedSymbol, exchange: selectedExchange }));
+}
+
+/**
+ * Applies the server's in-progress 1m bar. Only the current minute is kept:
+ * once it closes it belongs to persisted history, so we refetch instead of
+ * holding it locally and counting it twice.
+ */
+function applyLiveFootprint(ev) {
+  if (!fpHistoryEnabled || ev.symbol !== selectedSymbol) return;
+  const bars = ev.bars ?? [];
+  if (!bars.length) return;
+
+  const minute = bars[0].bar.t;
+  if (minute !== fpLastLiveMinute) {
+    fpLastLiveMinute = minute;
+    for (const key of Object.keys(footprintStore)) delete footprintStore[key];
+    void loadFootprintHistory();
+  }
+
+  for (const { exchange, bar } of bars) {
+    const store = getFootprintStore(ev.symbol, 1, exchange);
+    store.clear();
+    store.set(bar.t, wireBarToFp(bar));
+  }
+  drawFootprint();
+}
+
 // ═══════ End Footprint Chart ═══════
 
 async function init() {
@@ -1657,6 +1772,8 @@ async function init() {
   initChart();
   try {
     config = await fetch('/api/config').then((r) => r.json());
+    fpHistoryEnabled = Boolean(config.history?.enabled);
+    fpRetentionDays = Number(config.history?.retentionDays) || 30;
     if (config.coins?.length) {
       selectedSymbol = config.coins[0].symbol;
       renderCoinBar(config.coins);
@@ -1674,8 +1791,12 @@ async function init() {
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  fpLiveSocket = ws;
 
-  ws.onopen = () => setStatus(true, 'Live');
+  ws.onopen = () => {
+    setStatus(true, 'Live');
+    subscribeFootprint();
+  };
   ws.onclose = () => setStatus(false, 'Reconnecting…');
   ws.onerror = () => setStatus(false, 'Connection error');
 
@@ -1694,6 +1815,9 @@ async function init() {
       case 'trade':
         addTapeRow(ev.trade);
         ingestTradeToChart(ev.trade);
+        break;
+      case 'footprint_live':
+        applyLiveFootprint(ev);
         break;
       case 'summary':
         updateSummary(ev.summary);

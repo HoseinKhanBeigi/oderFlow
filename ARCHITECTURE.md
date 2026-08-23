@@ -63,6 +63,8 @@ Effective buying requires a meaningful upward price response. Huge buy aggressio
 | `liquidity/` | Local book, nearby bid/ask notional, consumption vs replenishment, iceberg-like flags. |
 | `analysis/` | Price impact efficiency, absorption, large-participant flow score, directional score, confidence, market state. |
 | `engine/` | One `SymbolEngine` per `symbol + marketType`. Orchestrator merges spot/perp views without blindly summing them. |
+| `footprint/` | 1-minute footprint bars: price bucketing, per-level buy/sell aggregation, timeframe rollup. |
+| `storage/` | Postgres persistence and retention for footprint history. Optional — absent `DATABASE_URL` the engine runs unchanged. |
 | `config/` | Every threshold, percentile, window, and score weight. Defaults are examples, not constants baked into detectors. |
 
 Spot and perpetual flow are stored separately. Combined snapshots exist, but a spot-buy / perp-sell split must remain visible.
@@ -87,6 +89,37 @@ Every symbol maintains 1s, 5s, 10s, 30s, 1m, 5m (and optionally 15m) snapshots a
 ## Data integrity
 
 Reconnects, duplicate trade IDs, out-of-order timestamps, depth sequence gaps, and stale books set integrity flags. Confidence is forced low; high-confidence alerts are suppressed until the book and trade stream are healthy again.
+
+## Footprint history
+
+The analytical engine is in-memory and bounded by design. Footprint history is a
+separate concern with its own path:
+
+```
+Normalized trades (all of them, not just tape-sized prints)
+      ↓
+FootprintAggregator      (1m bars, per-price buy/sell split)
+      ↓
+FootprintRecorder        (checkpoints in progress, flushes on rollover)
+      ↓
+Postgres footprint_bars  (30-day retention, pruned every 6h)
+      ↓
+/api/footprint           (rolled up to the requested timeframe)
+```
+
+Two rules keep the two data sources consistent:
+
+- **Price bucketing is shared.** `src/footprint/tick-size.ts` must stay identical
+  to `tickSize()` in `public/app.js`, or stored and rendered bars land on
+  different grids.
+- **History stops at the current minute.** That minute is owned by the live
+  WebSocket push, so history and live never double-count the same trades.
+
+The 30 days preceding a deployment cannot be recorded, only reconstructed.
+`scripts/backfill-footprint.ts` rebuilds them from Binance's public daily
+archives, reusing the same aggregator and trade classifier as the live path.
+
+See [DEPLOY.md](DEPLOY.md).
 
 ## What this repo builds first
 
