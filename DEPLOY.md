@@ -20,13 +20,35 @@ railway add --database postgres
 railway up
 ```
 
-Railway injects `DATABASE_URL` automatically once Postgres is linked. The schema
-is created on first connection, so there is no migration step to run.
-
 `railway.json` already sets the start command and points the healthcheck at
 `/api/health`.
 
-## 3. Environment variables
+## 3. Wire the database to the app — this is not automatic
+
+Adding a Postgres service does **not** give the app access to it. Railway keeps
+variables per-service, so you must add a reference by hand:
+
+> oderFlow service → **Variables** → New Variable
+>
+> | Name | Value |
+> | --- | --- |
+> | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
+
+The `${{...}}` reference is required. Do **not** paste a literal connection
+string, and do not accept Railway's "Suggested Variables" autofill for
+`DATABASE_URL` — it reads `.env.example` and offers a localhost URL, which would
+point the app at its own container and silently store nothing.
+
+Saving the variable triggers a redeploy. The schema is created on first
+connection, so there is no migration to run. Confirm with:
+
+```bash
+curl https://<your-app>.up.railway.app/api/health
+```
+
+`storage.enabled` must be `true`. If it is `false`, the variable is missing.
+
+## 4. Environment variables
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -39,7 +61,7 @@ is created on first connection, so there is no migration step to run.
 | `FOOTPRINT_FLUSH_MS` | `15000` | How often in-progress bars are checkpointed. |
 | `FOOTPRINT_PUSH_MS` | `1000` | Live bar push interval per connected browser. |
 
-## 4. Backfill the last 30 days
+## 5. Backfill the last 30 days
 
 Live recording only captures data from the moment the server starts. The
 preceding 30 days are reconstructed from Binance's public daily archives
@@ -102,7 +124,7 @@ well under **500 MB stored**.
 Expect roughly 25 seconds per BTC day and a few seconds for smaller symbols, so
 a full 30-day 17-symbol backfill takes on the order of half an hour.
 
-## 5. Verify
+## 6. Verify
 
 ```bash
 curl https://<your-app>.up.railway.app/api/health
@@ -121,6 +143,26 @@ to confirm the backfill landed and live recording is extending it.
 - That final minute arrives over the WebSocket instead, so the two sources never
   double-count. When the minute rolls, the browser refetches.
 - Bars past the retention window are deleted every 6 hours.
+
+## Adding dependencies: keep pnpm-lock.yaml in sync
+
+This repo contains **both** `package-lock.json` and `pnpm-lock.yaml`. Nixpacks
+sees the pnpm lockfile and builds with `pnpm i --frozen-lockfile`, so installing
+a dependency with npm updates the wrong lockfile and the next deploy fails with:
+
+```
+ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with "frozen-lockfile"
+because pnpm-lock.yaml is not up to date with package.json
+```
+
+After any dependency change, refresh the pnpm lockfile without touching
+`node_modules`:
+
+```bash
+pnpm install --lockfile-only
+```
+
+Standardising on one package manager would remove this footgun entirely.
 
 ## Notes and limitations
 
