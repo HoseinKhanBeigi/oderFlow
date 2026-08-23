@@ -1,5 +1,8 @@
 node_modules/
 dist/
+# This project builds with pnpm (Railway/Nixpacks reads pnpm-lock.yaml).
+# A stray npm lockfile silently desyncs and breaks the deploy.
+package-lock.json
 coverage/
 .DS_Store
 *.log

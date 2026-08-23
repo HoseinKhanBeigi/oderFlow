@@ -144,25 +144,32 @@ to confirm the backfill landed and live recording is extending it.
   double-count. When the minute rolls, the browser refetches.
 - Bars past the retention window are deleted every 6 hours.
 
-## Adding dependencies: keep pnpm-lock.yaml in sync
+## Adding dependencies: use pnpm
 
-This repo contains **both** `package-lock.json` and `pnpm-lock.yaml`. Nixpacks
-sees the pnpm lockfile and builds with `pnpm i --frozen-lockfile`, so installing
-a dependency with npm updates the wrong lockfile and the next deploy fails with:
+This project builds with **pnpm**. Nixpacks reads `pnpm-lock.yaml` and runs
+`pnpm i --frozen-lockfile`, so a dependency added with npm updates the wrong
+lockfile and the deploy fails with:
 
 ```
 ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with "frozen-lockfile"
 because pnpm-lock.yaml is not up to date with package.json
 ```
 
-After any dependency change, refresh the pnpm lockfile without touching
-`node_modules`:
+Use pnpm for dependency changes:
+
+```bash
+pnpm add some-package
+pnpm add -D some-dev-package
+```
+
+If you do end up editing `package.json` by hand or installing with npm, refresh
+the lockfile without touching `node_modules`:
 
 ```bash
 pnpm install --lockfile-only
 ```
 
-Standardising on one package manager would remove this footgun entirely.
+`package-lock.json` is gitignored so it cannot come back and desync the build.
 
 ## Notes and limitations
 
