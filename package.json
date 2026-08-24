@@ -16,7 +16,8 @@
     "live": "tsx scripts/demo-live.ts",
     "dashboard": "tsx scripts/live-server.ts",
     "ui": "tsx scripts/live-server.ts",
-    "backfill": "tsx scripts/backfill-footprint.ts"
+    "backfill": "tsx scripts/backfill-footprint.ts",
+    "backfill:stocks": "tsx scripts/backfill-stock-footprint.ts"
   },
   "engines": {
     "node": ">=20"

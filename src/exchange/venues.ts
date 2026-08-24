@@ -1,6 +1,13 @@
 import type { MarketType } from '../models/trade.js';
 
-export const EXCHANGE_IDS = ['binance', 'bybit', 'okx', 'bitget', 'hyperliquid', 'dydx', 'bitstamp'] as const;
+export const CRYPTO_EXCHANGE_IDS = ['binance', 'bybit', 'okx', 'bitget', 'hyperliquid', 'dydx', 'bitstamp'] as const;
+export type CryptoExchangeId = (typeof CRYPTO_EXCHANGE_IDS)[number];
+
+/** Consolidated US last-sale tape (Finnhub / Polygon), not a crypto venue. */
+export const STOCK_TAPE_EXCHANGE = 'sip' as const;
+export type StockTapeExchange = typeof STOCK_TAPE_EXCHANGE;
+
+export const EXCHANGE_IDS = [...CRYPTO_EXCHANGE_IDS, STOCK_TAPE_EXCHANGE] as const;
 export type ExchangeId = (typeof EXCHANGE_IDS)[number];
 
 export const EXCHANGE_LABELS: Record<ExchangeId, string> = {
@@ -11,6 +18,7 @@ export const EXCHANGE_LABELS: Record<ExchangeId, string> = {
   hyperliquid: 'Hyperliquid',
   dydx: 'dYdX',
   bitstamp: 'Bitstamp',
+  sip: 'US tape',
 };
 
 export const EXCHANGE_SHORT: Record<ExchangeId, string> = {
@@ -21,21 +29,26 @@ export const EXCHANGE_SHORT: Record<ExchangeId, string> = {
   hyperliquid: 'HL',
   dydx: 'DX',
   bitstamp: 'BS',
+  sip: 'US',
 };
 
-export function isExchangeId(value: string): value is ExchangeId {
-  return (EXCHANGE_IDS as readonly string[]).includes(value);
+export function isCryptoExchangeId(value: string): value is CryptoExchangeId {
+  return (CRYPTO_EXCHANGE_IDS as readonly string[]).includes(value);
 }
 
-export function parseExchangesEnv(raw = process.env.EXCHANGES): ExchangeId[] {
-  if (!raw?.trim()) return [...EXCHANGE_IDS];
+export function isExchangeId(value: string): value is ExchangeId {
+  return isCryptoExchangeId(value) || value === STOCK_TAPE_EXCHANGE;
+}
+
+export function parseExchangesEnv(raw = process.env.EXCHANGES): CryptoExchangeId[] {
+  if (!raw?.trim()) return [...CRYPTO_EXCHANGE_IDS];
   const ids = raw
     .split(',')
     .map((s) => s.trim().toLowerCase())
-    .filter(isExchangeId);
+    .filter(isCryptoExchangeId);
   const unique = [...new Set(ids)];
   if (!unique.includes('binance')) unique.unshift('binance');
-  return unique.length ? unique : [...EXCHANGE_IDS];
+  return unique.length ? unique : [...CRYPTO_EXCHANGE_IDS];
 }
 
 export function baseAsset(symbol: string): string {
@@ -50,6 +63,7 @@ export function baseAsset(symbol: string): string {
 export function venueInstrument(exchange: ExchangeId, symbol: string, market: MarketType): string | null {
   const base = symbol.toUpperCase();
   if (!base) return null;
+  if (exchange === 'sip') return base;
   if (exchange === 'binance' || exchange === 'bybit' || exchange === 'bitget') return base;
   if (exchange === 'hyperliquid') return baseAsset(base);
   if (exchange === 'dydx') return `${baseAsset(base)}-USD`;
@@ -221,6 +235,7 @@ export async function fetchVenueKlines(
   limit = 300,
   endTime?: number,
 ): Promise<KlineRow[]> {
+  if (exchange === 'sip' || market === 'stock') return [];
   const inst = venueInstrument(exchange, symbol, market);
   if (!inst) return [];
 
@@ -327,6 +342,7 @@ export async function fetchVenueDepth(
   market: MarketType,
   limit = 100,
 ): Promise<VenueDepth> {
+  if (exchange === 'sip' || market === 'stock') return { bids: [], asks: [] };
   const inst = venueInstrument(exchange, symbol, market);
   if (!inst) return { bids: [], asks: [] };
 

@@ -20,27 +20,26 @@ export const DEFAULT_WATCHLIST: WatchCoin[] = [
 ];
 
 /**
- * Binance USD-M TradFi / equity perpetuals (same futures WS as crypto).
- * Example: https://www.binance.com/en/futures/AMZNUSDT
- * SpaceX is not listed.
+ * Real US equities on the consolidated last-sale tape (Finnhub / Polygon).
+ * These are not Binance USDT equity perps.
  */
-export const EQUITY_PERP_WATCHLIST: WatchCoin[] = [
-  { symbol: 'AAPLUSDT', label: 'AAPL', minUsd: 500, venue: 'equity' },
-  { symbol: 'AMZNUSDT', label: 'AMZN', minUsd: 500, venue: 'equity' },
-  { symbol: 'METAUSDT', label: 'META', minUsd: 500, venue: 'equity' },
-  { symbol: 'MSFTUSDT', label: 'MSFT', minUsd: 500, venue: 'equity' },
-  { symbol: 'GOOGLUSDT', label: 'GOOGL', minUsd: 500, venue: 'equity' },
-  { symbol: 'TSLAUSDT', label: 'TSLA', minUsd: 500, venue: 'equity' },
-  { symbol: 'AMDUSDT', label: 'AMD', minUsd: 500, venue: 'equity' },
-  { symbol: 'NVDAUSDT', label: 'NVDA', minUsd: 500, venue: 'equity' },
+export const STOCK_WATCHLIST: WatchCoin[] = [
+  { symbol: 'AAPL', label: 'AAPL', minUsd: 5_000, venue: 'equity' },
+  { symbol: 'AMZN', label: 'AMZN', minUsd: 5_000, venue: 'equity' },
+  { symbol: 'META', label: 'META', minUsd: 5_000, venue: 'equity' },
+  { symbol: 'MSFT', label: 'MSFT', minUsd: 5_000, venue: 'equity' },
+  { symbol: 'GOOGL', label: 'GOOGL', minUsd: 5_000, venue: 'equity' },
+  { symbol: 'TSLA', label: 'TSLA', minUsd: 5_000, venue: 'equity' },
+  { symbol: 'AMD', label: 'AMD', minUsd: 5_000, venue: 'equity' },
+  { symbol: 'NVDA', label: 'NVDA', minUsd: 5_000, venue: 'equity' },
 ];
 
-/** @deprecated use EQUITY_PERP_WATCHLIST */
-export const STOCK_WATCHLIST = EQUITY_PERP_WATCHLIST;
+/** @deprecated use STOCK_WATCHLIST — these are cash equities, not Binance perps. */
+export const EQUITY_PERP_WATCHLIST = STOCK_WATCHLIST;
 
 export function minUsdFor(
   symbol: string,
-  list: WatchCoin[] = [...DEFAULT_WATCHLIST, ...EQUITY_PERP_WATCHLIST],
+  list: WatchCoin[] = [...DEFAULT_WATCHLIST, ...STOCK_WATCHLIST],
 ): number {
   return list.find((c) => c.symbol === symbol)?.minUsd ?? 1_000;
 }

@@ -33,7 +33,7 @@ export { HyperliquidAdapter } from './exchange/hyperliquid-adapter.js';
 export { DydxAdapter } from './exchange/dydx-adapter.js';
 export { BitstampAdapter } from './exchange/bitstamp-adapter.js';
 export { BinanceMarketDataClient } from './market-data/binance-client.js';
-export { EXCHANGE_IDS, EXCHANGE_LABELS } from './exchange/venues.js';
+export { EXCHANGE_IDS, EXCHANGE_LABELS, STOCK_TAPE_EXCHANGE } from './exchange/venues.js';
 export type { ExchangeId } from './exchange/venues.js';
 
 export * from './models/index.js';

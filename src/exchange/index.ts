@@ -14,16 +14,19 @@ export {
 } from './types.js';
 export {
   EXCHANGE_IDS,
+  CRYPTO_EXCHANGE_IDS,
+  STOCK_TAPE_EXCHANGE,
   EXCHANGE_LABELS,
   EXCHANGE_SHORT,
   isExchangeId,
+  isCryptoExchangeId,
   parseExchangesEnv,
   venueInstrument,
   canonicalFromVenue,
   fetchVenueKlines,
   fetchVenueDepth,
 } from './venues.js';
-export type { ExchangeId } from './venues.js';
+export type { ExchangeId, CryptoExchangeId } from './venues.js';
 export type {
   BinanceAggTrade,
   BinanceTrade,
