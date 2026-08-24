@@ -46,7 +46,7 @@ const TF_LABEL = {
   '15m': 'last 15 minutes',
 };
 
-const EX_SHORT = { binance: 'BN', bybit: 'BY', okx: 'OKX', bitget: 'BG', hyperliquid: 'HL', dydx: 'DX', bitstamp: 'BS', sip: 'US' };
+const EX_SHORT = { binance: 'BN', bybit: 'BY', okx: 'OKX', bitget: 'BG', hyperliquid: 'HL', dydx: 'DX', bitstamp: 'BS' };
 const DEFAULT_EXCHANGES = ['binance', 'bybit', 'okx', 'bitget', 'hyperliquid', 'dydx', 'bitstamp'];
 
 function fmtUsd(n) {
@@ -180,25 +180,17 @@ function coinIsEquity(symbol = selectedSymbol) {
 
 function activeExchanges() {
   const ids = config?.exchanges?.length ? config.exchanges : DEFAULT_EXCHANGES;
-  return coinIsEquity() ? ['sip'] : ids;
+  return coinIsEquity() ? ['binance'] : ids;
 }
 
 function tradeMatchesExchange(trade) {
-  if (coinIsEquity(trade.symbol)) return tradeExchange(trade) === 'sip';
+  if (coinIsEquity(trade.symbol)) return tradeExchange(trade) === 'binance';
   if (selectedExchange === 'all') return true;
   return tradeExchange(trade) === selectedExchange;
 }
 
 function klineExchange() {
   return selectedExchange === 'all' ? 'binance' : selectedExchange;
-}
-
-function stockTapeLabel() {
-  const src = config?.stockSource;
-  if (src === 'finnhub') return 'Finnhub tape';
-  if (src === 'polygon') return 'Polygon tape';
-  if (src === 'yahoo') return 'Yahoo delayed';
-  return 'US tape';
 }
 
 function addTapeRow(trade) {
@@ -219,9 +211,7 @@ function makeTapeRowEl(trade) {
   div.className = `tape-row ${trade.side.toLowerCase()}`;
   div.dataset.id = trade.id;
   const sideLabel = trade.side === 'BUY' ? 'Aggressive BUY' : 'Aggressive SELL';
-  const sideSub = coinIsEquity(trade.symbol)
-    ? (trade.side === 'BUY' ? 'uptick' : 'downtick')
-    : trade.side === 'BUY' ? 'hit ask' : 'hit bid';
+  const sideSub = trade.side === 'BUY' ? 'hit ask' : 'hit bid';
   const flags = decodeFlags(trade)
     .map((b) => `<span class="flag ${b.cls}" title="${b.tip}">${b.text}</span>`)
     .join('');
@@ -553,7 +543,6 @@ function levelsFromDepth(rows) {
 }
 
 async function seedBook(symbol) {
-  if (coinIsEquity(symbol)) return;
   try {
     const data = await fetch(`/api/depth?symbol=${encodeURIComponent(symbol)}`).then((r) => r.json());
     if (symbol !== selectedSymbol || !data) return;
@@ -585,7 +574,6 @@ async function loadLiqEstimate(symbol) {
 
 function startLiqEstimateLoop() {
   if (liqEstTimer) clearInterval(liqEstTimer);
-  if (coinIsEquity()) return;
   loadLiqEstimate(selectedSymbol);
   liqEstTimer = setInterval(() => loadLiqEstimate(selectedSymbol), 30_000);
 }
@@ -646,13 +634,11 @@ function clearMainPanels() {
 function syncExchangeTabs() {
   const enabled = new Set(activeExchanges());
   const equity = coinIsEquity();
-  if (equity) selectedExchange = 'sip';
-  else if (selectedExchange === 'sip' || (selectedExchange !== 'all' && !enabled.has(selectedExchange))) {
-    selectedExchange = 'all';
-  }
+  if (equity && selectedExchange !== 'binance') selectedExchange = 'binance';
+  if (!equity && selectedExchange !== 'all' && !enabled.has(selectedExchange)) selectedExchange = 'all';
   document.querySelectorAll('#chart-ex-tabs [data-ex]').forEach((btn) => {
     const id = btn.dataset.ex;
-    const allowed = id === 'all' ? !equity && enabled.size > 1 : !equity && enabled.has(id);
+    const allowed = id === 'all' ? !equity && enabled.size > 1 : enabled.has(id);
     btn.hidden = !allowed;
     btn.disabled = !allowed;
     btn.classList.toggle('active', id === selectedExchange);
@@ -789,7 +775,7 @@ function updateUi() {
   const coin = config?.coins?.find((c) => c.symbol === lastSummary.symbol);
   const venue =
     coin?.venue === 'equity'
-      ? stockTapeLabel()
+      ? 'Binance equity perp'
       : selectedExchange === 'all'
         ? 'multi-exchange'
         : selectedExchange;
@@ -1137,7 +1123,7 @@ async function loadFootprintHistory() {
   try {
     const params = new URLSearchParams({
       symbol,
-      exchange: coinIsEquity(symbol) ? 'sip' : exchange,
+      exchange,
       tf: String(tf),
       limit: '1500',
       days: String(fpRetentionDays),
@@ -1161,10 +1147,6 @@ async function loadFootprintHistory() {
 function seedFootprintKlines() {
   if (fpHistoryEnabled) {
     void loadFootprintHistory();
-    return;
-  }
-  if (coinIsEquity()) {
-    drawFootprint();
     return;
   }
   void seedFromKlines();
@@ -1295,10 +1277,7 @@ function fpCandleTime(ts, tf = chartTfMinutes) {
   return s - (s % (tf * 60));
 }
 
-function tickSize(price, symbol = selectedSymbol) {
-  if (coinIsEquity(symbol)) {
-    return price >= 1 ? 0.01 : 0.0001;
-  }
+function tickSize(price) {
   if (price >= 10000) return 10;
   if (price >= 1000) return 1;
   if (price >= 100) return 0.5;
@@ -1308,7 +1287,7 @@ function tickSize(price, symbol = selectedSymbol) {
 }
 
 function priceToTick(price, tick) {
-  return Number((Math.round(price / tick) * tick).toFixed(6));
+  return Math.round(price / tick) * tick;
 }
 
 function ingestTradeToChart(trade) {
@@ -1316,7 +1295,7 @@ function ingestTradeToChart(trade) {
   // footprint. The tape is filtered to large prints, so building from it here
   // would understate volume and fight the server's bar.
   if (fpHistoryEnabled) return;
-  const tick = tickSize(trade.price, trade.symbol);
+  const tick = tickSize(trade.price);
   const level = priceToTick(trade.price, tick);
   const lk = level.toFixed(6);
   const store = getFootprintStore(trade.symbol, 1, tradeExchange(trade));
@@ -1758,8 +1737,7 @@ function rebuildChart() {
 
 function subscribeFootprint() {
   if (!fpHistoryEnabled || fpLiveSocket?.readyState !== WebSocket.OPEN) return;
-  const exchange = coinIsEquity() ? 'sip' : selectedExchange;
-  fpLiveSocket.send(JSON.stringify({ type: 'sub_footprint', symbol: selectedSymbol, exchange }));
+  fpLiveSocket.send(JSON.stringify({ type: 'sub_footprint', symbol: selectedSymbol, exchange: selectedExchange }));
 }
 
 /**

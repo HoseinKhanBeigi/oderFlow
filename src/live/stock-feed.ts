@@ -1,20 +1,14 @@
 import WebSocket from 'ws';
 import { OrderFlowEngine } from '../engine/order-flow-engine.js';
-import { STOCK_TAPE_EXCHANGE } from '../exchange/venues.js';
-import { polygonTimestampMs } from '../exchange/polygon-stocks.js';
 import { StockTickClassifier, syntheticStockBook } from '../exchange/stock-adapter.js';
 import type { MarketTrade } from '../models/trade.js';
-import type { RawTradeListener } from './live-feed.js';
-import type { CoinOverview, LiveFeedEvent, LiveFeedListener, LiveSummary } from './live-feed.js';
 import { minUsdFor, type WatchCoin } from './watchlist.js';
-
-export type StockTapeSource = 'finnhub' | 'polygon' | 'yahoo';
+import type { CoinOverview, LiveFeedEvent, LiveFeedListener, LiveSummary } from './live-feed.js';
 
 export interface StockFeedConfig {
   stocks: WatchCoin[];
   summaryMs: number;
   finnhubKey?: string;
-  polygonKey?: string;
 }
 
 interface YahooQuote {
@@ -24,23 +18,15 @@ interface YahooQuote {
   regularMarketTime?: number;
 }
 
-export function resolveStockTapeSource(env: NodeJS.ProcessEnv = process.env): StockTapeSource {
-  if (env.FINNHUB_API_KEY?.trim()) return 'finnhub';
-  if (env.POLYGON_API_KEY?.trim()) return 'polygon';
-  return 'yahoo';
-}
-
 /**
- * US stock tape — last-sale prints, separate from Binance.
- * Finnhub is preferred for live; Polygon WS is the fallback when only that key
- * is set. Yahoo is delayed volume deltas and is never written to the footprint.
+ * US stock tape — separate from Binance.
+ * Prefers Finnhub live trades when FINNHUB_API_KEY is set.
+ * Otherwise polls Yahoo quotes (delayed, volume-delta prints).
  */
 export class StockLiveFeed {
   readonly engine = new OrderFlowEngine();
-  readonly source: StockTapeSource;
   private readonly classifier = new StockTickClassifier();
   private readonly listeners = new Set<LiveFeedListener>();
-  private readonly rawTradeListeners = new Set<RawTradeListener>();
   private readonly tradeCount = new Map<string, number>();
   private readonly lastStates = new Map<string, Partial<Record<'10s' | '1m' | '5m', string>>>();
   private readonly lastYahooVol = new Map<string, number>();
@@ -50,15 +36,8 @@ export class StockLiveFeed {
   private summaryTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
   private seq = 0;
-  connected = false;
 
   constructor(readonly config: StockFeedConfig) {
-    this.source = config.finnhubKey?.trim()
-      ? 'finnhub'
-      : config.polygonKey?.trim()
-        ? 'polygon'
-        : 'yahoo';
-
     for (const stock of config.stocks) {
       this.engine.getSymbol(stock.symbol, 'stock');
       this.tradeCount.set(stock.symbol, 0);
@@ -111,30 +90,25 @@ export class StockLiveFeed {
     return () => this.listeners.delete(listener);
   }
 
-  onAnyTrade(listener: RawTradeListener): () => void {
-    this.rawTradeListeners.add(listener);
-    return () => this.rawTradeListeners.delete(listener);
-  }
-
   start(): void {
     this.closed = false;
     this.summaryTimer = setInterval(() => this.emitAllSummaries(Date.now()), this.config.summaryMs);
-    if (this.source === 'finnhub') this.connectFinnhub();
-    else if (this.source === 'polygon') this.connectPolygon();
+    if (this.config.finnhubKey) this.connectFinnhub();
     else this.startYahooPoll();
   }
 
   stop(): void {
     this.closed = true;
-    this.connected = false;
     this.ws?.close();
     this.ws = null;
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.summaryTimer) clearInterval(this.summaryTimer);
+    this.emit({ type: 'status', connected: false, message: 'Stock feed stopped' });
   }
 
   private connectFinnhub(): void {
     const url = `wss://ws.finnhub.io?token=${this.config.finnhubKey}`;
+    this.emit({ type: 'status', connected: false, message: 'Connecting US stocks (Finnhub)…' });
     const ws = new WebSocket(url);
     this.ws = ws;
 
@@ -142,8 +116,11 @@ export class StockLiveFeed {
       for (const stock of this.config.stocks) {
         ws.send(JSON.stringify({ type: 'subscribe', symbol: stock.symbol }));
       }
-      this.connected = true;
-      console.log(`[stocks] live tape — Finnhub (${this.config.stocks.length} names)`);
+      this.emit({
+        type: 'status',
+        connected: true,
+        message: `Live stocks — Finnhub (${this.config.stocks.length} names)`,
+      });
     });
 
     ws.on('message', (raw) => {
@@ -156,82 +133,31 @@ export class StockLiveFeed {
       if (msg.type !== 'trade' || !msg.data) return;
       for (const print of msg.data) {
         if (!this.config.stocks.some((s) => s.symbol === print.s)) continue;
-        this.handlePrint(
-          {
-            symbol: print.s,
-            timestamp: print.t,
-            price: print.p,
-            quantity: print.v,
-            tradeId: `${print.s}-${print.t}-${++this.seq}`,
-          },
-          true,
-        );
+        const trade = this.classifier.classify({
+          symbol: print.s,
+          timestamp: print.t,
+          price: print.p,
+          quantity: print.v,
+          tradeId: `${print.s}-${print.t}-${++this.seq}`,
+        });
+        this.handleTrade(trade);
       }
     });
 
     ws.on('close', () => {
-      this.connected = false;
+      this.emit({ type: 'status', connected: false, message: 'Stocks disconnected — reconnecting…' });
       if (!this.closed) setTimeout(() => this.connectFinnhub(), 3_000);
     });
 
     ws.on('error', () => ws.close());
   }
 
-  private connectPolygon(): void {
-    const ws = new WebSocket('wss://socket.polygon.io/stocks');
-    this.ws = ws;
-
-    ws.on('open', () => {
-      ws.send(JSON.stringify({ action: 'auth', params: this.config.polygonKey }));
-    });
-
-    ws.on('message', (raw) => {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(String(raw));
-      } catch {
-        return;
-      }
-      const rows = Array.isArray(parsed) ? parsed : [parsed];
-      for (const row of rows) {
-        const msg = row as { ev?: string; status?: string; message?: string; sym?: string; p?: number; s?: number; t?: number; i?: string | number };
-        if (msg.ev === 'status' && msg.status === 'auth_success') {
-          const params = this.config.stocks.map((s) => `T.${s.symbol}`).join(',');
-          ws.send(JSON.stringify({ action: 'subscribe', params }));
-          this.connected = true;
-          console.log(`[stocks] live tape — Polygon (${this.config.stocks.length} names)`);
-          continue;
-        }
-        if (msg.ev === 'status' && msg.status === 'auth_failed') {
-          console.error('[stocks] Polygon auth failed:', msg.message ?? 'check POLYGON_API_KEY');
-          continue;
-        }
-        if (msg.ev !== 'T' || !msg.sym) continue;
-        if (!this.config.stocks.some((s) => s.symbol === msg.sym)) continue;
-        this.handlePrint(
-          {
-            symbol: msg.sym,
-            timestamp: polygonTimestampMs(Number(msg.t)),
-            price: Number(msg.p),
-            quantity: Number(msg.s),
-            tradeId: msg.i ?? `${msg.sym}-${msg.t}-${++this.seq}`,
-          },
-          true,
-        );
-      }
-    });
-
-    ws.on('close', () => {
-      this.connected = false;
-      if (!this.closed) setTimeout(() => this.connectPolygon(), 3_000);
-    });
-
-    ws.on('error', () => ws.close());
-  }
-
   private startYahooPoll(): void {
-    console.log('[stocks] Yahoo delayed quotes — set FINNHUB_API_KEY (live) or POLYGON_API_KEY (live + history)');
-    this.connected = true;
+    this.emit({
+      type: 'status',
+      connected: true,
+      message: 'Stocks via Yahoo (delayed). Set FINNHUB_API_KEY for live trades.',
+    });
     void this.pollYahoo();
     this.pollTimer = setInterval(() => void this.pollYahoo(), 2_500);
   }
@@ -258,45 +184,25 @@ export class StockLiveFeed {
         if (prev === undefined || volume <= prev) continue;
         const qty = volume - prev;
         if (qty <= 0) continue;
-        this.handlePrint(
-          {
-            symbol: q.symbol,
-            timestamp: ts,
-            price,
-            quantity: qty,
-            tradeId: `yahoo-${q.symbol}-${ts}`,
-          },
-          false,
-        );
+        const trade = this.classifier.classify({
+          symbol: q.symbol,
+          timestamp: ts,
+          price,
+          quantity: qty,
+          tradeId: `yahoo-${q.symbol}-${ts}`,
+        });
+        this.handleTrade(trade);
       }
     } catch {
       /* ignore poll errors */
     }
   }
 
-  private handlePrint(
-    print: { symbol: string; timestamp: number; price: number; quantity: number; tradeId?: string | number },
-    intoFootprint: boolean,
-  ): void {
-    const trade = this.classifier.classify(print);
-    this.handleTrade(trade, intoFootprint);
-  }
-
-  private handleTrade(trade: MarketTrade, intoFootprint: boolean): void {
+  private handleTrade(trade: MarketTrade): void {
     this.engine.ingestBookSnapshot(syntheticStockBook(trade.symbol, trade.price, trade.timestamp));
     this.engine.ingestTrade(trade);
     const next = (this.tradeCount.get(trade.symbol) ?? 0) + 1;
     this.tradeCount.set(trade.symbol, next);
-
-    if (intoFootprint) {
-      for (const listener of this.rawTradeListeners) {
-        try {
-          listener(trade, STOCK_TAPE_EXCHANGE);
-        } catch (err) {
-          console.error('[stocks] raw trade listener failed:', err instanceof Error ? err.message : err);
-        }
-      }
-    }
 
     const floor = minUsdFor(trade.symbol, this.config.stocks);
     if (trade.quoteValue < floor) return;
@@ -319,7 +225,6 @@ export class StockLiveFeed {
         tag,
         relativeClass: rel.classification,
         tier,
-        exchange: STOCK_TAPE_EXCHANGE,
       },
     });
   }

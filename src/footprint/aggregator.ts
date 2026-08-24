@@ -6,7 +6,6 @@ import type { FootprintBar, FootprintLevel } from './types.js';
 interface OpenBar {
   symbol: string;
   exchange: ExchangeId;
-  market: MarketType;
   time: number;
   open: number;
   high: number;
@@ -46,7 +45,6 @@ export class FootprintAggregator {
     if (!Number.isFinite(price) || price <= 0) return;
     if (!Number.isFinite(quoteValue) || quoteValue <= 0) return;
 
-    const market = trade.marketType || this.options.market;
     const time = barTime(timestamp, this.intervalMinutes);
     const key = `${symbol}|${exchange}`;
     let bar = this.open.get(key);
@@ -54,7 +52,7 @@ export class FootprintAggregator {
     if (bar && bar.time !== time) {
       // A late print for an already-rolled bar would corrupt a flushed row.
       if (time < bar.time) return;
-      this.closed.push(finalize(bar));
+      this.closed.push(finalize(bar, this.options.market));
       bar = undefined;
     }
 
@@ -62,7 +60,6 @@ export class FootprintAggregator {
       bar = {
         symbol,
         exchange,
-        market,
         time,
         open: price,
         high: price,
@@ -83,7 +80,7 @@ export class FootprintAggregator {
     bar.trades += 1;
     bar.dirty = true;
 
-    const level = priceToTick(price, tickSize(price, market));
+    const level = priceToTick(price, tickSize(price));
     let entry = bar.levels.get(level);
     if (!entry) {
       entry = { price: level, buy: 0, sell: 0 };
@@ -103,7 +100,7 @@ export class FootprintAggregator {
     const current = barTime(now, this.intervalMinutes);
     for (const [key, bar] of this.open) {
       if (bar.time >= current) continue;
-      this.closed.push(finalize(bar));
+      this.closed.push(finalize(bar, this.options.market));
       this.open.delete(key);
     }
   }
@@ -122,22 +119,22 @@ export class FootprintAggregator {
     for (const bar of this.open.values()) {
       if (onlyDirty && !bar.dirty) continue;
       bar.dirty = false;
-      out.push(finalize(bar));
+      out.push(finalize(bar, this.options.market));
     }
     return out;
   }
 
   currentBar(symbol: string, exchange: ExchangeId): FootprintBar | null {
     const bar = this.open.get(`${symbol}|${exchange}`);
-    return bar ? finalize(bar) : null;
+    return bar ? finalize(bar, this.options.market) : null;
   }
 }
 
-function finalize(bar: OpenBar): FootprintBar {
+function finalize(bar: OpenBar, market: MarketType): FootprintBar {
   return {
     symbol: bar.symbol,
     exchange: bar.exchange,
-    market: bar.market,
+    market,
     time: bar.time,
     open: bar.open,
     high: bar.high,

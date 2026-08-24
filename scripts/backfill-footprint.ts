@@ -8,15 +8,13 @@
  *   npm run backfill -- --days 30
  *   npm run backfill -- --days 7 --symbols BTCUSDT,ETHUSDT --concurrency 4
  *   npm run backfill -- --days 1 --dry-run
- *
- * US stocks are a different tape — use `npm run backfill:stocks`.
  */
 import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 import { createInflateRaw } from 'node:zlib';
 import { FootprintAggregator } from '../src/footprint/aggregator.js';
 import { classifyTrade } from '../src/flow/trade-classifier.js';
-import { DEFAULT_WATCHLIST } from '../src/live/watchlist.js';
+import { DEFAULT_WATCHLIST, EQUITY_PERP_WATCHLIST } from '../src/live/watchlist.js';
 import type { MarketType } from '../src/models/trade.js';
 import { isStorageEnabled } from '../src/storage/db.js';
 import { closePool } from '../src/storage/db.js';
@@ -50,7 +48,7 @@ function parseArgs(argv: string[]): Args {
 
   return {
     days: Math.min(Math.max(Number(get('--days') ?? 30), 1), 365),
-    symbols: symbols.length ? symbols : DEFAULT_WATCHLIST.map((c) => c.symbol),
+    symbols: symbols.length ? symbols : [...DEFAULT_WATCHLIST, ...EQUITY_PERP_WATCHLIST].map((c) => c.symbol),
     market,
     concurrency: Math.min(Math.max(Number(get('--concurrency') ?? 3), 1), 8),
     force: argv.includes('--force'),

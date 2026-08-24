@@ -3,6 +3,7 @@ import { OrderFlowEngine } from '../engine/order-flow-engine.js';
 import { BinanceFuturesAdapter, BinanceSpotAdapter } from '../exchange/binance-adapters.js';
 import {
   BINANCE_FUTURES_WS,
+  BINANCE_FUTURES_WS_RAW,
   BINANCE_SPOT_WS,
   streamName,
   unwrapBinancePayload,
@@ -201,7 +202,7 @@ export class LiveBinanceFeed {
   start(): void {
     this.closed = false;
     this.connect();
-    const extra = this.exchanges.filter((id) => id !== 'binance' && id !== 'sip');
+    const extra = this.exchanges.filter((id) => id !== 'binance');
     if (extra.length) {
       this.venues = new VenueTradeFan(
         this.coins,
@@ -242,9 +243,16 @@ export class LiveBinanceFeed {
     }
 
     const crypto = this.coins.filter((c) => c.venue !== 'equity');
-    if (!crypto.length) return;
-    this.openCombined(BINANCE_FUTURES_WS, crypto, 'trade', 'crypto perp');
-    this.openSocket(`${BINANCE_FUTURES_WS}?streams=${this.depthList(crypto)}`, 'crypto book');
+    const equity = this.coins.filter((c) => c.venue === 'equity');
+    if (crypto.length) {
+      this.openCombined(BINANCE_FUTURES_WS, crypto, 'trade', 'crypto perp');
+      this.openSocket(`${BINANCE_FUTURES_WS}?streams=${this.depthList(crypto)}`, 'crypto book');
+    }
+    // TradFi equity perps (https://www.binance.com/en/futures/AMZNUSDT) need /ws/, not combined /stream.
+    if (equity.length) {
+      this.openRawCombined(equity, 'trade', 'equity perp');
+      this.openSocket(`${BINANCE_FUTURES_WS}?streams=${this.depthList(equity)}`, 'equity book');
+    }
   }
 
   private streamList(coins: WatchCoin[], tradeChannel: string): string {
@@ -259,6 +267,10 @@ export class LiveBinanceFeed {
 
   private openCombined(base: string, coins: WatchCoin[], tradeChannel: string, label: string): void {
     this.openSocket(`${base}?streams=${this.streamList(coins, tradeChannel)}`, label);
+  }
+
+  private openRawCombined(coins: WatchCoin[], tradeChannel: string, label: string): void {
+    this.openSocket(`${BINANCE_FUTURES_WS_RAW}/${this.streamList(coins, tradeChannel)}`, label);
   }
 
   private openSocket(url: string, label: string): void {

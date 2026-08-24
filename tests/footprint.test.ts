@@ -23,13 +23,6 @@ describe('footprint tick bucketing', () => {
     expect(tickSize(0.4)).toBe(0.001);
   });
 
-  it('uses a penny grid for US stocks', () => {
-    expect(tickSize(180.12, 'stock')).toBe(0.01);
-    expect(tickSize(0.42, 'stock')).toBe(0.0001);
-    expect(priceToTick(180.124, tickSize(180.124, 'stock'))).toBe(180.12);
-    expect(priceToTick(180.126, tickSize(180.126, 'stock'))).toBe(180.13);
-  });
-
   it('collapses nearby prices into one bucket', () => {
     expect(priceToTick(69_312.4)).toBe(69_310);
     expect(priceToTick(69_314.9)).toBe(69_310);

@@ -4,16 +4,13 @@ import { join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { LiveBinanceFeed } from '../src/live/live-feed.js';
-import { StockLiveFeed } from '../src/live/stock-feed.js';
-import { DEFAULT_WATCHLIST, STOCK_WATCHLIST } from '../src/live/watchlist.js';
+import { DEFAULT_WATCHLIST, EQUITY_PERP_WATCHLIST } from '../src/live/watchlist.js';
 import { DEFAULT_CONFIG } from '../src/config/defaults.js';
 import type { LiveFeedEvent } from '../src/live/live-feed.js';
 import {
   EXCHANGE_LABELS,
-  STOCK_TAPE_EXCHANGE,
   fetchVenueDepth,
   fetchVenueKlines,
-  isCryptoExchangeId,
   isExchangeId,
   parseExchangesEnv,
   type ExchangeId,
@@ -23,7 +20,6 @@ import { coverage, loadBars } from '../src/storage/footprint-store.js';
 import { isStorageEnabled } from '../src/storage/db.js';
 import { rollup } from '../src/footprint/rollup.js';
 import { toWire, type FootprintBar } from '../src/footprint/types.js';
-import type { MarketType } from '../src/models/trade.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC = join(__dirname, '../public');
@@ -35,11 +31,9 @@ const extra = (process.env.SYMBOLS ?? '')
   .map((s) => s.trim().toUpperCase())
   .filter(Boolean);
 
-const ALL_WATCH = [...DEFAULT_WATCHLIST, ...STOCK_WATCHLIST];
-
 const coins = extra.length
   ? extra.map((symbol) => {
-      const known = ALL_WATCH.find((c) => c.symbol === symbol);
+      const known = [...DEFAULT_WATCHLIST, ...EQUITY_PERP_WATCHLIST].find((c) => c.symbol === symbol);
       return {
         symbol,
         label: known?.label ?? symbol.replace(/USDT$/, ''),
@@ -47,14 +41,7 @@ const coins = extra.length
         venue: known?.venue ?? ('crypto' as const),
       };
     })
-  : ALL_WATCH;
-
-const cryptoCoins = coins.filter((c) => c.venue !== 'equity');
-const stockCoins = coins.filter((c) => c.venue === 'equity');
-
-function isStockSymbol(symbol: string): boolean {
-  return stockCoins.some((c) => c.symbol === symbol) || coins.find((c) => c.symbol === symbol)?.venue === 'equity';
-}
+  : [...DEFAULT_WATCHLIST, ...EQUITY_PERP_WATCHLIST];
 
 const EXCHANGES = parseExchangesEnv();
 
@@ -68,20 +55,11 @@ const MIME: Record<string, string> = {
 const RETENTION_DAYS = Number(process.env.FOOTPRINT_RETENTION_DAYS ?? 30);
 
 const feed = new LiveBinanceFeed({
-  coins: cryptoCoins,
+  coins,
   market: MARKET as 'spot' | 'perp',
   summaryMs: 2_000,
   exchanges: EXCHANGES,
 });
-
-const stockFeed = stockCoins.length
-  ? new StockLiveFeed({
-      stocks: stockCoins,
-      summaryMs: 2_000,
-      finnhubKey: process.env.FINNHUB_API_KEY?.trim() || undefined,
-      polygonKey: process.env.POLYGON_API_KEY?.trim() || undefined,
-    })
-  : null;
 
 const recorder = new FootprintRecorder({
   market: MARKET as 'spot' | 'perp',
@@ -89,17 +67,12 @@ const recorder = new FootprintRecorder({
   flushMs: Number(process.env.FOOTPRINT_FLUSH_MS ?? 15_000),
 });
 feed.onAnyTrade((trade, exchange) => recorder.ingest(trade, exchange));
-stockFeed?.onAnyTrade((trade, exchange) => recorder.ingest(trade, exchange));
 
 const server = createServer(async (req, res) => {
     if (req.url?.startsWith('/api/depth')) {
       const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
       const symbol = (u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase();
       const exchange = parseExchangeParam(u.searchParams.get('exchange'));
-      if (isStockSymbol(symbol)) {
-        json(res, { bids: [], asks: [] });
-        return;
-      }
       try {
         json(res, await fetchVenueDepth(exchange, symbol, MARKET, 100));
       } catch {
@@ -112,10 +85,6 @@ const server = createServer(async (req, res) => {
     if (req.url?.startsWith('/api/liq-estimate')) {
       const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
       const symbol = (u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase();
-      if (isStockSymbol(symbol)) {
-        json(res, { symbol, price: 0, oiUsd: 0, longRatio: 0, shortRatio: 0, split: 'none' });
-        return;
-      }
       try {
         json(res, await getLiqEstimate(symbol));
       } catch {
@@ -138,10 +107,6 @@ const server = createServer(async (req, res) => {
     if (req.url?.startsWith('/api/klines')) {
       const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
       const symbol = (u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase();
-      if (isStockSymbol(symbol)) {
-        json(res, []);
-        return;
-      }
       const interval = u.searchParams.get('interval') ?? '1m';
       const exchange = parseExchangeParam(u.searchParams.get('exchange'));
       const rawLimit = Number(u.searchParams.get('limit') ?? 300);
@@ -161,12 +126,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       try {
-        json(res, {
-          enabled: true,
-          retentionDays: RETENTION_DAYS,
-          rows: await coverage(MARKET as 'spot' | 'perp'),
-          stockRows: await coverage('stock'),
-        });
+        json(res, { enabled: true, retentionDays: RETENTION_DAYS, rows: await coverage(MARKET as 'spot' | 'perp') });
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'coverage failed' }));
@@ -186,15 +146,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.url === '/api/health') {
-      json(res, {
-        ok: true,
-        market: MARKET,
-        storage: recorder.stats(),
-        stockTape: stockFeed
-          ? { source: stockFeed.source, connected: stockFeed.connected, symbols: stockCoins.length }
-          : { source: 'none', connected: false, symbols: 0 },
-        uptimeSec: Math.round(process.uptime()),
-      });
+      json(res, { ok: true, market: MARKET, storage: recorder.stats(), uptimeSec: Math.round(process.uptime()) });
       return;
     }
 
@@ -202,10 +154,9 @@ const server = createServer(async (req, res) => {
     json(res, {
       coins,
       crypto: coins.filter((c) => c.venue === 'crypto'),
-      stocks: stockCoins,
+      stocks: coins.filter((c) => c.venue === 'equity'),
       market: MARKET,
-      stockSource: stockFeed?.source ?? 'none',
-      stockTape: STOCK_TAPE_EXCHANGE,
+      stockSource: 'binance-perp',
       exchanges: EXCHANGES,
       exchangeLabels: EXCHANGE_LABELS,
       port: PORT,
@@ -272,9 +223,7 @@ wss.on('connection', (socket) => {
     if (!coins.some((c) => c.symbol === symbol)) return;
     footprintSubs.set(socket, {
       symbol,
-      exchanges: isStockSymbol(symbol)
-        ? [STOCK_TAPE_EXCHANGE]
-        : parseFootprintExchanges(typeof msg.exchange === 'string' ? msg.exchange : 'binance'),
+      exchanges: parseFootprintExchanges(typeof msg.exchange === 'string' ? msg.exchange : 'binance'),
     });
     sendLiveFootprint(socket);
   });
@@ -299,27 +248,21 @@ const liveFootprintTimer = setInterval(() => {
 liveFootprintTimer.unref?.();
 
 feed.on(broadcast);
-stockFeed?.on(broadcast);
 feed.start();
-stockFeed?.start();
 recorder.start();
 
 server.listen(PORT, () => {
+  const crypto = coins.filter((c) => c.venue === 'crypto');
+  const equity = coins.filter((c) => c.venue === 'equity');
   console.log(`\n  Order Flow Dashboard`);
   console.log(`  http://localhost:${PORT}`);
   console.log(`  Exchanges: ${EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
-  console.log(`  Crypto perp: ${cryptoCoins.map((c) => c.label).join(' · ')}`);
-  const tape = stockFeed?.source ?? 'none';
-  console.log(
-    `  US stocks (${tape}): ${stockCoins.length ? stockCoins.map((c) => c.label).join(' · ') : 'none'}`,
-  );
+  console.log(`  Crypto perp: ${crypto.map((c) => c.label).join(' · ')}`);
+  console.log(`  Equity perp (Binance): ${equity.map((c) => c.label).join(' · ')}`);
   console.log(
     `  Footprint history: ${isStorageEnabled() ? `Postgres · ${RETENTION_DAYS}d retention` : 'disabled (set DATABASE_URL)'}`,
   );
-  if (stockCoins.length && tape === 'yahoo') {
-    console.log('  Stock footprints need FINNHUB_API_KEY (live) and POLYGON_API_KEY (30d history).');
-  }
-  console.log('');
+  console.log(`  SpaceX is not listed on Binance.\n`);
 });
 
 function parseExchangeParam(raw: string | null): ExchangeId {
@@ -334,14 +277,9 @@ const footprintCache = new Map<string, { at: number; payload: unknown }>();
 
 function parseFootprintExchanges(raw: string | null): ExchangeId[] {
   const value = (raw ?? 'binance').toLowerCase();
-  if (value === 'sip') return [STOCK_TAPE_EXCHANGE];
   if (value === 'all') return EXCHANGES;
-  const ids = value
-    .split(',')
-    .map((s) => s.trim())
-    .filter((id): id is ExchangeId => isCryptoExchangeId(id) || isExchangeId(id));
-  const crypto = ids.filter(isCryptoExchangeId);
-  return crypto.length ? [...new Set(crypto)] : ['binance'];
+  const ids = value.split(',').map((s) => s.trim()).filter(isExchangeId);
+  return ids.length ? [...new Set(ids)] : ['binance'];
 }
 
 function clampInt(raw: string | null, fallback: number, min: number, max: number): number {
@@ -352,9 +290,7 @@ function clampInt(raw: string | null, fallback: number, min: number, max: number
 
 async function getFootprintHistory(params: URLSearchParams): Promise<unknown> {
   const symbol = (params.get('symbol') ?? 'BTCUSDT').toUpperCase();
-  const stock = isStockSymbol(symbol);
-  const market: MarketType = stock ? 'stock' : (MARKET as 'spot' | 'perp');
-  const exchanges = stock ? [STOCK_TAPE_EXCHANGE] : parseFootprintExchanges(params.get('exchange'));
+  const exchanges = parseFootprintExchanges(params.get('exchange'));
   const tf = clampInt(params.get('tf'), 1, 1, MAX_TF_MINUTES);
   const limit = clampInt(params.get('limit'), 1_500, 1, 5_000);
   const days = clampInt(params.get('days'), RETENTION_DAYS, 1, RETENTION_DAYS);
@@ -368,7 +304,7 @@ async function getFootprintHistory(params: URLSearchParams): Promise<unknown> {
   // the live WS feed. Without this split the two sources double-count it.
   const liveFrom = nowSec - (nowSec % 60);
 
-  const key = `${symbol}|${market}|${exchanges.join(',')}|${tf}|${limit}|${days}|${liveFrom}`;
+  const key = `${symbol}|${exchanges.join(',')}|${tf}|${limit}|${days}|${liveFrom}`;
   const hit = footprintCache.get(key);
   if (hit && Date.now() - hit.at < 20_000) return hit.payload;
 
@@ -380,7 +316,7 @@ async function getFootprintHistory(params: URLSearchParams): Promise<unknown> {
 
   const rows = await loadBars({
     symbol,
-    market,
+    market: MARKET as 'spot' | 'perp',
     exchanges,
     fromSec,
     toSec: liveFrom,
@@ -392,7 +328,6 @@ async function getFootprintHistory(params: URLSearchParams): Promise<unknown> {
   const payload = {
     enabled: true,
     symbol,
-    market,
     tf,
     exchanges,
     retentionDays: RETENTION_DAYS,
@@ -442,7 +377,7 @@ let levCache: { at: number; data: Record<string, LevSpec> } | null = null;
 
 async function getLeverageBrackets(): Promise<Record<string, LevSpec>> {
   if (levCache && Date.now() - levCache.at < 15 * 60_000) return levCache.data;
-  const wanted = new Set(cryptoCoins.map((c) => c.symbol));
+  const wanted = new Set(coins.map((c) => c.symbol));
   const r = await fetch('https://www.binance.com/bapi/futures/v1/friendly/future/common/brackets', {
     headers: { 'User-Agent': 'Mozilla/5.0' },
   });
@@ -549,7 +484,6 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`\n  ${signal} — flushing footprint buffer…`);
   clearInterval(liveFootprintTimer);
   feed.stop();
-  stockFeed?.stop();
   // Railway sends SIGTERM on redeploy; without this the last bars are lost.
   await recorder.stop().catch(() => undefined);
   server.close();
