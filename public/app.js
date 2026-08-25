@@ -7,6 +7,24 @@ let eventCount = 0;
 let selectedTf = '10s';
 let selectedSymbol = 'BTCUSDT';
 let selectedExchange = 'all';
+let dataMode = 'perp'; // perp | spot | compare
+let imbalanceRatio = 3;
+const SPOT_EXCHANGES = ['binance', 'bybit', 'okx', 'bitstamp'];
+const summariesByMarket = { perp: {}, spot: {} };
+const spotFlowBySymbol = {};
+let lastSpotFlow = null;
+const feedStatus = {
+  perp: { connected: false, message: '' },
+  spot: { connected: false, message: '' },
+};
+
+function footprintMarket() {
+  return dataMode === 'perp' ? 'perp' : 'spot';
+}
+
+function isSpotView() {
+  return dataMode !== 'perp';
+}
 let lastSummary = null;
 const summaries = {};
 const tapeBySymbol = {};
@@ -179,11 +197,20 @@ function coinIsEquity(symbol = selectedSymbol) {
 }
 
 function activeExchanges() {
+  if (isSpotView()) {
+    const enabled = new Set(config?.spotExchanges ?? SPOT_EXCHANGES);
+    return SPOT_EXCHANGES.filter((id) => enabled.has(id));
+  }
   const ids = config?.exchanges?.length ? config.exchanges : DEFAULT_EXCHANGES;
   return coinIsEquity() ? ['binance'] : ids;
 }
 
+function tradeMarket(trade) {
+  return trade?.market === 'spot' ? 'spot' : 'perp';
+}
+
 function tradeMatchesExchange(trade) {
+  if (tradeMarket(trade) !== footprintMarket()) return false;
   if (coinIsEquity(trade.symbol)) return tradeExchange(trade) === 'binance';
   if (selectedExchange === 'all') return true;
   return tradeExchange(trade) === selectedExchange;
@@ -251,6 +278,7 @@ const EVENT_ICONS = { burst: '⚡', alert: '⚠', large: '◆', state: '◉', ab
 
 function addEvent(opts) {
   if (!opts || !opts.symbol || opts.symbol === '*') return;
+  if (opts.market && opts.market !== footprintMarket()) return;
 
   const item = {
     kind: opts.kind,
@@ -528,6 +556,7 @@ function renderLiquidityMap() {
 
 function ingestBook(book) {
   if (!book?.symbol) return;
+  if (book.market === 'spot') return;
   booksBySymbol[book.symbol] = book;
   if (book.symbol === selectedSymbol) renderLiquidityMap();
 }
@@ -634,6 +663,7 @@ function clearMainPanels() {
 function syncExchangeTabs() {
   const enabled = new Set(activeExchanges());
   const equity = coinIsEquity();
+  const spot = isSpotView();
   if (equity && selectedExchange !== 'binance') selectedExchange = 'binance';
   if (!equity && selectedExchange !== 'all' && !enabled.has(selectedExchange)) selectedExchange = 'all';
   document.querySelectorAll('#chart-ex-tabs [data-ex]').forEach((btn) => {
@@ -643,6 +673,7 @@ function syncExchangeTabs() {
     btn.disabled = !allowed;
     btn.classList.toggle('active', id === selectedExchange);
   });
+  document.querySelectorAll('.liq-only').forEach((el) => el.classList.toggle('hidden', spot));
 }
 
 function applySymbolFilter() {
@@ -650,7 +681,9 @@ function applySymbolFilter() {
     chip.classList.toggle('active', chip.dataset.symbol === selectedSymbol);
   });
   lastSummary = summaries[selectedSymbol] ?? null;
-  if (lastSummary) updateUi();
+  lastSpotFlow = spotFlowBySymbol[selectedSymbol] ?? null;
+  if (isSpotView()) updateSpotUi();
+  else if (lastSummary) updateUi();
   else clearMainPanels();
   syncExchangeTabs();
   renderTape();
@@ -660,6 +693,7 @@ function applySymbolFilter() {
   subscribeFootprint();
   seedBook(selectedSymbol);
   startLiqEstimateLoop();
+  renderSpotCompare();
 }
 
 function chipHtml(c) {
@@ -686,6 +720,9 @@ function renderCoinBar(assets) {
 }
 
 function openTab(symbol, label) {
+  if (isSpotView() && config?.coins?.find((c) => c.symbol === symbol)?.venue === 'equity') {
+    applyDataMode('perp');
+  }
   if (!openTabs.find((t) => t.symbol === symbol)) {
     openTabs.push({ symbol, label });
   }
@@ -742,7 +779,9 @@ function renderOpenTabs() {
   };
 }
 
-function updateOverview(coins) {
+function updateOverview(coins, market = 'perp') {
+  if (market === 'spot' && !isSpotView()) return;
+  if (market !== 'spot' && isSpotView()) return;
   for (const c of coins) {
     const el = $(`delta-${c.symbol}`);
     if (el) {
@@ -765,6 +804,7 @@ function windowData(summary, tf) {
 }
 
 function updateUi() {
+  if (isSpotView()) return;
   if (!lastSummary || lastSummary.symbol !== selectedSymbol) return;
   const w = windowData(lastSummary, selectedTf);
   if (!w) return;
@@ -882,10 +922,14 @@ function renderCompare(summary) {
 }
 
 function updateSummary(s) {
-  summaries[s.symbol] = s;
-  if (s.symbol === selectedSymbol) {
-    lastSummary = s;
-    updateUi();
+  const market = s.market === 'spot' ? 'spot' : 'perp';
+  summariesByMarket[market][s.symbol] = s;
+  if (market === 'perp') {
+    summaries[s.symbol] = s;
+    if (s.symbol === selectedSymbol && !isSpotView()) {
+      lastSummary = s;
+      updateUi();
+    }
   }
 }
 
@@ -893,6 +937,211 @@ function setStatus(connected, message) {
   const el = $('status');
   el.textContent = connected ? (message || 'Live') : message;
   el.className = `status ${connected ? 'live' : message.includes('Connect') || message.includes('Reconnect') ? 'connecting' : 'offline'}`;
+}
+
+function refreshStatus() {
+  const s = feedStatus[footprintMarket()] ?? feedStatus.perp;
+  setStatus(s.connected, s.message || (s.connected ? 'Live' : 'Connecting…'));
+}
+
+function setupDataMode() {
+  $('data-mode-tabs')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-mode]');
+    if (!btn) return;
+    applyDataMode(btn.dataset.mode);
+  });
+  $('imb-ratio')?.addEventListener('change', () => {
+    const n = Number($('imb-ratio').value);
+    if (Number.isFinite(n) && n >= 1.2) imbalanceRatio = n;
+    drawFootprint();
+  });
+}
+
+function applyDataMode(mode) {
+  if (mode !== 'perp' && mode !== 'spot' && mode !== 'compare') return;
+  if (mode !== 'perp' && coinIsEquity()) {
+    const first = config?.crypto?.[0] ?? config?.coins?.find((c) => c.venue !== 'equity');
+    if (first) openTab(first.symbol, first.label);
+  }
+  dataMode = mode;
+  document.querySelectorAll('#data-mode-tabs [data-mode]').forEach((b) => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+  const spot = isSpotView();
+  $('chart-title').textContent = mode === 'perp' ? 'Order flow footprint' : 'Spot order flow footprint';
+  $('chart-hint').textContent = mode === 'perp'
+    ? 'Red left = sells, green right = buys. Lines are liquidation levels — remaining % until hit, then LIQUIDATED. Gold = absorption. All combines CEX + Hyperliquid + dYdX + Bitstamp.'
+    : 'Red left = aggressive spot sells, green right = aggressive spot buys. Executed volume only — resting book liquidity is not counted. All = Binance + Bybit + OKX + Bitstamp.';
+  $('imb-cfg')?.classList.toggle('hidden', !spot);
+  $('spot-hud')?.classList.toggle('hidden', !spot);
+  $('move-panel')?.classList.toggle('hidden', spot);
+  $('spot-compare-panel')?.classList.toggle('hidden', !spot);
+  document.querySelector('.asset-nav .asset-row:nth-child(2)')?.classList.toggle('hidden', spot);
+  const coin = config?.coins?.find((c) => c.symbol === selectedSymbol);
+  const venue = selectedExchange === 'all' ? (spot ? 'multi-exchange spot' : 'multi-exchange') : selectedExchange;
+  $('symbol-label').textContent = `${coin?.label ?? selectedSymbol.replace('USDT', '')} · ${venue}`;
+  refreshStatus();
+  applySymbolFilter();
+}
+
+function spotWindow(snap, tfMinutes = chartTfMinutes) {
+  return snap?.windows?.[String(tfMinutes)] ?? snap?.windows?.['1'] ?? snap?.windows?.[1] ?? null;
+}
+
+function flowTitle(flow) {
+  if (!flow) return 'SPOT';
+  if (flow.includes('BUYING')) return 'SPOT BUYERS';
+  if (flow.includes('SELLING')) return 'SPOT SELLERS';
+  return 'SPOT BALANCED';
+}
+
+function updateSpotUi() {
+  const snap = lastSpotFlow;
+  if (!snap || snap.symbol !== selectedSymbol) {
+    renderSpotHud(null);
+    renderSpotCompare();
+    return;
+  }
+  const w = spotWindow(snap) ?? snap.aggregated;
+  const coin = config?.coins?.find((c) => c.symbol === snap.symbol);
+  const venue = selectedExchange === 'all' ? 'multi-exchange spot' : `${selectedExchange} spot`;
+  $('symbol-label').textContent = `${coin?.label ?? snap.symbol} · ${venue}`;
+  if (w && $('price')) {
+    $('price').textContent = snap.price > 0 ? `$${fmtPrice(snap.price)}` : '—';
+    const ch = w.efficiency?.priceChangePercent ?? 0;
+    const chEl = $('price-change');
+    chEl.textContent = `${ch >= 0 ? '+' : ''}${ch.toFixed(3)}% in ${chartTfMinutes}m`;
+    chEl.className = `price-change ${ch > 0 ? 'up' : ch < 0 ? 'down' : ''}`;
+    $('state-badge').textContent = (w.flow ?? 'BALANCED').replace(/_/g, ' ');
+    $('state-badge').className = `state-badge ${w.flow?.includes('BUY') ? 'buy-flow' : w.flow?.includes('SELL') ? 'sell-flow' : w.flags?.length ? 'absorption' : ''}`;
+    $('state-title').textContent = flowTitle(w.flow);
+    const flags = (w.flags ?? []).map((f) => f.replace(/_/g, ' ')).join(' · ');
+    $('state-help').textContent = flags
+      ? flags
+      : 'Spot footprint measures executed aggressive buys and sells — not resting limit orders.';
+    $('delta').textContent = fmtUsd(w.delta);
+    $('delta').className = `value ${w.delta >= 0 ? 'pos' : 'neg'}`;
+    $('delta-pct').textContent = `${w.deltaPercent >= 0 ? '+' : ''}${(w.deltaPercent * 100).toFixed(1)}% delta`;
+    $('impact').textContent = w.efficiency?.rank ?? '—';
+    $('impact-help').textContent = (w.efficiency?.effortVsResult ?? '').replace(/_/g, ' ');
+    $('score').textContent = w.cvdDirection === 'UP' ? 'CVD ↑' : w.cvdDirection === 'DOWN' ? 'CVD ↓' : 'CVD →';
+    $('score').style.color = w.cvdDirection === 'UP' ? 'var(--buy)' : w.cvdDirection === 'DOWN' ? 'var(--sell)' : 'inherit';
+    $('confidence').textContent = w.absorption?.detected ? `${Math.round(w.absorption.confidence * 100)}%` : '—';
+    $('flow-multiple').textContent = w.absorption?.type ? w.absorption.type.replace(/_/g, ' ') : 'No absorption';
+    const total = (w.aggressiveBuyVolume ?? 0) + (w.aggressiveSellVolume ?? 0) || 1;
+    $('buy-bar').style.width = `${((w.aggressiveBuyVolume ?? 0) / total) * 100}%`;
+    $('sell-bar').style.width = `${((w.aggressiveSellVolume ?? 0) / total) * 100}%`;
+    $('buy-vol').textContent = fmtUsd(w.aggressiveBuyVolume ?? 0);
+    $('sell-vol').textContent = fmtUsd(w.aggressiveSellVolume ?? 0);
+    const absBox = $('absorption-box');
+    if (w.absorption?.detected) {
+      absBox.classList.remove('hidden');
+      $('absorption-title').textContent = w.absorption.type.replace(/_/g, ' ');
+      $('absorption-text').textContent = w.absorption.type === 'PASSIVE_SELL_ABSORPTION'
+        ? 'Aggressive spot buying is not lifting price — passive sellers appear to be absorbing. Not a trade signal.'
+        : 'Aggressive spot selling is not dropping price — passive buyers appear to be absorbing. Not a trade signal.';
+    } else {
+      absBox.classList.add('hidden');
+    }
+  }
+  renderSpotHud(snap);
+  renderSpotCompare();
+}
+
+function renderSpotHud(snap) {
+  const el = $('spot-hud');
+  if (!el) return;
+  if (!snap) {
+    el.innerHTML = '';
+    return;
+  }
+  const w = spotWindow(snap) ?? snap.aggregated;
+  const title = flowTitle(w.flow);
+  const cls = title.includes('BUY') ? 'buy' : title.includes('SELL') ? 'sell' : 'neutral';
+  const cvd = w.cvdDirection === 'UP' ? '↑' : w.cvdDirection === 'DOWN' ? '↓' : '→';
+  const venueBits = SPOT_EXCHANGES.map((id) => {
+    const v = snap.exchanges?.[id];
+    if (!v) return `${id}: —`;
+    return `${id[0].toUpperCase()}${id.slice(1)} ${fmtUsd(v.delta)}`;
+  });
+  el.innerHTML = `
+    <div class="spot-hud-title ${cls}">${title}</div>
+    <div class="spot-hud-metric"><span class="label">Agg Buy</span><span class="value pos">${fmtUsd(w.aggressiveBuyVolume)}</span></div>
+    <div class="spot-hud-metric"><span class="label">Agg Sell</span><span class="value neg">${fmtUsd(w.aggressiveSellVolume)}</span></div>
+    <div class="spot-hud-metric"><span class="label">Delta</span><span class="value ${w.delta >= 0 ? 'pos' : 'neg'}">${fmtUsd(w.delta)}</span></div>
+    <div class="spot-hud-metric"><span class="label">Delta %</span><span class="value ${w.delta >= 0 ? 'pos' : 'neg'}">${w.deltaPercent >= 0 ? '+' : ''}${(w.deltaPercent * 100).toFixed(1)}%</span></div>
+    <div class="spot-hud-metric"><span class="label">CVD</span><span class="value">${cvd}</span></div>
+    <div class="spot-hud-metric"><span class="label">Efficiency</span><span class="value">${w.efficiency?.rank ?? '—'}</span></div>
+    <div class="spot-hud-ex">${venueBits.join(' · ')} · Agg ${fmtUsd(snap.aggregated?.delta ?? w.delta)}</div>`;
+}
+
+function sfRow(k, v, cls = '') {
+  return `<div class="sf-row"><span class="k">${k}</span><span class="v ${cls}">${v}</span></div>`;
+}
+
+function renderSpotCompare() {
+  const panel = $('spot-compare-panel');
+  if (!panel || panel.classList.contains('hidden')) return;
+  const snap = lastSpotFlow;
+  const w = snap ? spotWindow(snap) : null;
+  const cmp = snap?.comparison;
+  const fut = summaries[selectedSymbol]?.windows?.['1m'] ?? summaries[selectedSymbol]?.windows?.['5m'];
+  const priceCh = w?.efficiency?.priceChangePercent ?? 0;
+  $('sf-price').textContent = snap?.price ? `${fmtUsd ? '' : ''}${priceCh >= 0 ? '+' : ''}${priceCh.toFixed(2)}%` : '—';
+  const interp = (cmp?.interpretation ?? 'UNCLEAR').replace(/_/g, ' ');
+  const interpEl = $('sf-interpretation');
+  interpEl.textContent = interp;
+  interpEl.className = `sf-interpretation ${
+    interp.includes('DIVERGENCE') || interp.includes('COVERING') || interp.includes('LIQUIDATION') ? 'warn'
+      : interp.includes('SELL') ? 'sell'
+      : interp.includes('BUY') ? 'buy' : ''
+  }`;
+
+  const spot = cmp?.spot;
+  const futures = cmp?.futures;
+  $('sf-spot').innerHTML = `<h3>Spot</h3>
+    ${sfRow('Executed', fmtUsd((spot?.aggressiveBuyVolume ?? 0) + (spot?.aggressiveSellVolume ?? 0)))}
+    ${sfRow('Buy', fmtUsd(spot?.aggressiveBuyVolume ?? w?.aggressiveBuyVolume ?? 0), 'pos')}
+    ${sfRow('Sell', fmtUsd(spot?.aggressiveSellVolume ?? w?.aggressiveSellVolume ?? 0), 'neg')}
+    ${sfRow('Delta', fmtUsd(spot?.delta ?? w?.delta ?? 0), (spot?.delta ?? 0) >= 0 ? 'pos' : 'neg')}
+    ${sfRow('CVD', w?.cvdDirection === 'UP' ? '↑' : w?.cvdDirection === 'DOWN' ? '↓' : '→')}
+    ${sfRow('Efficiency', spot?.efficiency ?? w?.efficiency?.rank ?? '—')}`;
+
+  $('sf-futures').innerHTML = `<h3>Futures</h3>
+    ${sfRow('Executed', fmtUsd((futures?.aggressiveBuyVolume ?? fut?.aggressiveBuyVolume ?? 0) + (futures?.aggressiveSellVolume ?? fut?.aggressiveSellVolume ?? 0)))}
+    ${sfRow('Buy', fmtUsd(futures?.aggressiveBuyVolume ?? fut?.aggressiveBuyVolume ?? 0), 'pos')}
+    ${sfRow('Sell', fmtUsd(futures?.aggressiveSellVolume ?? fut?.aggressiveSellVolume ?? 0), 'neg')}
+    ${sfRow('Delta', fmtUsd(futures?.delta ?? fut?.delta ?? 0), (futures?.delta ?? 0) >= 0 ? 'pos' : 'neg')}
+    ${sfRow('OI', futures?.oiChangePercent == null ? '—' : `${futures.oiChangePercent >= 0 ? '+' : ''}${futures.oiChangePercent.toFixed(2)}%`)}
+    ${sfRow('Liquidations', fmtUsd(futures?.liquidationUsd ?? 0))}`;
+
+  const bits = SPOT_EXCHANGES.map((id) => {
+    const v = snap?.exchanges?.[id];
+    return v ? `${id}: ${fmtUsd(v.delta)}` : null;
+  }).filter(Boolean);
+  $('sf-exchanges').textContent = bits.length ? `Venue delta · ${bits.join(' · ')}` : '';
+}
+
+function ingestSpotFlow(snapshot) {
+  if (!snapshot?.symbol) return;
+  spotFlowBySymbol[snapshot.symbol] = snapshot;
+  const w = spotWindow(snapshot, 1) ?? snapshot.aggregated;
+  if (isSpotView()) {
+    const el = $(`delta-${snapshot.symbol}`);
+    if (el && w) {
+      el.textContent = fmtUsd(w.delta);
+      el.className = `coin-delta ${w.delta > 0 ? 'pos' : w.delta < 0 ? 'neg' : ''}`;
+    }
+    const tabEl = $(`tab-delta-${snapshot.symbol}`);
+    if (tabEl && w) {
+      tabEl.textContent = fmtUsd(w.delta);
+      tabEl.className = `open-tab-delta ${w.delta > 0 ? 'pos' : w.delta < 0 ? 'neg' : ''}`;
+    }
+  }
+  if (snapshot.symbol === selectedSymbol) {
+    lastSpotFlow = snapshot;
+    if (isSpotView()) updateSpotUi();
+  }
 }
 
 function setupTabs() {
@@ -1049,13 +1298,13 @@ function resizeFpCanvas() {
 }
 
 function getFootprintStore(symbol, tf = chartTfMinutes, exchange = 'binance') {
-  const key = `${symbol}_${exchange}_${tf}`;
+  const key = `${footprintMarket()}_${symbol}_${exchange}_${tf}`;
   if (!footprintStore[key]) footprintStore[key] = new Map();
   return footprintStore[key];
 }
 
 function historyKey(symbol, tf, exchange) {
-  return `${symbol}_${exchange}_${tf}`;
+  return `${footprintMarket()}_${symbol}_${exchange}_${tf}`;
 }
 
 function getFpHistory(symbol = selectedSymbol, tf = chartTfMinutes, exchange = selectedExchange) {
@@ -1063,7 +1312,7 @@ function getFpHistory(symbol = selectedSymbol, tf = chartTfMinutes, exchange = s
 }
 
 function getFpKlineSeed(symbol, tf = chartTfMinutes, exchange = klineExchange()) {
-  const key = `${symbol}_${exchange}_${tf}`;
+  const key = `${footprintMarket()}_${symbol}_${exchange}_${tf}`;
   if (!fpKlineSeed[key]) fpKlineSeed[key] = new Map();
   return fpKlineSeed[key];
 }
@@ -1081,6 +1330,10 @@ function cloneFpBar(bar) {
     close: bar.close,
     totalBuy: bar.totalBuy,
     totalSell: bar.totalSell,
+    buyTrades: bar.buyTrades ?? 0,
+    sellTrades: bar.sellTrades ?? 0,
+    largestBuy: bar.largestBuy ?? 0,
+    largestSell: bar.largestSell ?? 0,
     levels,
   };
 }
@@ -1106,6 +1359,10 @@ function wireBarToFp(w) {
     close: w.c,
     totalBuy: w.tb ?? 0,
     totalSell: w.ts ?? 0,
+    buyTrades: w.bt ?? 0,
+    sellTrades: w.st ?? 0,
+    largestBuy: w.lb ?? 0,
+    largestSell: w.ls ?? 0,
     levels,
   };
 }
@@ -1127,6 +1384,7 @@ async function loadFootprintHistory() {
       tf: String(tf),
       limit: '1500',
       days: String(fpRetentionDays),
+      market: footprintMarket(),
     });
     const data = await fetch(`/api/footprint?${params}`).then((r) => r.json());
     if (req !== fpHistoryReq) return;
@@ -1163,7 +1421,7 @@ async function seedFromKlines() {
   const req = ++fpKlineReq;
   try {
     const rows = await fetch(
-      `/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${fpKlineInterval(tf)}&exchange=${encodeURIComponent(exchange)}`,
+      `/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${fpKlineInterval(tf)}&exchange=${encodeURIComponent(exchange)}&market=${encodeURIComponent(footprintMarket())}`,
     ).then((r) => r.json());
     if (req !== fpKlineReq || symbol !== selectedSymbol || tf !== chartTfMinutes || klineExchange() !== exchange) return;
     if (!Array.isArray(rows) || !rows.length) {
@@ -1206,6 +1464,10 @@ function mergeFootprintBar(target, src) {
   target.close = src.close;
   target.totalBuy += src.totalBuy;
   target.totalSell += src.totalSell;
+  target.buyTrades = (target.buyTrades ?? 0) + (src.buyTrades ?? 0);
+  target.sellTrades = (target.sellTrades ?? 0) + (src.sellTrades ?? 0);
+  target.largestBuy = Math.max(target.largestBuy ?? 0, src.largestBuy ?? 0);
+  target.largestSell = Math.max(target.largestSell ?? 0, src.largestSell ?? 0);
   for (const lv of src.levels.values()) {
     const k = lv.price.toFixed(6);
     if (!target.levels.has(k)) target.levels.set(k, { price: lv.price, buy: 0, sell: 0 });
@@ -1232,6 +1494,10 @@ function aggregateFrom1m(symbol, tfMinutes) {
           levels: new Map(),
           totalBuy: 0,
           totalSell: 0,
+          buyTrades: 0,
+          sellTrades: 0,
+          largestBuy: 0,
+          largestSell: 0,
         });
       }
       mergeFootprintBar(out.get(t), bar);
@@ -1293,8 +1559,10 @@ function priceToTick(price, tick) {
 function ingestTradeToChart(trade) {
   // With persistence on, the server owns the live bar and pushes the complete
   // footprint. The tape is filtered to large prints, so building from it here
-  // would understate volume and fight the server's bar.
-  if (fpHistoryEnabled) return;
+  // would understate volume and fight the server's bar. Spot always uses the
+  // server aggregator for the same reason.
+  if (fpHistoryEnabled || isSpotView()) return;
+  if (tradeMarket(trade) !== footprintMarket()) return;
   const tick = tickSize(trade.price);
   const level = priceToTick(trade.price, tick);
   const lk = level.toFixed(6);
@@ -1362,26 +1630,37 @@ function fpBarWinner(bar) {
 }
 
 function drawBattleHud(ctx, leftPad, plotRight) {
-  const b = liveFlowBattle();
   ctx.font = 'bold 11px JetBrains Mono, monospace';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   let text;
   let color = '#8b949e';
-  if (b?.winner?.winner) {
-    const w = b.winner.winner;
-    color = w.includes('PASSIVE_SELL') ? '#fbbf24'
-      : w.includes('PASSIVE_BUY') ? '#60a5fa'
-      : w.includes('AGGRESSIVE_BUY') ? '#22c55e'
-      : w.includes('AGGRESSIVE_SELL') ? '#ef4444'
-      : '#8b949e';
-    const ab = Math.round(b.battle?.aggressiveBuyerStrength ?? 0);
-    const ps = Math.round(b.battle?.passiveSellerStrength ?? 0);
-    const as = Math.round(b.battle?.aggressiveSellerStrength ?? 0);
-    const pb = Math.round(b.battle?.passiveBuyerStrength ?? 0);
-    text = `${battleLabel(w)}  ·  agg buy ${ab} vs pas sell ${ps}   agg sell ${as} vs pas buy ${pb}`;
+  if (isSpotView()) {
+    const w = lastSpotFlow ? spotWindow(lastSpotFlow) : null;
+    if (w) {
+      color = w.flow?.includes('BUY') ? '#22c55e' : w.flow?.includes('SELL') ? '#ef4444' : '#8b949e';
+      const flags = (w.flags ?? []).slice(0, 2).map((f) => f.replace(/_/g, ' ')).join(' · ');
+      text = `${(w.flow ?? 'BALANCED').replace(/_/g, ' ')}  ·  Δ ${fmtUsd(w.delta)}  ·  ${w.efficiency?.rank ?? ''}${w.efficiency?.effortVsResult ? ' · ' + w.efficiency.effortVsResult.replace(/_/g, ' ') : ''}${flags ? '  ·  ' + flags : ''}`;
+    } else {
+      text = 'Spot flow waiting…';
+    }
   } else {
-    text = 'Flow battle waiting…';
+    const b = liveFlowBattle();
+    if (b?.winner?.winner) {
+      const w = b.winner.winner;
+      color = w.includes('PASSIVE_SELL') ? '#fbbf24'
+        : w.includes('PASSIVE_BUY') ? '#60a5fa'
+        : w.includes('AGGRESSIVE_BUY') ? '#22c55e'
+        : w.includes('AGGRESSIVE_SELL') ? '#ef4444'
+        : '#8b949e';
+      const ab = Math.round(b.battle?.aggressiveBuyerStrength ?? 0);
+      const ps = Math.round(b.battle?.passiveSellerStrength ?? 0);
+      const as = Math.round(b.battle?.aggressiveSellerStrength ?? 0);
+      const pb = Math.round(b.battle?.passiveBuyerStrength ?? 0);
+      text = `${battleLabel(w)}  ·  agg buy ${ab} vs pas sell ${ps}   agg sell ${as} vs pas buy ${pb}`;
+    } else {
+      text = 'Flow battle waiting…';
+    }
   }
   ctx.fillStyle = 'rgba(13, 17, 23, 0.88)';
   ctx.fillRect(leftPad, 18, Math.min(plotRight - leftPad, 720), 16);
@@ -1422,7 +1701,7 @@ function drawFootprint() {
 
   const { leftPad, priceAxisWidth, candleW, cellW, barWidth, stride, visibleBars } = fpLayout(W);
   const topPad = 38;
-  const bottomPad = 44;
+  const bottomPad = isSpotView() ? 72 : 44;
   const chartH = H - topPad - bottomPad;
   clampFpPan(bars.length, W);
   liveBtn?.classList.toggle('hidden', fpPanBars < 0.15);
@@ -1445,7 +1724,7 @@ function drawFootprint() {
     if (bar.high > globalHigh) globalHigh = bar.high;
     if (bar.low < globalLow) globalLow = bar.low;
   }
-  const liqOverlay = taggedLiqBands();
+  const liqOverlay = isSpotView() ? { asks: [], bids: [], now: 0 } : taggedLiqBands();
   const lastPx = visible[visible.length - 1]?.close || liqOverlay.now;
   if (lastPx > 0) {
     for (const r of [...liqOverlay.asks, ...liqOverlay.bids]) {
@@ -1574,8 +1853,8 @@ function drawFootprint() {
         ctx.strokeRect(cellX + 1, y - rh / 2 + 0.5, half - 1, rh - 1);
       }
 
-      const imbBuy = lv.buy >= lv.sell * 3 && lv.buy > maxVol * 0.15;
-      const imbSell = lv.sell >= lv.buy * 3 && lv.sell > maxVol * 0.15;
+      const imbBuy = lv.buy >= lv.sell * imbalanceRatio && lv.buy > maxVol * 0.15;
+      const imbSell = lv.sell >= lv.buy * imbalanceRatio && lv.sell > maxVol * 0.15;
       if (imbBuy && !pasSell) {
         ctx.strokeStyle = '#22c55e';
         ctx.strokeRect(cellX + half, y - rh / 2 + 0.5, half - 1, rh - 1);
@@ -1610,27 +1889,40 @@ function drawFootprint() {
     const delta = bar.totalBuy - bar.totalSell;
     const barUsd = bar.totalBuy + bar.totalSell;
     if (barUsd > 0) {
-      const barLev = leverageForUsd(selectedSymbol, barUsd);
-      const win = fpBarWinner(bar);
-      ctx.fillStyle = win.short ? win.color : (delta >= 0 ? '#22c55e' : '#ef4444');
-      ctx.font = 'bold 10px JetBrains Mono, monospace';
-      const deltaLabel = `${delta >= 0 ? '+' : '-'}${fmtVolLabel(Math.abs(delta))}${win.short ? ` ${win.short}` : ''}${barLev ? ` ${levLabel(barLev)}` : ''}`;
-      ctx.fillText(deltaLabel, cx, topPad + chartH + 27);
+      const cx = x + barWidth / 2;
+      if (isSpotView()) {
+        ctx.font = 'bold 9px JetBrains Mono, monospace';
+        ctx.fillStyle = '#86efac';
+        ctx.fillText(`+${fmtVolLabel(bar.totalBuy)} A.BUY`, cx, topPad + chartH + 24);
+        ctx.fillStyle = '#fca5a5';
+        ctx.fillText(`-${fmtVolLabel(bar.totalSell)} A.SELL`, cx, topPad + chartH + 36);
+        ctx.fillStyle = delta >= 0 ? '#22c55e' : '#ef4444';
+        ctx.fillText(`Δ ${delta >= 0 ? '+' : '-'}${fmtVolLabel(Math.abs(delta))}  VOL ${fmtVolLabel(barUsd)}`, cx, topPad + chartH + 48);
+      } else {
+        const barLev = leverageForUsd(selectedSymbol, barUsd);
+        const win = fpBarWinner(bar);
+        ctx.fillStyle = win.short ? win.color : (delta >= 0 ? '#22c55e' : '#ef4444');
+        ctx.font = 'bold 10px JetBrains Mono, monospace';
+        const deltaLabel = `${delta >= 0 ? '+' : '-'}${fmtVolLabel(Math.abs(delta))}${win.short ? ` ${win.short}` : ''}${barLev ? ` ${levLabel(barLev)}` : ''}`;
+        ctx.fillText(deltaLabel, cx, topPad + chartH + 27);
+      }
     }
   }
 
   const liveBar = visible[visible.length - 1];
-  updateFpLevNow((liveBar?.totalBuy ?? 0) + (liveBar?.totalSell ?? 0));
-  drawLiqOverlay(ctx, {
-    leftPad,
-    plotRight,
-    yForPrice,
-    topPad,
-    chartH,
-    globalHigh,
-    globalLow,
-    overlay: liqOverlay,
-  });
+  updateFpLevNow((liveBar?.totalBuy ?? 0) + (liveBar?.totalSell ?? 0), liveBar);
+  if (!isSpotView()) {
+    drawLiqOverlay(ctx, {
+      leftPad,
+      plotRight,
+      yForPrice,
+      topPad,
+      chartH,
+      globalHigh,
+      globalLow,
+      overlay: liqOverlay,
+    });
+  }
 
   ctx.lineWidth = 1;
 }
@@ -1698,11 +1990,20 @@ function drawLiqOverlay(ctx, { leftPad, plotRight, yForPrice, topPad, chartH, gl
   ctx.restore();
 }
 
-function updateFpLevNow(flowUsd) {
+function updateFpLevNow(flowUsd, liveBar) {
   const el = document.getElementById('fp-lev-now');
   if (!el) return;
-  const spec = levBrackets[selectedSymbol];
   const tf = chartTfMinutes % 60 === 0 ? `${chartTfMinutes / 60}h` : `${chartTfMinutes}m`;
+  if (isSpotView()) {
+    const buy = liveBar?.totalBuy ?? 0;
+    const sell = liveBar?.totalSell ?? 0;
+    const delta = buy - sell;
+    el.textContent = `${tf} spot · buy ${fmtUsd(buy)} · sell ${fmtUsd(sell)} · Δ ${fmtUsd(delta)}`;
+    el.className = `fp-lev-now ${delta >= 0 ? 'lev-10' : 'lev-high'}`;
+    el.title = 'Executed aggressive spot volume in the visible live candle';
+    return;
+  }
+  const spec = levBrackets[selectedSymbol];
   const info = leverageForUsd(selectedSymbol, flowUsd);
   if (info) {
     el.textContent = `${tf} flow ${fmtUsd(flowUsd)} · ${levLabel(info)} · margin ≈ ${fmtUsd(info.margin)} at that max`;
@@ -1736,8 +2037,14 @@ function rebuildChart() {
 }
 
 function subscribeFootprint() {
-  if (!fpHistoryEnabled || fpLiveSocket?.readyState !== WebSocket.OPEN) return;
-  fpLiveSocket.send(JSON.stringify({ type: 'sub_footprint', symbol: selectedSymbol, exchange: selectedExchange }));
+  if (fpLiveSocket?.readyState !== WebSocket.OPEN) return;
+  if (!fpHistoryEnabled && !isSpotView()) return;
+  fpLiveSocket.send(JSON.stringify({
+    type: 'sub_footprint',
+    symbol: selectedSymbol,
+    exchange: selectedExchange,
+    market: footprintMarket(),
+  }));
 }
 
 /**
@@ -1746,7 +2053,9 @@ function subscribeFootprint() {
  * holding it locally and counting it twice.
  */
 function applyLiveFootprint(ev) {
-  if (!fpHistoryEnabled || ev.symbol !== selectedSymbol) return;
+  const liveOk = fpHistoryEnabled || ev.market === 'spot' || isSpotView();
+  if (!liveOk || ev.symbol !== selectedSymbol) return;
+  if (ev.market && ev.market !== footprintMarket()) return;
   const bars = ev.bars ?? [];
   if (!bars.length) return;
 
@@ -1769,18 +2078,21 @@ function applyLiveFootprint(ev) {
 
 async function init() {
   setupTabs();
+  setupDataMode();
   initChart();
   try {
     config = await fetch('/api/config').then((r) => r.json());
     fpHistoryEnabled = Boolean(config.history?.enabled);
     fpRetentionDays = Number(config.history?.retentionDays) || 30;
+    imbalanceRatio = Number(config.imbalanceRatio) || 3;
+    if ($('imb-ratio')) $('imb-ratio').value = String(imbalanceRatio);
     if (config.coins?.length) {
       selectedSymbol = config.coins[0].symbol;
       renderCoinBar(config.coins);
       openTab(config.coins[0].symbol, config.coins[0].label);
     }
     renderTierLegend();
-    syncExchangeTabs();
+    applyDataMode(config.market === 'spot' ? 'spot' : 'perp');
     $('symbol-label').textContent = `${selectedSymbol.replace('USDT', '')} · ${config.market}`;
   } catch { /* ignore */ }
   await loadLeverageBrackets();
@@ -1809,26 +2121,35 @@ async function init() {
     }
 
     switch (ev.type) {
-      case 'status':
-        setStatus(ev.connected, ev.message);
+      case 'status': {
+        const m = ev.market === 'spot' ? 'spot' : 'perp';
+        feedStatus[m] = { connected: Boolean(ev.connected), message: ev.message ?? '' };
+        refreshStatus();
         break;
+      }
       case 'trade':
+        if (ev.trade && ev.market) ev.trade.market = ev.market;
         addTapeRow(ev.trade);
         ingestTradeToChart(ev.trade);
         break;
       case 'footprint_live':
         applyLiveFootprint(ev);
         break;
+      case 'spot_flow':
+        ingestSpotFlow(ev.snapshot);
+        break;
       case 'summary':
+        if (ev.summary && ev.market) ev.summary.market = ev.market;
         updateSummary(ev.summary);
         break;
       case 'overview':
-        updateOverview(ev.coins);
+        updateOverview(ev.coins, ev.market === 'spot' ? 'spot' : 'perp');
         break;
       case 'book':
         ingestBook(ev);
         break;
       case 'move_potential': {
+        if (ev.market && ev.market !== footprintMarket()) break;
         const events = ev.events ?? [];
         if (!events.length) break;
         addEvent({
@@ -1841,6 +2162,7 @@ async function init() {
         break;
       }
       case 'large_trade': {
+        if (ev.market && ev.market !== footprintMarket()) break;
         const lev = leverageForUsd(ev.symbol, ev.quoteValue);
         addEvent({
           kind: 'large',
@@ -1852,6 +2174,7 @@ async function init() {
         break;
       }
       case 'state_change': {
+        if (ev.market && ev.market !== footprintMarket()) break;
         const meta = STATE_META[ev.state] ?? { title: ev.state, help: '' };
         addEvent({
           kind: ev.state.includes('ABSORPTION') ? 'absorption' : 'state',
@@ -1863,6 +2186,7 @@ async function init() {
         break;
       }
       case 'burst':
+        if (ev.market && ev.market !== footprintMarket()) break;
         addEvent({
           kind: 'burst',
           symbol: ev.symbol,
@@ -1872,6 +2196,7 @@ async function init() {
         });
         break;
       case 'alert':
+        if (ev.market && ev.market !== footprintMarket()) break;
         addEvent({
           kind: 'alert',
           symbol: ev.symbol,

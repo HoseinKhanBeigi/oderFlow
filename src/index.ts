@@ -5,7 +5,7 @@ export type { EngineEvent, EngineListener } from './engine/symbol-engine.js';
 export { mergeConfig, DEFAULT_CONFIG } from './config/index.js';
 export type { EngineConfig } from './config/index.js';
 
-export { classifyTrade } from './flow/trade-classifier.js';
+export { classifyTrade, tryClassifyTrade, inferAggressorFromBook } from './flow/trade-classifier.js';
 export { LargeTradeDetector } from './flow/large-trade-detector.js';
 export { BurstDetector } from './flow/burst-detector.js';
 export { RollingFlowEngine } from './flow/rolling-flow-engine.js';
@@ -35,5 +35,7 @@ export { BitstampAdapter } from './exchange/bitstamp-adapter.js';
 export { BinanceMarketDataClient } from './market-data/binance-client.js';
 export { EXCHANGE_IDS, EXCHANGE_LABELS } from './exchange/venues.js';
 export type { ExchangeId } from './exchange/venues.js';
+export { SpotFlowEngine, SPOT_EXCHANGE_IDS, parseSpotExchangesEnv } from './spot/index.js';
+export type { SpotFlowSnapshot, SpotExchangeId } from './spot/index.js';
 
 export * from './models/index.js';

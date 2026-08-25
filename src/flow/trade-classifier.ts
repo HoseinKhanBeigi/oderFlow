@@ -10,8 +10,37 @@ export interface RawTradeInput {
   isBuyerMaker?: boolean;
   /** Explicit aggressor side, if the venue provides it. */
   aggressorSide?: AggressorSide;
+  /** Best bid, used only when the venue does not tag the aggressor. */
+  bestBid?: number;
+  /** Best ask, used only when the venue does not tag the aggressor. */
+  bestAsk?: number;
+  /** Age of the bid/ask used for inference, milliseconds. */
+  bookAgeMs?: number;
   tradeId?: string | number;
   isForced?: boolean;
+}
+
+/**
+ * Infer aggressor from bid/ask only when the print is clearly at/through the touch
+ * and the book is fresh and tight. Inside-spread prints stay unknown.
+ * Never inferred from candle direction.
+ */
+export function inferAggressorFromBook(
+  price: number,
+  bestBid?: number,
+  bestAsk?: number,
+  bookAgeMs?: number,
+): AggressorSide | null {
+  if (bestBid == null || bestAsk == null) return null;
+  if (!(bestBid > 0 && bestAsk > 0 && bestAsk >= bestBid)) return null;
+  if (bookAgeMs != null && bookAgeMs > 1_500) return null;
+  const mid = (bestBid + bestAsk) / 2;
+  if (mid <= 0) return null;
+  const spreadBps = ((bestAsk - bestBid) / mid) * 10_000;
+  if (spreadBps > 25) return null;
+  if (price >= bestAsk) return 'BUY';
+  if (price <= bestBid) return 'SELL';
+  return null;
 }
 
 /**
@@ -26,7 +55,11 @@ export function classifyTrade(input: RawTradeInput): MarketTrade {
   } else if (input.isBuyerMaker !== undefined) {
     side = input.isBuyerMaker ? 'SELL' : 'BUY';
   } else {
-    throw new Error('Trade is missing maker/taker (isBuyerMaker) and aggressorSide');
+    const inferred = inferAggressorFromBook(input.price, input.bestBid, input.bestAsk, input.bookAgeMs);
+    if (!inferred) {
+      throw new Error('Trade is missing maker/taker (isBuyerMaker) and aggressorSide');
+    }
+    side = inferred;
   }
 
   return {
@@ -42,6 +75,15 @@ export function classifyTrade(input: RawTradeInput): MarketTrade {
     tradeId: input.tradeId,
     isForced: input.isForced,
   };
+}
+
+/** Same as `classifyTrade`, but returns null instead of throwing when the aggressor is unknown. */
+export function tryClassifyTrade(input: RawTradeInput): MarketTrade | null {
+  try {
+    return classifyTrade(input);
+  } catch {
+    return null;
+  }
 }
 
 export function assertAggressive(trade: MarketTrade): void {

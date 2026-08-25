@@ -14,6 +14,10 @@ interface OpenBar {
   totalBuy: number;
   totalSell: number;
   trades: number;
+  buyTrades: number;
+  sellTrades: number;
+  largestBuy: number;
+  largestSell: number;
   levels: Map<number, FootprintLevel>;
   dirty: boolean;
 }
@@ -68,6 +72,10 @@ export class FootprintAggregator {
         totalBuy: 0,
         totalSell: 0,
         trades: 0,
+        buyTrades: 0,
+        sellTrades: 0,
+        largestBuy: 0,
+        largestSell: 0,
         levels: new Map(),
         dirty: false,
       };
@@ -89,9 +97,13 @@ export class FootprintAggregator {
     if (side === 'BUY') {
       entry.buy += quoteValue;
       bar.totalBuy += quoteValue;
+      bar.buyTrades += 1;
+      if (quoteValue > bar.largestBuy) bar.largestBuy = quoteValue;
     } else {
       entry.sell += quoteValue;
       bar.totalSell += quoteValue;
+      bar.sellTrades += 1;
+      if (quoteValue > bar.largestSell) bar.largestSell = quoteValue;
     }
   }
 
@@ -143,6 +155,10 @@ function finalize(bar: OpenBar, market: MarketType): FootprintBar {
     totalBuy: bar.totalBuy,
     totalSell: bar.totalSell,
     trades: bar.trades,
+    buyTrades: bar.buyTrades,
+    sellTrades: bar.sellTrades,
+    largestBuy: bar.largestBuy,
+    largestSell: bar.largestSell,
     levels: [...bar.levels.values()].sort((a, b) => a.price - b.price),
   };
 }

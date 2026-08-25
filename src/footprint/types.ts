@@ -25,6 +25,10 @@ export interface FootprintBar {
   totalBuy: number;
   totalSell: number;
   trades: number;
+  buyTrades?: number;
+  sellTrades?: number;
+  largestBuy?: number;
+  largestSell?: number;
   levels: FootprintLevel[];
 }
 
@@ -38,6 +42,12 @@ export interface FootprintBarWire {
   tb: number;
   ts: number;
   n: number;
+  /** Aggressive buy trade count. */
+  bt?: number;
+  /** Aggressive sell trade count. */
+  st?: number;
+  lb?: number;
+  ls?: number;
   /** `[price, buy, sell]` triples. */
   lv: [number, number, number][];
 }
@@ -54,6 +64,10 @@ export function toWire(bar: FootprintBar): FootprintBarWire {
     tb: round2(bar.totalBuy),
     ts: round2(bar.totalSell),
     n: bar.trades,
+    bt: bar.buyTrades,
+    st: bar.sellTrades,
+    lb: bar.largestBuy != null ? round2(bar.largestBuy) : undefined,
+    ls: bar.largestSell != null ? round2(bar.largestSell) : undefined,
     lv: bar.levels.map((l) => [l.price, round2(l.buy), round2(l.sell)]),
   };
 }

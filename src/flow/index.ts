@@ -1,4 +1,4 @@
-export { classifyTrade } from './trade-classifier.js';
+export { classifyTrade, tryClassifyTrade, inferAggressorFromBook } from './trade-classifier.js';
 export { LargeTradeDetector } from './large-trade-detector.js';
 export { BurstDetector } from './burst-detector.js';
 export { FlowClusterDetector } from './cluster-detector.js';

@@ -57,6 +57,7 @@ export function venueInstrument(exchange: ExchangeId, symbol: string, market: Ma
     const coin = baseAsset(base).toLowerCase();
     return market === 'spot' ? `${coin}usdt` : `${coin}usd-perp`;
   }
+  // Planned spot venues (Coinbase, Kraken): add adapter + mapping, then include in SPOT_EXCHANGE_IDS.
   const quote = base.endsWith('USDT') ? 'USDT' : base.endsWith('USD') ? 'USD' : '';
   const coin = quote ? base.slice(0, -quote.length) : base;
   if (!coin) return null;

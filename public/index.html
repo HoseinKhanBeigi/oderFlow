@@ -18,6 +18,11 @@
       </div>
     </div>
     <div class="header-meta">
+      <div class="data-mode-tabs" id="data-mode-tabs">
+        <button class="data-mode-tab active" data-mode="perp" type="button">FUTURES</button>
+        <button class="data-mode-tab" data-mode="spot" type="button">SPOT</button>
+        <button class="data-mode-tab" data-mode="compare" type="button">SPOT vs FUTURES</button>
+      </div>
       <div id="status" class="status connecting">Connecting…</div>
       <div id="symbol-label" class="symbol-label">—</div>
     </div>
@@ -43,8 +48,8 @@
     <section class="panel chart-panel">
       <div class="panel-head">
         <div>
-          <h2>Order flow footprint</h2>
-          <p class="hint">Red left = sells, green right = buys. Lines are liquidation levels — remaining % until hit, then LIQUIDATED. Gold = absorption. All combines CEX + Hyperliquid + dYdX + Bitstamp.</p>
+          <h2 id="chart-title">Order flow footprint</h2>
+          <p class="hint" id="chart-hint">Red left = sells, green right = buys. Lines are liquidation levels — remaining % until hit, then LIQUIDATED. Gold = absorption. All combines CEX + Hyperliquid + dYdX + Bitstamp.</p>
         </div>
         <div class="chart-toolbar">
           <div class="chart-tf-tabs" id="chart-ex-tabs">
@@ -68,25 +73,30 @@
           <button class="chart-tf-tab" data-ctf="120">2h</button>
           <button class="chart-tf-tab" data-ctf="240">4h</button>
         </div>
+          <label id="imb-cfg" class="imb-cfg hidden" title="Highlight a price level when buy/sell ≥ this ratio">
+            Imbalance
+            <input id="imb-ratio" type="number" min="1.5" max="10" step="0.5" value="3" />
+          </label>
         </div>
       </div>
+      <div id="spot-hud" class="spot-hud hidden"></div>
       <div id="tv-chart" style="width:100%;height:520px;overflow:hidden;position:relative;"></div>
       <div class="chart-legend">
         <span id="fp-lev-now" class="fp-lev-now">—</span>
-        <span class="legend-item fp-liq-ask">short liq ↑</span>
-        <span class="legend-item fp-liq-bid">long liq ↓</span>
+        <span class="legend-item fp-liq-ask liq-only">short liq ↑</span>
+        <span class="legend-item fp-liq-bid liq-only">long liq ↓</span>
         <span class="legend-item fp-abs">absorption</span>
         <span class="legend-item fp-psell">passive sell</span>
         <span class="legend-item fp-pbuy">passive buy</span>
-        <span class="legend-item lev-high">75x+ small</span>
-        <span class="legend-item lev-50">≤50x</span>
-        <span class="legend-item lev-25">≤25x</span>
-        <span class="legend-item lev-10">≤10x</span>
-        <span class="legend-item lev-whale">≤5x whale</span>
+        <span class="legend-item lev-high liq-only">75x+ small</span>
+        <span class="legend-item lev-50 liq-only">≤50x</span>
+        <span class="legend-item lev-25 liq-only">≤25x</span>
+        <span class="legend-item lev-10 liq-only">≤10x</span>
+        <span class="legend-item lev-whale liq-only">≤5x whale</span>
       </div>
     </section>
 
-    <section class="panel move-panel">
+    <section class="panel move-panel" id="move-panel">
       <div class="panel-head">
         <div>
           <h2>Leverage liquidity</h2>
@@ -108,7 +118,21 @@
       </div>
     </section>
 
-    <!-- Signal panel -->
+    <section class="panel spot-compare-panel hidden" id="spot-compare-panel">
+      <div class="panel-head">
+        <div>
+          <h2>Spot vs futures</h2>
+          <p class="hint">Executed spot flow versus leveraged futures. Classifications are interpretations, not trade signals.</p>
+        </div>
+        <span id="sf-price" class="liq-now">—</span>
+      </div>
+      <div id="sf-interpretation" class="sf-interpretation">Waiting for spot and futures windows…</div>
+      <div class="sf-grid">
+        <div class="sf-col" id="sf-spot"></div>
+        <div class="sf-col" id="sf-futures"></div>
+      </div>
+      <div id="sf-exchanges" class="sf-exchanges"></div>
+    </section>
     <section class="panel signal-panel">
       <div class="signal-top">
         <div>

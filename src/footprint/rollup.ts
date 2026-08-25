@@ -11,6 +11,10 @@ interface Accum {
   totalBuy: number;
   totalSell: number;
   trades: number;
+  buyTrades: number;
+  sellTrades: number;
+  largestBuy: number;
+  largestSell: number;
   levels: Map<number, FootprintLevel>;
 }
 
@@ -39,6 +43,10 @@ export function rollup(bars: FootprintBar[], tfMinutes: number): FootprintBar[] 
         totalBuy: 0,
         totalSell: 0,
         trades: 0,
+        buyTrades: 0,
+        sellTrades: 0,
+        largestBuy: 0,
+        largestSell: 0,
         levels: new Map(),
       };
       byTime.set(t, acc);
@@ -59,6 +67,10 @@ export function rollup(bars: FootprintBar[], tfMinutes: number): FootprintBar[] 
     acc.totalBuy += bar.totalBuy;
     acc.totalSell += bar.totalSell;
     acc.trades += bar.trades;
+    acc.buyTrades += bar.buyTrades ?? 0;
+    acc.sellTrades += bar.sellTrades ?? 0;
+    acc.largestBuy = Math.max(acc.largestBuy, bar.largestBuy ?? 0);
+    acc.largestSell = Math.max(acc.largestSell, bar.largestSell ?? 0);
 
     for (const level of bar.levels) {
       const entry = acc.levels.get(level.price);
@@ -86,6 +98,10 @@ export function rollup(bars: FootprintBar[], tfMinutes: number): FootprintBar[] 
       totalBuy: acc.totalBuy,
       totalSell: acc.totalSell,
       trades: acc.trades,
+      buyTrades: acc.buyTrades,
+      sellTrades: acc.sellTrades,
+      largestBuy: acc.largestBuy,
+      largestSell: acc.largestSell,
       levels: [...acc.levels.values()].sort((a, b) => a.price - b.price),
     }));
 }

@@ -11,7 +11,7 @@ import {
 import { EXCHANGE_LABELS, parseExchangesEnv, type ExchangeId } from '../exchange/venues.js';
 import type { MarketTrade, MarketType, OrderBookSnapshot } from '../models/trade.js';
 import type { WindowSnapshot } from '../models/signals.js';
-import type { BinanceAggTrade, BinanceBookTicker, BinanceTrade } from '../exchange/types.js';
+import type { BinanceAggTrade, BinanceBookTicker, BinanceForceOrder, BinanceTrade } from '../exchange/types.js';
 import { DEFAULT_WATCHLIST, minUsdFor, type WatchCoin } from './watchlist.js';
 import { VenueTradeFan } from './venue-trades.js';
 
@@ -33,6 +33,7 @@ export interface TapeItem {
   relativeClass: string;
   tier: number | null;
   exchange?: ExchangeId;
+  market?: MarketType;
 }
 
 export interface LiveSummary {
@@ -247,6 +248,7 @@ export class LiveBinanceFeed {
     if (crypto.length) {
       this.openCombined(BINANCE_FUTURES_WS, crypto, 'trade', 'crypto perp');
       this.openSocket(`${BINANCE_FUTURES_WS}?streams=${this.depthList(crypto)}`, 'crypto book');
+      this.openSocket(`${BINANCE_FUTURES_WS}?streams=!forceOrder@arr`, 'liquidations');
     }
     // TradFi equity perps (https://www.binance.com/en/futures/AMZNUSDT) need /ws/, not combined /stream.
     if (equity.length) {
@@ -312,6 +314,14 @@ export class LiveBinanceFeed {
       this.handleDepth(symbol, data, market);
     } else if (event === 'depthUpdate' && Array.isArray(data.b) && Array.isArray(data.a)) {
       this.handleDepth(symbol, { bids: data.b, asks: data.a, lastUpdateId: data.u }, market);
+    }
+
+    if (event === 'forceOrder' || stream.includes('forceOrder')) {
+      const raw = (data.o ? data : { e: 'forceOrder', E: Date.now(), o: data }) as unknown as BinanceForceOrder;
+      if (raw?.o?.s) {
+        const liq = this.futures.normalizeForceOrder(raw);
+        if (this.coins.some((c) => c.symbol === liq.symbol)) this.engine.ingestLiquidation(liq);
+      }
     }
 
     if (!symbol) return;
@@ -428,6 +438,7 @@ export class LiveBinanceFeed {
         relativeClass,
         tier,
         exchange,
+        market: this.config.market,
       },
     });
   }
@@ -505,7 +516,8 @@ export class LiveBinanceFeed {
   }
 
   private emit(event: LiveFeedEvent): void {
-    for (const l of this.listeners) l(event);
+    const tagged = { ...event, market: this.config.market === 'spot' ? 'spot' : 'perp' };
+    for (const l of this.listeners) l(tagged as LiveFeedEvent);
   }
 }
 
