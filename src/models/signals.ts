@@ -1,6 +1,7 @@
 import type { AggressorSide, MarketState, PriceImpactEfficiency, WindowId } from './trade.js';
 import type { MovePotentialSnapshot } from './movement.js';
 import type { FlowBattleSnapshot } from './passive.js';
+import type { LiquidityResponseSnapshot } from './liquidity-response.js';
 
 export interface AbsorptionResult {
   detected: boolean;
@@ -76,6 +77,7 @@ export interface WindowSnapshot {
   state: MarketState;
   movePotential: MovePotentialSnapshot;
   flowBattle: FlowBattleSnapshot;
+  liquidityResponse: LiquidityResponseSnapshot;
 }
 
 export interface MultiWindowSnapshot {

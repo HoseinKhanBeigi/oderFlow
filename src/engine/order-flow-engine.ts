@@ -1,3 +1,4 @@
+import { emptyLiquidityResponse } from '../liquidity-response/empty.js';
 import { mergeConfig, type EngineConfig } from '../config/index.js';
 import type { AlertEvent, MultiWindowSnapshot, SpotPerpSnapshot, WindowSnapshot } from '../models/signals.js';
 import type {
@@ -122,6 +123,7 @@ function combineSnapshots(
     forcedSellVolume: a.forcedSellVolume + b.forcedSellVolume,
     largestBuy: Math.max(a.largestBuy, b.largestBuy),
     largestSell: Math.max(a.largestSell, b.largestSell),
+    liquidityResponse: emptyLiquidityResponse(),
   };
 }
 

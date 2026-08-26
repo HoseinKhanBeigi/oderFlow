@@ -654,6 +654,7 @@ function clearMainPanels() {
   if ($('battle-state')) $('battle-state').textContent = '—';
   if ($('battle-evidence')) $('battle-evidence').textContent = '';
   if ($('battle-agg-buy')) $('battle-agg-buy').textContent = '0';
+  renderLiquidityResponse();
   if ($('battle-pas-sell')) $('battle-pas-sell').textContent = '0';
   if ($('battle-agg-sell')) $('battle-agg-sell').textContent = '0';
   if ($('battle-pas-buy')) $('battle-pas-buy').textContent = '0';
@@ -872,6 +873,7 @@ function updateUi() {
   renderFlowBattle(w);
   renderMovePotential(w.movePotential);
   renderCompare(lastSummary);
+  renderLiquidityResponse();
 }
 
 function battleLabel(s) {
@@ -919,6 +921,95 @@ function renderCompare(summary) {
       </div>`;
     })
     .join('');
+}
+
+function currentLiquidityResponse() {
+  const tfKey = String(chartTfMinutes);
+  if (isSpotView()) {
+    const base = lastSpotFlow?.liquidityResponse;
+    if (!base) return null;
+    const tf = base.byTf?.[tfKey] ?? base.byTf?.[chartTfMinutes];
+    return tf ? { ...base, ...tf } : base;
+  }
+  const w = lastSummary?.windows?.['1m'] ?? lastSummary?.windows?.[selectedTf] ?? lastSummary?.windows?.['10s'];
+  const base = w?.liquidityResponse;
+  if (!base) return null;
+  const tf = base.byTf?.[tfKey] ?? base.byTf?.[chartTfMinutes];
+  return tf && chartTfMinutes >= 1 ? { ...base, ...tf } : base;
+}
+
+function lrTone(state) {
+  if (!state) return '';
+  if (state.includes('ABSORB') || state.includes('DEFEND')) return 'abs';
+  if (state.includes('VACUUM')) return 'vac';
+  if (state.includes('BUY')) return 'buy';
+  if (state.includes('SELL')) return 'sell';
+  return '';
+}
+
+function lrMetric(label, value, cls = '') {
+  return `<div class="lr-metric"><span class="k">${label}</span><span class="v ${cls}">${value}</span></div>`;
+}
+
+function renderLiquidityResponse() {
+  const el = $('lr-metrics');
+  if (!el) return;
+  const lr = currentLiquidityResponse();
+  const stateEl = $('lr-state');
+  const confEl = $('lr-conf');
+  const whyEl = $('lr-why');
+  const revEl = $('lr-reversal');
+  if (!lr) {
+    if (stateEl) {
+      stateEl.textContent = 'BALANCED';
+      stateEl.className = 'lr-state';
+    }
+    if (confEl) {
+      confEl.textContent = 'LOW';
+      confEl.className = 'lr-conf';
+    }
+    el.innerHTML = lrMetric('Aggression', '—') + lrMetric('Executed', '—') + lrMetric('Delta', '—');
+    if (whyEl) whyEl.classList.add('hidden');
+    if (revEl) revEl.classList.add('hidden');
+    return;
+  }
+  if (stateEl) {
+    stateEl.textContent = (lr.state ?? 'BALANCED').replace(/_/g, ' ');
+    stateEl.className = `lr-state ${lrTone(lr.state)}`;
+  }
+  if (confEl) {
+    confEl.textContent = `${lr.confidence ?? 'LOW'} confidence`;
+    confEl.className = `lr-conf ${(lr.confidence ?? 'LOW').toLowerCase()}`;
+  }
+  const px = lr.priceMovePercent ?? 0;
+  el.innerHTML = [
+    lrMetric('Aggression', lr.aggression ?? 'BALANCED', lr.aggression === 'BUYERS' ? 'pos' : lr.aggression === 'SELLERS' ? 'neg' : ''),
+    lrMetric('Executed', fmtUsd(lr.executed ?? 0)),
+    lrMetric('Delta', fmtUsd(lr.delta ?? 0), (lr.delta ?? 0) >= 0 ? 'pos' : 'neg'),
+    lrMetric('Price move', `${px >= 0 ? '+' : ''}${px.toFixed(2)}%`, px > 0 ? 'pos' : px < 0 ? 'neg' : ''),
+    lrMetric('Efficiency', lr.efficiency ?? '—'),
+    lrMetric('Price impact', `${lr.impact?.classification ?? '—'} · ${Math.abs(lr.impact?.bps1m ?? 0).toFixed(1)} bps 1m`),
+    lrMetric('Ask consumption', lr.askConsumption ?? '—'),
+    lrMetric('Ask replenishment', lr.askReplenishment ?? '—'),
+    lrMetric('Ask withdrawal', lr.askWithdrawal ?? '—'),
+    lrMetric('Bid replenishment', lr.bidReplenishment ?? '—'),
+    lrMetric('Effort vs result', (lr.effort ?? '—').replace(/_/g, ' ')),
+  ].join('');
+  if (whyEl) {
+    const facts = (lr.why ?? []).map((f) => `${f.label}: ${f.value}`).join(' · ');
+    whyEl.classList.toggle('hidden', !facts);
+    whyEl.innerHTML = facts ? `<strong>WHY?</strong> ${facts}` : '';
+  }
+  if (revEl) {
+    const rev = lr.reversal;
+    if (rev?.detected) {
+      revEl.classList.remove('hidden');
+      revEl.textContent = `POTENTIAL REVERSAL CONDITIONS DETECTED · ${(rev.kind ?? '').toLowerCase()} · ${(rev.reasons ?? []).join(' · ')}`;
+    } else {
+      revEl.classList.add('hidden');
+      revEl.textContent = '';
+    }
+  }
 }
 
 function updateSummary(s) {
@@ -971,7 +1062,7 @@ function applyDataMode(mode) {
   $('chart-title').textContent = mode === 'perp' ? 'Order flow footprint' : 'Spot order flow footprint';
   $('chart-hint').textContent = mode === 'perp'
     ? 'Red left = sells, green right = buys. Lines are liquidation levels — remaining % until hit, then LIQUIDATED. Gold = absorption. All combines CEX + Hyperliquid + dYdX + Bitstamp.'
-    : 'Red left = aggressive spot sells, green right = aggressive spot buys. Executed volume only — resting book liquidity is not counted. All = Binance + Bybit + OKX + Bitstamp.';
+    : 'Red left = aggressive spot sells, green right = aggressive spot buys. Executed volume only — resting book is hatched, not counted as volume. All = Binance + Bybit + OKX + Bitstamp.';
   $('imb-cfg')?.classList.toggle('hidden', !spot);
   $('spot-hud')?.classList.toggle('hidden', !spot);
   $('move-panel')?.classList.toggle('hidden', spot);
@@ -1000,6 +1091,7 @@ function updateSpotUi() {
   if (!snap || snap.symbol !== selectedSymbol) {
     renderSpotHud(null);
     renderSpotCompare();
+    renderLiquidityResponse();
     return;
   }
   const w = spotWindow(snap) ?? snap.aggregated;
@@ -1046,6 +1138,7 @@ function updateSpotUi() {
   }
   renderSpotHud(snap);
   renderSpotCompare();
+  renderLiquidityResponse();
 }
 
 function renderSpotHud(snap) {
@@ -1120,6 +1213,21 @@ function renderSpotCompare() {
     return v ? `${id}: ${fmtUsd(v.delta)}` : null;
   }).filter(Boolean);
   $('sf-exchanges').textContent = bits.length ? `Venue delta · ${bits.join(' · ')}` : '';
+
+  const cmpLr = snap?.liquidityResponse?.compare;
+  const sfLiq = $('sf-liquidity');
+  if (sfLiq) {
+    if (!cmpLr) {
+      sfLiq.textContent = 'Liquidity response: waiting for independent spot and futures books…';
+    } else {
+      const rel = (cmpLr.relation ?? 'NEUTRAL').replace(/_/g, ' ');
+      sfLiq.innerHTML = `<strong>${rel}</strong>
+        · Spot ${cmpLr.spot.aggression} · ${cmpLr.spot.bookResponse.replace(/_/g, ' ')} · ${cmpLr.spot.efficiency} efficiency
+        · Futures ${cmpLr.futures.aggression} · ${cmpLr.futures.bookResponse.replace(/_/g, ' ')} · ${cmpLr.futures.efficiency} efficiency
+        ${cmpLr.futures.oiChangePercent == null ? '' : ` · OI ${cmpLr.futures.oiChangePercent >= 0 ? '+' : ''}${cmpLr.futures.oiChangePercent.toFixed(2)}%`}
+        ${cmpLr.confirmed ? ' · confirmed' : ''}`;
+    }
+  }
 }
 
 function ingestSpotFlow(snapshot) {
@@ -1273,6 +1381,7 @@ function initChart() {
     document.querySelectorAll('#chart-tf-tabs .chart-tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
     snapChartToLive();
     seedFootprintKlines();
+    renderLiquidityResponse();
   });
   document.getElementById('chart-ex-tabs')?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-ex]');
@@ -1879,6 +1988,10 @@ function drawFootprint() {
       }
     }
 
+    if (i === visible.length - 1 && pan < 0.15) {
+      drawLiveLiquidityMarks(ctx, { cellX, half, cellW, yForPrice, rh, topPad, chartH });
+    }
+
     ctx.font = '10px JetBrains Mono, monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#8b949e';
@@ -1925,6 +2038,48 @@ function drawFootprint() {
   }
 
   ctx.lineWidth = 1;
+}
+
+function drawLiveLiquidityMarks(ctx, { cellX, half, cellW, yForPrice, rh, topPad, chartH }) {
+  const marks = currentLiquidityResponse()?.levels ?? [];
+  if (!marks.length) return;
+  ctx.save();
+  ctx.lineWidth = 1;
+  for (const mark of marks) {
+    const y = yForPrice(mark.price);
+    if (y < topPad + 1 || y > topPad + chartH - 1) continue;
+    if (mark.restingBid > 0) {
+      ctx.setLineDash([3, 2]);
+      ctx.strokeStyle = '#22d3ee';
+      ctx.strokeRect(cellX + 1, y - rh / 2 + 0.5, half - 2, Math.max(2, rh - 1));
+    }
+    if (mark.restingAsk > 0) {
+      ctx.setLineDash([3, 2]);
+      ctx.strokeStyle = '#fb923c';
+      ctx.strokeRect(cellX + half, y - rh / 2 + 0.5, half - 2, Math.max(2, rh - 1));
+    }
+    ctx.setLineDash([]);
+    if (String(mark.event).startsWith('REPLENISH')) {
+      ctx.setLineDash([1, 2]);
+      ctx.strokeStyle = '#a78bfa';
+      ctx.strokeRect(cellX + 3, y - rh / 2 + 2, cellW - 6, Math.max(1, rh - 4));
+      ctx.setLineDash([]);
+    }
+    if (String(mark.event).startsWith('WITHDRAW')) {
+      ctx.strokeStyle = '#94a3b8';
+      ctx.globalAlpha = 0.75;
+      ctx.beginPath();
+      ctx.moveTo(cellX + 4, y - Math.min(4, rh / 2));
+      ctx.lineTo(cellX + cellW - 4, y + Math.min(4, rh / 2));
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    if (String(mark.event).startsWith('ABSORPTION')) {
+      ctx.strokeStyle = mark.event === 'ABSORPTION_ASK' ? '#fbbf24' : '#60a5fa';
+      ctx.strokeRect(cellX + 2, y - rh / 2 + 1, cellW - 4, Math.max(2, rh - 2));
+    }
+  }
+  ctx.restore();
 }
 
 function drawLiqOverlay(ctx, { leftPad, plotRight, yForPrice, topPad, chartH, globalHigh, globalLow, overlay }) {

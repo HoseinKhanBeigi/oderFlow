@@ -178,6 +178,30 @@ export interface IntegrityConfig {
   duplicateWindow: number;
 }
 
+export interface LiquidityResponseConfig {
+  /** Nearby % of mid used for primary bid/ask accounting. */
+  bandPct: number;
+  /** Extra % bands around mid (not BTC-specific dollars). */
+  bands: number[];
+  /** Rolling candle windows for percentile / z-score normalization. */
+  normWindows: number[];
+  defaultNormWindow: number;
+  impactHorizonsMs: number[];
+  replenishRepeatMin: number;
+  largeAggressionPercentile: number;
+  extremeAggressionPercentile: number;
+  weakDisplacementPercentile: number;
+  strongDisplacementPercentile: number;
+  nearTouchShare: number;
+  vacuumPullShare: number;
+  vacuumSpreadExpandBps: number;
+  minBookTicks: number;
+  minuteCapacity: number;
+  markTtlMs: number;
+  minImpactQuote: number;
+  atrPeriod: number;
+}
+
 export interface EngineConfig {
   windows: WindowId[];
   bucketMs: number;
@@ -203,6 +227,7 @@ export interface EngineConfig {
   integrity: IntegrityConfig;
   movePotential: MovePotentialConfig;
   flowBattle: FlowBattleConfig;
+  liquidityResponse: LiquidityResponseConfig;
   historicalBaselineSamples: number;
   accelerationLookbackBuckets: number;
   cvdSlopeMs: number;

@@ -9,6 +9,11 @@ import { compareSpotFutures } from './comparison.js';
 import { SpotCvdBook } from './cvd.js';
 import { TradeDeduper } from './dedupe.js';
 import { EffortVsResult } from './efficiency.js';
+import { LocalOrderBook } from '../liquidity/local-order-book.js';
+import { LiquidityResponseEngine } from '../liquidity-response/engine.js';
+import { emptyLiquidityResponse } from '../liquidity-response/empty.js';
+import { DEFAULT_CONFIG } from '../config/defaults.js';
+import type { LiquidityResponseSnapshot } from '../models/liquidity-response.js';
 import {
   DEFAULT_IMBALANCE_RATIO,
   DEFAULT_SPOT_DEDUP,
@@ -170,6 +175,10 @@ class SymbolSpotState {
   private readonly absorb = new SpotAbsorptionDetector();
   private readonly classifier = new SpotFlowClassifier();
   private lastSignedDelta = 0;
+  readonly bookState = new LocalOrderBook();
+  readonly liquidityResponse = new LiquidityResponseEngine(DEFAULT_CONFIG.liquidityResponse);
+  private lastBuy = 0;
+  private lastSell = 0;
 
   constructor(
     readonly symbol: string,
@@ -212,6 +221,7 @@ class SymbolSpotState {
     const buyQ = trade.side === 'BUY' ? trade.quoteValue : 0;
     const sellQ = trade.side === 'SELL' ? trade.quoteValue : 0;
     this.cvd.onTrade(exchange, trade.timestamp, buyQ, sellQ, trade.price);
+    this.liquidityResponse.onTrade(trade, trade.quoteValue >= 100_000);
 
     if (this.book && trade.timestamp - this.book.timestamp <= 2_000) {
       const tick = Math.max((this.book.ask - this.book.bid) * 0.5, this.book.ask * 0.00005);
@@ -224,6 +234,13 @@ class SymbolSpotState {
     const bid = book.bids[0]?.price ?? 0;
     const ask = book.asks[0]?.price ?? 0;
     if (bid > 0 && ask > 0) this.book = { bid, ask, timestamp: book.timestamp };
+    this.bookState.applySnapshot(book);
+    const live = this.open ? sumVenues(this.open.venues, 'all') : emptyVenue();
+    const buyDelta = Math.max(0, live.buy - this.lastBuy);
+    const sellDelta = Math.max(0, live.sell - this.lastSell);
+    this.lastBuy = live.buy;
+    this.lastSell = live.sell;
+    this.liquidityResponse.onBook(book.timestamp, this.bookState, buyDelta, sellDelta);
   }
 
   ingestBinanceWindow(window: WindowSnapshot): void {
@@ -260,6 +277,7 @@ class SymbolSpotState {
     }
     const aggregated = toStats('all', sumVenues(liveVenues, 'all'), this.cvd.value('all'));
     const primary = windows[1] ?? this.liveWindow(exchange, now);
+    const liquidityResponse = this.buildLiquidity(primary, now);
     return {
       symbol: this.symbol,
       price: this.price,
@@ -270,7 +288,40 @@ class SymbolSpotState {
       exchanges,
       aggregated,
       comparison: primary ? compareSpotFutures(primary, { futures: this.futures, oiUsd: this.oiUsd, prevOiUsd: this.prevOiUsd }) : null,
+      liquidityResponse,
     };
+  }
+
+  private buildLiquidity(primary: SpotWindowStats | null, now: number): LiquidityResponseSnapshot {
+    if (!primary) return emptyLiquidityResponse();
+    const fut = this.futures;
+    return this.liquidityResponse.snapshot(
+      {
+        now,
+        windowMs: 60_000,
+        buy: primary.aggressiveBuyVolume,
+        sell: primary.aggressiveSellVolume,
+        buyCount: primary.buyTradeCount,
+        sellCount: primary.sellTradeCount,
+        largeBuyCount: 0,
+        largeSellCount: 0,
+        priceStart: primary.open,
+        priceEnd: primary.close,
+        priceHigh: primary.high,
+        priceLow: primary.low,
+      },
+      fut?.liquidityResponse
+        ? {
+            snapshot: fut.liquidityResponse,
+            oiChangePercent:
+              this.oiUsd != null && this.prevOiUsd != null && this.prevOiUsd > 0
+                ? ((this.oiUsd - this.prevOiUsd) / this.prevOiUsd) * 100
+                : null,
+            forcedBuyVolume: fut.forcedBuyVolume,
+            forcedSellVolume: fut.forcedSellVolume,
+          }
+        : null,
+    );
   }
 
   private currentVenues(): Map<SpotExchangeId, VenueAcc> {

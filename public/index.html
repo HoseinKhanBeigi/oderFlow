@@ -88,11 +88,30 @@
         <span class="legend-item fp-abs">absorption</span>
         <span class="legend-item fp-psell">passive sell</span>
         <span class="legend-item fp-pbuy">passive buy</span>
+        <span class="legend-item fp-rest-bid">resting bid</span>
+        <span class="legend-item fp-rest-ask">resting ask</span>
+        <span class="legend-item fp-replenish">replenishment</span>
+        <span class="legend-item fp-withdraw">withdrawal</span>
         <span class="legend-item lev-high liq-only">75x+ small</span>
         <span class="legend-item lev-50 liq-only">≤50x</span>
         <span class="legend-item lev-25 liq-only">≤25x</span>
         <span class="legend-item lev-10 liq-only">≤10x</span>
         <span class="legend-item lev-whale liq-only">≤5x whale</span>
+      </div>
+      <div id="liq-response" class="liq-response">
+        <div class="lr-head">
+          <div>
+            <h2>Liquidity response</h2>
+            <p class="hint">Aggression × book reaction → price displacement. Resting liquidity is not executed volume.</p>
+          </div>
+          <div class="lr-state-wrap">
+            <div id="lr-state" class="lr-state">BALANCED</div>
+            <div id="lr-conf" class="lr-conf">LOW</div>
+          </div>
+        </div>
+        <div id="lr-metrics" class="lr-metrics"></div>
+        <div id="lr-why" class="lr-why hidden"></div>
+        <div id="lr-reversal" class="lr-reversal hidden"></div>
       </div>
     </section>
 
@@ -132,6 +151,7 @@
         <div class="sf-col" id="sf-futures"></div>
       </div>
       <div id="sf-exchanges" class="sf-exchanges"></div>
+      <div id="sf-liquidity" class="sf-liquidity"></div>
     </section>
     <section class="panel signal-panel">
       <div class="signal-top">
@@ -303,6 +323,10 @@
         <div class="legend-block">
           <h3>Flow battle</h3>
           <p>Positive delta is not a buyer win. Aggressive buyers vs passive sellers, and aggressive sellers vs passive buyers. Winner is who actually controls price.</p>
+        </div>
+        <div class="legend-block">
+          <h3>Liquidity response</h3>
+          <p>Executed cells are aggressive prints. Hatched outlines are resting bids/asks. Replenishment and withdrawal are book changes, not volume. Absorption needs large effort, weak price result, and book confirmation.</p>
         </div>
       </div>
     </section>

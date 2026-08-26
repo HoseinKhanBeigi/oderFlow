@@ -142,6 +142,7 @@ export interface SpotFlowSnapshot {
   exchanges: Partial<Record<SpotExchangeId, SpotVenueStats>>;
   aggregated: SpotVenueStats;
   comparison: SpotFuturesComparison | null;
+  liquidityResponse: import('../models/liquidity-response.js').LiquidityResponseSnapshot;
 }
 
 export interface NormalizedSpotTrade {

@@ -24,6 +24,7 @@ import { MovePotentialEngine } from '../movement/move-potential-engine.js';
 import { PassiveFlowEngine } from '../passive-flow/passive-flow-engine.js';
 import { FlowWinnerEngine } from '../flow-battle/flow-winner-engine.js';
 import { emptyPassiveMetrics } from '../models/passive.js';
+import { LiquidityResponseEngine } from '../liquidity-response/engine.js';
 import type {
   AlertEvent,
   MultiWindowSnapshot,
@@ -82,6 +83,7 @@ export class SymbolEngine {
   readonly passive: PassiveFlowEngine;
   readonly defense: DefenseEngine;
   readonly flowWinner: FlowWinnerEngine;
+  readonly liquidityResponse: LiquidityResponseEngine;
 
   private readonly listeners = new Set<EngineListener>();
   private lastBuyVolume = 0;
@@ -126,6 +128,7 @@ export class SymbolEngine {
     this.passive = new PassiveFlowEngine();
     this.defense = new DefenseEngine(config.flowBattle);
     this.flowWinner = new FlowWinnerEngine(config.flowBattle, this.defense);
+    this.liquidityResponse = new LiquidityResponseEngine(config.liquidityResponse);
     this.recentTrades = new RingBuffer(config.tradeRingCapacity);
   }
 
@@ -185,6 +188,8 @@ export class SymbolEngine {
     if (cluster) this.emit({ kind: 'cluster', cluster, symbol: this.symbol });
 
     this.trackSamePrice(trade);
+
+    this.liquidityResponse.onTrade(trade, isLarge);
 
     if (!this.book.empty()) {
       const flag = this.iceberg.onTrade(trade, this.book);
@@ -468,6 +473,20 @@ export class SymbolEngine {
       confidence: conf,
       state,
       flowBattle,
+      liquidityResponse: this.liquidityResponse.snapshot({
+        now,
+        windowMs: WINDOW_MS[window],
+        buy: agg.buyVolume,
+        sell: agg.sellVolume,
+        buyCount: agg.buyCount,
+        sellCount: agg.sellCount,
+        largeBuyCount: this.lastLargeBuyCount,
+        largeSellCount: this.lastLargeSellCount,
+        priceStart,
+        priceEnd,
+        priceHigh: agg.priceHigh || Math.max(priceStart, priceEnd),
+        priceLow: agg.priceLow || Math.min(priceStart, priceEnd),
+      }),
       movePotential: this.movePotential.evaluate({
         symbol: this.symbol,
         book: this.book,
@@ -581,6 +600,7 @@ export class SymbolEngine {
     this.consumption.observe(now, bid, ask, buyDelta, sellDelta);
     this.passive.observe(now, bid, ask);
     this.movePotential.observe(now, this.book, buyDelta, sellDelta);
+    this.liquidityResponse.onBook(now, this.book, buyDelta, sellDelta);
   }
 
   private updateFlip(now: number): void {
