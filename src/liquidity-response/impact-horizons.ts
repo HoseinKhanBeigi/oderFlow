@@ -12,6 +12,7 @@ interface OpenImpact {
   at5?: number;
   at30?: number;
   at60?: number;
+  at300?: number;
 }
 
 /**
@@ -64,8 +65,10 @@ export class ImpactHorizonTracker {
         bps5s: 0,
         bps30s: 0,
         bps1m: 0,
+        bps5m: 0,
         vwapBps: 0,
         classification: 'NORMAL',
+        faded: false,
       };
     }
     const vwap = safeDiv(sample.pxQuote, sample.quoteSum) || sample.immediate;
@@ -74,14 +77,21 @@ export class ImpactHorizonTracker {
     const bps5s = bps(sample.priceBefore, sample.at5 ?? sample.immediate);
     const bps30s = bps(sample.priceBefore, sample.at30 ?? sample.at5 ?? sample.immediate);
     const bps1m = bps(sample.priceBefore, sample.at60 ?? sample.at30 ?? sample.immediate);
+    const bps5m = bps(sample.priceBefore, sample.at300 ?? sample.at60 ?? sample.at30 ?? sample.immediate);
     if (Math.abs(bps1m) > 0) this.hist.add(Math.abs(bps1m));
+    const later = sample.at300 != null ? bps5m : sample.at60 != null ? bps1m : sample.at30 != null ? bps30s : bps5s;
+    const faded =
+      (immediateBps > 0 && later < immediateBps * 0.25) ||
+      (immediateBps < 0 && later > immediateBps * 0.25);
     return {
       immediateBps,
       bps5s,
       bps30s,
       bps1m,
+      bps5m,
       vwapBps,
       classification: classifyImpact(Math.abs(bps1m) || Math.abs(immediateBps), this.hist),
+      faded,
     };
   }
 
@@ -92,6 +102,7 @@ export class ImpactHorizonTracker {
       if (age >= 5_000 && obs.at5 == null) obs.at5 = price;
       if (age >= 30_000 && obs.at30 == null) obs.at30 = price;
       if (age >= 60_000 && obs.at60 == null) obs.at60 = price;
+      if (age >= 300_000 && obs.at300 == null) obs.at300 = price;
     }
     if (this.current) {
       const age = now - this.current.start;

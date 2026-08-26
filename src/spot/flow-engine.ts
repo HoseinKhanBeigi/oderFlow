@@ -309,6 +309,15 @@ class SymbolSpotState {
         priceEnd: primary.close,
         priceHigh: primary.high,
         priceLow: primary.low,
+        cvdDirection: primary.cvdDirection,
+        oiChangePercent: null,
+        shortLiquidationUsd: 0,
+        longLiquidationUsd: 0,
+        bookEmpty: this.bookState.empty(),
+        lastBookAgeMs: this.book ? Math.max(0, now - this.book.timestamp) : 0,
+        exchangeCount: Math.max(1, this.open?.venues.size ?? 1),
+        oiExpected: false,
+        liquidationExpected: false,
       },
       fut?.liquidityResponse
         ? {

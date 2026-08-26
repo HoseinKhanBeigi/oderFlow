@@ -239,6 +239,7 @@ export class SymbolEngine {
 
   noteReconnect(now: number): void {
     this.integrity.noteReconnect(now);
+    this.liquidityResponse.noteReset(now);
   }
 
   snapshot(window: WindowId, now = this.lastNow): WindowSnapshot {
@@ -486,6 +487,20 @@ export class SymbolEngine {
         priceEnd,
         priceHigh: agg.priceHigh || Math.max(priceStart, priceEnd),
         priceLow: agg.priceLow || Math.min(priceStart, priceEnd),
+        cvdDirection: cvd.direction,
+        shortLiquidationUsd: agg.forcedBuyVolume,
+        longLiquidationUsd: agg.forcedSellVolume,
+        flags: this.integrity.flags,
+        bookEmpty: this.book.empty(),
+        lastTradeAgeMs: this.integrity.lastTradeTimestamp
+          ? Math.max(0, now - this.integrity.lastTradeTimestamp)
+          : 0,
+        lastBookAgeMs: this.integrity.lastBookTimestamp
+          ? Math.max(0, now - this.integrity.lastBookTimestamp)
+          : 0,
+        exchangeCount: 1,
+        oiExpected: this.marketType === 'perp',
+        liquidationExpected: this.marketType === 'perp',
       }),
       movePotential: this.movePotential.evaluate({
         symbol: this.symbol,

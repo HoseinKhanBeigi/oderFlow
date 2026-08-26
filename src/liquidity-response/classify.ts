@@ -3,12 +3,14 @@ import type { LiquidityResponseConfig } from '../config/types.js';
 import type {
   AggressionSide,
   ConfidenceLabel,
+  CvdDirection,
   EffortVsResultState,
   EfficiencyMetrics,
   IntensityLabel,
   LiquidityAbsorption,
   LiquiditySideResponse,
   MicrostructureState,
+  OiInterpretation,
   ReversalSetup,
   VacuumKind,
   WhyFact,
@@ -42,8 +44,11 @@ export interface ClassifyInput {
   repeatedBid: boolean;
   hasBook: boolean;
   ticks: number;
-  spotConfirms?: boolean | null;
-  futuresConfirms?: boolean | null;
+  cvdDirection?: CvdDirection;
+  oiChangePercent?: number | null;
+  oiInterpretation?: OiInterpretation | null;
+  swingHigh?: number | null;
+  swingLow?: number | null;
 }
 
 export function efficiencyMetrics(input: {
@@ -206,36 +211,123 @@ export function classifyEffort(
   const strongMove = input.movePct >= cfg.strongDisplacementPercentile;
   const weakMove = input.movePct <= cfg.weakDisplacementPercentile;
   const px = pctChange(input.priceStart, input.priceEnd);
-  const askGone = input.book.ask.response === 'CONSUMPTION' || input.book.ask.response === 'WITHDRAWAL';
-  const bidGone = input.book.bid.response === 'CONSUMPTION' || input.book.bid.response === 'WITHDRAWAL';
+  const askConsumed = input.book.ask.response === 'CONSUMPTION' || input.askConsPct >= 75;
+  const bidConsumed = input.book.bid.response === 'CONSUMPTION' || input.bidConsPct >= 75;
+  const askReplenish = input.book.ask.response === 'REPLENISHMENT' || input.askReplPct >= 75;
+  const bidReplenish = input.book.bid.response === 'REPLENISHMENT' || input.bidReplPct >= 75;
+  const askWithdraw = input.book.ask.response === 'WITHDRAWAL' || input.askPullPct >= 75;
+  const bidWithdraw = input.book.bid.response === 'WITHDRAWAL' || input.bidPullPct >= 75;
 
   if (input.delta > 0 && largeBuy) {
-    if (px > 0 && strongMove) return askGone || strongMove ? 'EFFICIENT_BUYING' : 'INEFFICIENT_BUYING';
+    if (px > 0 && strongMove && (askConsumed || askWithdraw)) return 'EFFICIENT_BUYING';
+    if (weakMove && askReplenish) return 'INEFFICIENT_BUYING';
     if (weakMove || px <= 0) return 'INEFFICIENT_BUYING';
   }
   if (input.delta < 0 && largeSell) {
-    if (px < 0 && strongMove) return bidGone || strongMove ? 'EFFICIENT_SELLING' : 'INEFFICIENT_SELLING';
+    if (px < 0 && strongMove && (bidConsumed || bidWithdraw)) return 'EFFICIENT_SELLING';
+    if (weakMove && bidReplenish) return 'INEFFICIENT_SELLING';
     if (weakMove || px >= 0) return 'INEFFICIENT_SELLING';
   }
   return 'BALANCED';
 }
 
 export function classifyState(
+  cfg: LiquidityResponseConfig,
+  input: ClassifyInput,
   effort: EffortVsResultState,
   absorption: LiquidityAbsorption,
   vacuum: VacuumKind,
-  book: BookWindow,
 ): MicrostructureState {
   if (vacuum === 'UPSIDE_LIQUIDITY_VACUUM') return 'UPSIDE_LIQUIDITY_VACUUM';
   if (vacuum === 'DOWNSIDE_LIQUIDITY_VACUUM') return 'DOWNSIDE_LIQUIDITY_VACUUM';
-  if (absorption.detected && absorption.kind === 'SELL_ABSORPTION') return 'BUYERS_BEING_ABSORBED';
-  if (absorption.detected && absorption.kind === 'BUY_ABSORPTION') return 'SELLERS_BEING_ABSORBED';
-  if (effort === 'EFFICIENT_BUYING') return 'BUYERS_IN_CONTROL';
-  if (effort === 'EFFICIENT_SELLING') return 'SELLERS_IN_CONTROL';
-  if (book.ask.response === 'REPLENISHMENT' && effort === 'INEFFICIENT_BUYING') return 'PASSIVE_SELLERS_DEFENDING';
-  if (book.bid.response === 'REPLENISHMENT' && effort === 'INEFFICIENT_SELLING') return 'PASSIVE_BUYERS_DEFENDING';
+  if (noDirectionalEdge(cfg, input)) return 'NO_DIRECTIONAL_EDGE';
+
+  const px = pctChange(input.priceStart, input.priceEnd);
+  const failedHH = px <= 0.04 && input.priceEnd <= input.priceHigh * 1.0001;
+  const failedLL = px >= -0.04 && input.priceEnd >= input.priceLow * 0.9999;
+
+  if (absorption.detected && absorption.kind === 'SELL_ABSORPTION') {
+    if (input.repeatedAsk || absorption.strength >= 0.7) return 'BUYERS_BEING_ABSORBED';
+    return 'PASSIVE_SELLERS_DEFENDING';
+  }
+  if (absorption.detected && absorption.kind === 'BUY_ABSORPTION') {
+    if (input.repeatedBid || absorption.strength >= 0.7) return 'SELLERS_BEING_ABSORBED';
+    return 'PASSIVE_BUYERS_DEFENDING';
+  }
+
+  if (buyersInControl(cfg, input, px)) return 'BUYERS_IN_CONTROL';
+  if (sellersInControl(cfg, input, px)) return 'SELLERS_IN_CONTROL';
+
+  const largeBuy = input.buyPct >= cfg.largeAggressionPercentile && input.delta > 0;
+  const largeSell = input.sellPct >= cfg.largeAggressionPercentile && input.delta < 0;
+  const askReplHigh = input.askReplPct >= 75 || input.book.ask.response === 'REPLENISHMENT';
+  const bidReplHigh = input.bidReplPct >= 75 || input.book.bid.response === 'REPLENISHMENT';
+  const askPullLow = input.askPullPct <= 40;
+  const bidPullLow = input.bidPullPct <= 40;
+  const weakMove = input.movePct <= cfg.weakDisplacementPercentile;
+
+  if (largeBuy && askReplHigh && askPullLow && weakMove && failedHH) return 'PASSIVE_SELLERS_DEFENDING';
+  if (largeSell && bidReplHigh && bidPullLow && weakMove && failedLL) return 'PASSIVE_BUYERS_DEFENDING';
   if (effort === 'INEFFICIENT_BUYING' || effort === 'INEFFICIENT_SELLING') return 'TRANSITION';
   return 'BALANCED';
+}
+
+function buyersInControl(cfg: LiquidityResponseConfig, input: ClassifyInput, px: number): boolean {
+  const askGone =
+    (input.askConsPct >= 75 || input.book.ask.response === 'CONSUMPTION') &&
+    (input.askReplPct <= 40 || input.askPullPct >= 70 || input.book.ask.response === 'WITHDRAWAL');
+  return (
+    input.buyPct >= cfg.largeAggressionPercentile &&
+    input.delta > 0 &&
+    askGone &&
+    input.movePct >= cfg.strongDisplacementPercentile &&
+    px > 0.04
+  );
+}
+
+function sellersInControl(cfg: LiquidityResponseConfig, input: ClassifyInput, px: number): boolean {
+  const bidGone =
+    (input.bidConsPct >= 75 || input.book.bid.response === 'CONSUMPTION') &&
+    (input.bidReplPct <= 40 || input.bidPullPct >= 70 || input.book.bid.response === 'WITHDRAWAL');
+  return (
+    input.sellPct >= cfg.largeAggressionPercentile &&
+    input.delta < 0 &&
+    bidGone &&
+    input.movePct >= cfg.strongDisplacementPercentile &&
+    px < -0.04
+  );
+}
+
+export function noDirectionalEdge(cfg: LiquidityResponseConfig, input: ClassifyInput): boolean {
+  const quiet = (p: number) => p < 75;
+  const aggressionBalanced =
+    Math.abs(input.buyPct - input.sellPct) < 12 &&
+    input.buyPct < cfg.largeAggressionPercentile &&
+    input.sellPct < cfg.largeAggressionPercentile;
+  const deltaQuiet = input.deltaPct < 55;
+  const moveQuiet = input.movePct < 70;
+  return (
+    aggressionBalanced &&
+    deltaQuiet &&
+    moveQuiet &&
+    quiet(input.askConsPct) &&
+    quiet(input.askReplPct) &&
+    quiet(input.askPullPct) &&
+    quiet(input.bidConsPct) &&
+    quiet(input.bidReplPct) &&
+    quiet(input.bidPullPct)
+  );
+}
+
+export function candidateStrength(input: ClassifyInput, state: MicrostructureState): number {
+  if (state === 'BUYERS_IN_CONTROL' || state === 'SELLERS_IN_CONTROL') {
+    return Math.min(1, (Math.max(input.buyPct, input.sellPct) + input.movePct + input.deltaPct) / 300);
+  }
+  if (state === 'BUYERS_BEING_ABSORBED' || state === 'SELLERS_BEING_ABSORBED') {
+    return Math.min(1, 0.55 + (input.repeatedAsk || input.repeatedBid ? 0.25 : 0));
+  }
+  if (state.includes('VACUUM')) return 0.75;
+  return 0.4;
 }
 
 export function classifyConfidence(
@@ -267,33 +359,64 @@ export function classifyConfidence(
   else if (input.movePct <= 40 && (buyCtrl || sellCtrl)) disagree += 1;
   else if (absorption.usedPriceEvidence) agree += 1;
 
-  if (input.spotConfirms === true || input.futuresConfirms === true) agree += 1;
-  if (input.spotConfirms === false || input.futuresConfirms === false) disagree += 1;
-
   if (agree >= 3.5 && disagree < 1) return 'HIGH';
   if (agree >= 2 && disagree <= 1) return 'MEDIUM';
   return 'LOW';
 }
 
-export function whyFacts(input: ClassifyInput, absorption: LiquidityAbsorption, compareYes: boolean | null): WhyFact[] {
+export function whyFacts(
+  input: ClassifyInput,
+  absorption: LiquidityAbsorption,
+  state: MicrostructureState,
+): WhyFact[] {
   const askCh = input.book.ask.remaining - input.book.ask.initial;
   const askPct = input.book.ask.initial > 0 ? (askCh / input.book.ask.initial) * 100 : 0;
   const facts: WhyFact[] = [
-    { label: 'Aggressive buyers', value: `${Math.round(input.buyPct)}th percentile`, percentile: input.buyPct },
+    {
+      label: input.buyPct >= input.sellPct ? 'Aggressive buying' : 'Aggressive selling',
+      value: `${Math.round(Math.max(input.buyPct, input.sellPct))}th percentile`,
+      percentile: Math.max(input.buyPct, input.sellPct),
+    },
     {
       label: input.delta >= 0 ? 'Positive Delta' : 'Negative Delta',
       value: `${Math.round(input.deltaPct)}th percentile`,
       percentile: input.deltaPct,
     },
-    { label: 'Ask liquidity', value: `${askPct >= 0 ? '+' : ''}${askPct.toFixed(0)}%` },
-    { label: 'Price displacement', value: `${Math.round(input.movePct)}th percentile`, percentile: input.movePct },
+    { label: 'Ask consumption', value: intensityFromPercentile(input.askConsPct).toLowerCase(), percentile: input.askConsPct },
+    { label: 'Ask replenishment', value: intensityFromPercentile(input.askReplPct).toLowerCase(), percentile: input.askReplPct },
+    {
+      label: 'Ask liquidity withdrawal',
+      value: `${Math.abs(askPct).toFixed(0)}%`,
+    },
+    {
+      label: 'Price displacement',
+      value: `${Math.round(input.movePct)}th percentile`,
+      percentile: input.movePct,
+    },
   ];
-  if (compareYes != null) facts.push({ label: 'Spot confirmation', value: compareYes ? 'YES' : 'NO' });
+  if (input.cvdDirection && input.cvdDirection !== 'FLAT') {
+    facts.push({ label: 'CVD', value: input.cvdDirection === 'UP' ? 'rising' : 'falling' });
+  }
+  if (input.oiChangePercent != null) {
+    facts.push({
+      label: 'Futures OI',
+      value: `${input.oiChangePercent >= 0 ? 'rising' : 'falling'} ${input.oiChangePercent >= 0 ? '+' : ''}${input.oiChangePercent.toFixed(2)}%`,
+    });
+  }
+  if (input.oiInterpretation && input.oiInterpretation !== 'UNCLEAR') {
+    facts.push({ label: 'OI context', value: input.oiInterpretation.replace(/_/g, ' ').toLowerCase() });
+  }
   if (absorption.detected) {
     facts.push({
-      label: 'Absorption',
-      value: absorption.kind === 'SELL_ABSORPTION' ? 'passive sellers' : 'passive buyers',
+      label: 'Classification',
+      value: state.replace(/_/g, ' '),
     });
+    if (input.swingHigh != null && absorption.kind === 'SELL_ABSORPTION') {
+      facts.push({ label: 'Repeated rejection', value: `near ${input.swingHigh.toFixed(2)}` });
+    }
+    if (input.swingLow != null && absorption.kind === 'BUY_ABSORPTION') {
+      facts.push({ label: 'Repeated defense', value: `near ${input.swingLow.toFixed(2)}` });
+    }
   }
   return facts;
 }

@@ -41,6 +41,10 @@ export interface BookWindow {
   spreadDeltaBps: number;
   askDepthChange: number;
   bidDepthChange: number;
+  bandWalked: boolean;
+  resetRecent: boolean;
+  primed: boolean;
+  hasValidPrevious: boolean;
 }
 
 interface BandState {
@@ -84,6 +88,10 @@ export class BookAccountant {
   private unmatchedSell = 0;
   private lastFlowAt = 0;
   private readonly flowMatchMs = 2_000;
+  private lastMid = 0;
+  private resetAt = 0;
+  private validSnapshots = 0;
+  private bandWalked = false;
 
   constructor(private readonly config: LiquidityResponseConfig) {
     this.ticks = new RingBuffer(4_096);
@@ -103,6 +111,13 @@ export class BookAccountant {
     const ask = book.notionalWithin('ask', mid, bandPct);
     const bid = book.notionalWithin('bid', mid, bandPct);
     const spreadBps = book.spreadBps();
+
+    const midMoved =
+      this.primed &&
+      this.lastMid > 0 &&
+      mid > 0 &&
+      Math.abs(mid - this.lastMid) / this.lastMid >= this.config.bandPct;
+    this.bandWalked = midMoved;
 
     const buy = Math.max(0, buyDelta);
     const sell = Math.max(0, sellDelta);
@@ -156,8 +171,29 @@ export class BookAccountant {
 
     this.lastAsk = ask;
     this.lastBid = bid;
+    this.lastMid = mid;
     this.lastSpread = Number.isFinite(spreadBps) ? spreadBps : this.lastSpread;
+    if (this.primed) this.validSnapshots += 1;
     this.primed = true;
+  }
+
+  noteReset(timestamp = Date.now()): void {
+    this.primed = false;
+    this.resetAt = timestamp;
+    this.validSnapshots = 0;
+    this.bandWalked = false;
+    this.unmatchedBuy = 0;
+    this.unmatchedSell = 0;
+    this.lastAsk = 0;
+    this.lastBid = 0;
+    this.lastMid = 0;
+    this.lastSpread = 0;
+    this.ticks.clear();
+    this.bandState.clear();
+    this.windowAskReplenish = 0;
+    this.windowBidReplenish = 0;
+    this.askReplenishEvents = 0;
+    this.bidReplenishEvents = 0;
   }
 
   window(now: number, windowMs: number): BookWindow {
@@ -210,6 +246,10 @@ export class BookAccountant {
       spreadDeltaBps: lastSpread - firstSpread,
       askDepthChange: askFinal - askInitial,
       bidDepthChange: bidFinal - bidInitial,
+      bandWalked: this.bandWalked,
+      resetRecent: this.resetAt > 0 && now - this.resetAt < 8_000,
+      primed: this.primed,
+      hasValidPrevious: this.validSnapshots >= 1,
     };
   }
 
@@ -263,6 +303,14 @@ export class BookAccountant {
 
   repeatedBidReplenishment(min = this.config.replenishRepeatMin): boolean {
     return this.windowBidReplenish >= min || this.bidReplenishEvents >= min;
+  }
+
+  get currentAsk(): number {
+    return this.lastAsk;
+  }
+
+  get currentBid(): number {
+    return this.lastBid;
   }
 
   private updateBands(book: LocalOrderBook, mid: number, buy: number, sell: number): void {

@@ -1,4 +1,5 @@
-import type { LiquidityResponseSnapshot } from '../models/liquidity-response.js';
+import type { LiquidityDepthView, LiquidityResponseSnapshot } from '../models/liquidity-response.js';
+import { emptyStructure } from './structure.js';
 
 const ZERO_NORM = {
   value: 0,
@@ -23,9 +24,27 @@ const EMPTY_IMPACT = {
   bps5s: 0,
   bps30s: 0,
   bps1m: 0,
+  bps5m: 0,
   vwapBps: 0,
   classification: 'NORMAL' as const,
+  faded: false,
 };
+
+function emptyDepth(): LiquidityDepthView {
+  return {
+    current: 0,
+    currentPercentile: 50,
+    changePercent: null,
+    changeReason: 'INSUFFICIENT_DATA',
+    consumed: 0,
+    cancelled: 0,
+    replenished: 0,
+    removed: 0,
+    consumptionRatio: 0,
+    changeState: 'UNKNOWN',
+    sideState: 'UNKNOWN',
+  };
+}
 
 export function emptyLiquidityResponse(): LiquidityResponseSnapshot {
   return {
@@ -45,6 +64,8 @@ export function emptyLiquidityResponse(): LiquidityResponseSnapshot {
     bidResponse: 'QUIET',
     state: 'BALANCED',
     confidence: 'LOW',
+    confidenceScore: 22,
+    dataQuality: 50,
     why: [],
     effort: 'INSUFFICIENT',
     absorption: { ...EMPTY_ABSORPTION },
@@ -53,6 +74,13 @@ export function emptyLiquidityResponse(): LiquidityResponseSnapshot {
     bands: [],
     levels: [],
     reversal: null,
+    entryContext: 'NO_ENTRY',
+    structure: emptyStructure(),
+    cvdDirection: 'FLAT',
+    oiChangePercent: null,
+    oiInterpretation: null,
+    shortLiquidationUsd: 0,
+    longLiquidationUsd: 0,
     byTf: {},
     norms: {
       aggressiveBuy: { ...ZERO_NORM },
@@ -64,5 +92,16 @@ export function emptyLiquidityResponse(): LiquidityResponseSnapshot {
     compare: null,
     repeatedAskReplenishment: false,
     repeatedBidReplenishment: false,
+    deltaAnalysis: {
+      delta: 0,
+      direction: 'BALANCED',
+      absoluteDeltaPercentile: 50,
+      directionalMagnitudePercentile: 50,
+    },
+    askDepth: emptyDepth(),
+    bidDepth: emptyDepth(),
+    marketMechanics: 'UNKNOWN',
+    dataConsistency: 50,
+    consistency: { valid: true, reason: null, score: 50 },
   };
 }

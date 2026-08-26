@@ -838,8 +838,34 @@ body {
 .lr-conf.medium { color: var(--warn); }
 .lr-metrics {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0.4rem 0.6rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem 0.75rem;
+}
+.lr-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  background: var(--panel2);
+}
+.lr-section h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.lr-tip {
+  border-bottom: 1px dotted var(--muted);
+  cursor: help;
+}
+.lr-why ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+}
+.lr-why li { margin: 0.12rem 0; }
+.sf-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1100px) {
+  .sf-grid-3 { grid-template-columns: 1fr; }
 }
 .lr-metric .k {
   display: block;

@@ -330,7 +330,10 @@ const oiTimer = setInterval(() => {
     for (const coin of cryptoCoins) {
       try {
         const est = await getLiqEstimate(coin.symbol);
-        if (est.oiUsd > 0) spotHub.setOi(coin.symbol, est.oiUsd);
+        if (est.oiUsd > 0) {
+          spotHub.setOi(coin.symbol, est.oiUsd);
+          perpFeed.engine.getSymbol(coin.symbol, 'perp').liquidityResponse.noteOi(est.oiUsd);
+        }
       } catch {
         /* OI is optional context */
       }

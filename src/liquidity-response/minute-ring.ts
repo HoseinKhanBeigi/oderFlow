@@ -141,6 +141,10 @@ export class MinuteRing {
     return this.bars[this.bars.length - 1] ?? null;
   }
 
+  closed(): MinuteBar[] {
+    return this.bars;
+  }
+
   private closeOpen(): MinuteBar | null {
     const bar = this.open;
     if (!bar) return null;

@@ -1,5 +1,6 @@
 import type { LargeTradeThresholds } from '../models/flow.js';
 import type { WindowId } from '../models/trade.js';
+import type { PercentileBandConfig } from '../models/liquidity-response.js';
 
 export interface RelativeSizeConfig {
   /** Rolling sample of recent trade notionals used for percentiles / z-scores. */
@@ -200,6 +201,15 @@ export interface LiquidityResponseConfig {
   markTtlMs: number;
   minImpactQuote: number;
   atrPeriod: number;
+  persistMs: number;
+  persistMinStrength: number;
+  defendEscalateCount: number;
+  highConfidenceMinQuality: number;
+  oiThresholdPercent: number;
+  unexplainedDropPercent: number;
+  minConsistencyForHigh: number;
+  minConsistencyForKnown: number;
+  percentileBands: PercentileBandConfig;
 }
 
 export interface EngineConfig {

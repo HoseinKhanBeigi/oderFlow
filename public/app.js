@@ -923,6 +923,14 @@ function renderCompare(summary) {
     .join('');
 }
 
+function isCompareMode() {
+  return dataMode === 'compare';
+}
+
+function lrLabel(value) {
+  return String(value ?? '—').replace(/_/g, ' ');
+}
+
 function currentLiquidityResponse() {
   const tfKey = String(chartTfMinutes);
   if (isSpotView()) {
@@ -951,6 +959,19 @@ function lrMetric(label, value, cls = '') {
   return `<div class="lr-metric"><span class="k">${label}</span><span class="v ${cls}">${value}</span></div>`;
 }
 
+function lrTip(text, title) {
+  if (!title) return text;
+  return `<span class="lr-tip" title="${String(title).replace(/"/g, '&quot;')}">${text}</span>`;
+}
+
+function depthChangeLabel(depth) {
+  if (!depth || depth.changePercent == null) {
+    return depth?.changeReason ? `UNKNOWN · ${String(depth.changeReason).replace(/_/g, ' ')}` : 'UNKNOWN';
+  }
+  const n = depth.changePercent;
+  return `${n >= 0 ? '+' : ''}${n.toFixed(0)}%`;
+}
+
 function renderLiquidityResponse() {
   const el = $('lr-metrics');
   if (!el) return;
@@ -959,6 +980,7 @@ function renderLiquidityResponse() {
   const confEl = $('lr-conf');
   const whyEl = $('lr-why');
   const revEl = $('lr-reversal');
+  const primaryEl = $('lr-primary');
   if (!lr) {
     if (stateEl) {
       stateEl.textContent = 'BALANCED';
@@ -968,37 +990,200 @@ function renderLiquidityResponse() {
       confEl.textContent = 'LOW';
       confEl.className = 'lr-conf';
     }
+    if (primaryEl) primaryEl.innerHTML = '';
     el.innerHTML = lrMetric('Aggression', '—') + lrMetric('Executed', '—') + lrMetric('Delta', '—');
     if (whyEl) whyEl.classList.add('hidden');
     if (revEl) revEl.classList.add('hidden');
     return;
   }
+  const score = Number.isFinite(lr.confidenceScore) ? Math.round(lr.confidenceScore) : (lr.confidence === 'HIGH' ? 80 : lr.confidence === 'MEDIUM' ? 55 : 22);
+  const confLabel = lr.confidence ?? (score >= 70 ? 'HIGH' : score >= 40 ? 'MEDIUM' : 'LOW');
+  const mechanics = lr.marketMechanics ?? lr.state ?? 'BALANCED';
   if (stateEl) {
-    stateEl.textContent = (lr.state ?? 'BALANCED').replace(/_/g, ' ');
+    stateEl.textContent = lrLabel(mechanics);
+    stateEl.className = `lr-state ${lrTone(mechanics)}`;
+  }
+  if (confEl) {
+    confEl.textContent = `${confLabel} · ${score} / 100`;
+    confEl.className = `lr-conf ${String(confLabel).toLowerCase()}`;
+  }
+  const cross = isCompareMode() && lr.compare
+    ? lrLabel(lr.compare.note || lr.compare.relation)
+    : 'N/A';
+  if (primaryEl) {
+    primaryEl.innerHTML = [
+      lrMetric('State', lrLabel(lr.state), lrTone(lr.state)),
+      lrMetric('Confidence', `${score} / 100`, String(confLabel).toLowerCase()),
+      lrMetric('Data quality', `${Math.round(lr.dataQuality ?? 0)} / 100`),
+      lrMetric('Data consistency', `${Math.round(lr.dataConsistency ?? lr.consistency?.score ?? 0)} / 100`),
+      lrMetric('Effort vs result', lrLabel(lr.effort)),
+      lrMetric('Cross-market', cross),
+      lrMetric('Entry context', lrLabel(lr.entryContext ?? 'NO_ENTRY')),
+    ].join('');
+  }
+  const px = lr.priceMovePercent ?? 0;
+  const buyPct = lr.norms?.aggressiveBuy?.percentile;
+  const sellPct = lr.norms?.aggressiveSell?.percentile;
+  const movePct = lr.norms?.priceDisplacement?.percentile;
+  const ask = lr.askDepth;
+  const bid = lr.bidDepth;
+  const da = lr.deltaAnalysis;
+  el.innerHTML = `
+    <div class="lr-section">
+      <h3>Aggression</h3>
+      ${lrMetric('Aggressive buy', buyPct == null ? '—' : lrTip(`${Math.round(buyPct)}th · ${lrLabel(percentileBandUi(buyPct))}`, percentileTip(buyPct)))}
+      ${lrMetric('Aggressive sell', sellPct == null ? '—' : lrTip(`${Math.round(sellPct)}th · ${lrLabel(percentileBandUi(sellPct))}`, percentileTip(sellPct)))}
+      ${lrMetric('Delta', `${fmtUsd(lr.delta ?? 0)}${da?.direction ? ` · ${da.direction}` : ''}`, (lr.delta ?? 0) >= 0 ? 'pos' : 'neg')}
+    </div>
+    <div class="lr-section">
+      <h3>Ask response</h3>
+      ${lrMetric('Current depth', fmtUsd(ask?.current ?? 0))}
+      ${lrMetric('Depth percentile', ask?.currentPercentile == null ? '—' : lrTip(`${Math.round(ask.currentPercentile)}th`, percentileTip(ask.currentPercentile)))}
+      ${lrMetric('Depth change', lrTip(depthChangeLabel(ask), askChangeTip(ask)))}
+      ${lrMetric('Consumed', fmtUsd(ask?.consumed ?? 0))}
+      ${lrMetric('Cancelled', fmtUsd(ask?.cancelled ?? 0))}
+      ${lrMetric('Replenished', fmtUsd(ask?.replenished ?? 0))}
+      ${lrMetric('State', lrLabel(ask?.changeState ?? lr.askResponse ?? '—'))}
+    </div>
+    <div class="lr-section">
+      <h3>Bid response</h3>
+      ${lrMetric('Current depth', fmtUsd(bid?.current ?? 0))}
+      ${lrMetric('Depth percentile', bid?.currentPercentile == null ? '—' : lrTip(`${Math.round(bid.currentPercentile)}th`, percentileTip(bid.currentPercentile)))}
+      ${lrMetric('Depth change', lrTip(depthChangeLabel(bid), askChangeTip(bid)))}
+      ${lrMetric('Consumed', fmtUsd(bid?.consumed ?? 0))}
+      ${lrMetric('Cancelled', fmtUsd(bid?.cancelled ?? 0))}
+      ${lrMetric('Replenished', fmtUsd(bid?.replenished ?? 0))}
+      ${lrMetric('State', lrLabel(bid?.changeState ?? lr.bidResponse ?? '—'))}
+    </div>
+    <div class="lr-section">
+      <h3>Price response</h3>
+      ${lrMetric('Move', `${px >= 0 ? '+' : ''}${px.toFixed(2)}%`, px > 0 ? 'pos' : px < 0 ? 'neg' : '')}
+      ${lrMetric('Displacement', movePct == null ? '—' : lrTip(`${Math.round(movePct)}th percentile`, percentileTip(movePct)))}
+      ${lrMetric('Efficiency', lr.efficiency ?? '—')}
+    </div>`;
+  if (whyEl) {
+    const facts = [...(lr.why ?? [])];
+    if (isCompareMode() && lr.compare) {
+      facts.push({
+        label: 'Spot/Futures confirmation',
+        value: lr.compare.confirmed ? 'YES' : lr.compare.relation.replace(/_/g, ' '),
+      });
+    }
+    whyEl.classList.toggle('hidden', !facts.length);
+    whyEl.innerHTML = facts.length
+      ? `<strong>WHY?</strong><ul>${facts.map((f) => `<li>${lrTip(`${f.label}: ${f.value}`, f.tooltip || f.detail || '')}</li>`).join('')}</ul>`
+      : '';
+  }
+  if (revEl) {
+    const rev = lr.reversal;
+    if (rev?.detected) {
+      revEl.classList.remove('hidden');
+      revEl.textContent = `POTENTIAL REVERSAL CONDITIONS DETECTED · ${(rev.kind ?? '').toLowerCase()} · ${(rev.reasons ?? []).join(' · ')}`;
+    } else {
+      revEl.classList.add('hidden');
+      revEl.textContent = '';
+    }
+  }
+}
+
+function percentileBandUi(p) {
+  if (p < 20) return 'VERY_LOW';
+  if (p < 40) return 'LOW';
+  if (p < 60) return 'NORMAL';
+  if (p < 80) return 'ELEVATED';
+  if (p < 95) return 'HIGH';
+  return 'EXTREME';
+}
+
+function percentileTip(p) {
+  const n = Math.round(Number(p) || 0);
+  return `This value is higher than ${n}% and lower than ${100 - n}% of comparable historical observations.`;
+}
+
+function askChangeTip(depth) {
+  if (!depth) return '';
+  if (depth.changePercent == null) {
+    return 'Displayed band depth change is unknown because the previous snapshot was missing, reset, or unsynchronized.';
+  }
+  const dir = depth.changePercent >= 0 ? 'increased' : 'decreased';
+  return `Displayed ask/bid liquidity inside the configured price band ${dir} ${Math.abs(depth.changePercent).toFixed(0)}% relative to the previous valid snapshot.`;
+}
+  const el = $('lr-metrics');
+  if (!el) return;
+  const lr = currentLiquidityResponse();
+  const stateEl = $('lr-state');
+  const confEl = $('lr-conf');
+  const whyEl = $('lr-why');
+  const revEl = $('lr-reversal');
+  const primaryEl = $('lr-primary');
+  if (!lr) {
+    if (stateEl) {
+      stateEl.textContent = 'BALANCED';
+      stateEl.className = 'lr-state';
+    }
+    if (confEl) {
+      confEl.textContent = 'LOW';
+      confEl.className = 'lr-conf';
+    }
+    if (primaryEl) primaryEl.innerHTML = '';
+    el.innerHTML = lrMetric('Aggression', '—') + lrMetric('Executed', '—') + lrMetric('Delta', '—');
+    if (whyEl) whyEl.classList.add('hidden');
+    if (revEl) revEl.classList.add('hidden');
+    return;
+  }
+  const score = Number.isFinite(lr.confidenceScore) ? Math.round(lr.confidenceScore) : (lr.confidence === 'HIGH' ? 80 : lr.confidence === 'MEDIUM' ? 55 : 22);
+  const confLabel = lr.confidence ?? (score >= 70 ? 'HIGH' : score >= 40 ? 'MEDIUM' : 'LOW');
+  if (stateEl) {
+    stateEl.textContent = lrLabel(lr.state ?? 'BALANCED');
     stateEl.className = `lr-state ${lrTone(lr.state)}`;
   }
   if (confEl) {
-    confEl.textContent = `${lr.confidence ?? 'LOW'} confidence`;
-    confEl.className = `lr-conf ${(lr.confidence ?? 'LOW').toLowerCase()}`;
+    confEl.textContent = `${confLabel} · ${score} / 100`;
+    confEl.className = `lr-conf ${String(confLabel).toLowerCase()}`;
+  }
+  const cross = isCompareMode() && lr.compare
+    ? lrLabel(lr.compare.note || lr.compare.relation)
+    : 'N/A';
+  if (primaryEl) {
+    primaryEl.innerHTML = [
+      lrMetric('State', lrLabel(lr.state), lrTone(lr.state)),
+      lrMetric('Confidence', `${score} / 100`, String(confLabel).toLowerCase()),
+      lrMetric('Effort vs result', lrLabel(lr.effort)),
+      lrMetric('Cross-market', cross),
+      lrMetric('Entry context', lrLabel(lr.entryContext ?? 'NO_ENTRY')),
+    ].join('');
   }
   const px = lr.priceMovePercent ?? 0;
+  const impact = lr.impact ?? {};
   el.innerHTML = [
     lrMetric('Aggression', lr.aggression ?? 'BALANCED', lr.aggression === 'BUYERS' ? 'pos' : lr.aggression === 'SELLERS' ? 'neg' : ''),
     lrMetric('Executed', fmtUsd(lr.executed ?? 0)),
     lrMetric('Delta', fmtUsd(lr.delta ?? 0), (lr.delta ?? 0) >= 0 ? 'pos' : 'neg'),
     lrMetric('Price move', `${px >= 0 ? '+' : ''}${px.toFixed(2)}%`, px > 0 ? 'pos' : px < 0 ? 'neg' : ''),
+    lrMetric('Price impact', lrLabel(impact.classification ?? '—')),
+    lrMetric('Impact path', `${Number(impact.immediateBps ?? 0).toFixed(1)} → ${Number(impact.bps5s ?? 0).toFixed(1)} → ${Number(impact.bps30s ?? 0).toFixed(1)} → ${Number(impact.bps1m ?? 0).toFixed(1)} → ${Number(impact.bps5m ?? 0).toFixed(1)} bps`),
     lrMetric('Efficiency', lr.efficiency ?? '—'),
-    lrMetric('Price impact', `${lr.impact?.classification ?? '—'} · ${Math.abs(lr.impact?.bps1m ?? 0).toFixed(1)} bps 1m`),
     lrMetric('Ask consumption', lr.askConsumption ?? '—'),
     lrMetric('Ask replenishment', lr.askReplenishment ?? '—'),
     lrMetric('Ask withdrawal', lr.askWithdrawal ?? '—'),
+    lrMetric('Bid consumption', lr.bidConsumption ?? '—'),
     lrMetric('Bid replenishment', lr.bidReplenishment ?? '—'),
-    lrMetric('Effort vs result', (lr.effort ?? '—').replace(/_/g, ' ')),
+    lrMetric('Bid withdrawal', lr.bidWithdrawal ?? '—'),
+    lrMetric('CVD', lr.cvdDirection === 'UP' ? '↑' : lr.cvdDirection === 'DOWN' ? '↓' : '→'),
+    lrMetric('Data quality', `${Math.round(lr.dataQuality ?? 0)} / 100`),
   ].join('');
   if (whyEl) {
-    const facts = (lr.why ?? []).map((f) => `${f.label}: ${f.value}`).join(' · ');
-    whyEl.classList.toggle('hidden', !facts);
-    whyEl.innerHTML = facts ? `<strong>WHY?</strong> ${facts}` : '';
+    const facts = [...(lr.why ?? [])];
+    if (isCompareMode() && lr.compare) {
+      facts.push({
+        label: 'Spot/Futures confirmation',
+        value: lr.compare.confirmed ? 'YES' : lr.compare.relation.replace(/_/g, ' '),
+      });
+    }
+    whyEl.classList.toggle('hidden', !facts.length);
+    whyEl.innerHTML = facts.length
+      ? `<strong>WHY?</strong><ul>${facts.map((f) => `<li>${f.label}: ${f.value}</li>`).join('')}</ul>`
+      : '';
   }
   if (revEl) {
     const rev = lr.reversal;
@@ -1059,14 +1244,18 @@ function applyDataMode(mode) {
     b.classList.toggle('active', b.dataset.mode === mode);
   });
   const spot = isSpotView();
-  $('chart-title').textContent = mode === 'perp' ? 'Order flow footprint' : 'Spot order flow footprint';
+  $('chart-title').textContent = mode === 'perp'
+    ? 'Order flow footprint'
+    : mode === 'compare'
+      ? 'Spot vs futures footprint'
+      : 'Spot order flow footprint';
   $('chart-hint').textContent = mode === 'perp'
     ? 'Red left = sells, green right = buys. Lines are liquidation levels — remaining % until hit, then LIQUIDATED. Gold = absorption. All combines CEX + Hyperliquid + dYdX + Bitstamp.'
     : 'Red left = aggressive spot sells, green right = aggressive spot buys. Executed volume only — resting book is hatched, not counted as volume. All = Binance + Bybit + OKX + Bitstamp.';
   $('imb-cfg')?.classList.toggle('hidden', !spot);
   $('spot-hud')?.classList.toggle('hidden', !spot);
   $('move-panel')?.classList.toggle('hidden', spot);
-  $('spot-compare-panel')?.classList.toggle('hidden', !spot);
+  $('spot-compare-panel')?.classList.toggle('hidden', mode !== 'compare');
   document.querySelector('.asset-nav .asset-row:nth-child(2)')?.classList.toggle('hidden', spot);
   const coin = config?.coins?.find((c) => c.symbol === selectedSymbol);
   const venue = selectedExchange === 'all' ? (spot ? 'multi-exchange spot' : 'multi-exchange') : selectedExchange;
@@ -1179,34 +1368,54 @@ function renderSpotCompare() {
   const w = snap ? spotWindow(snap) : null;
   const cmp = snap?.comparison;
   const fut = summaries[selectedSymbol]?.windows?.['1m'] ?? summaries[selectedSymbol]?.windows?.['5m'];
+  const futLr = fut?.liquidityResponse;
+  const cmpLr = snap?.liquidityResponse?.compare;
   const priceCh = w?.efficiency?.priceChangePercent ?? 0;
-  $('sf-price').textContent = snap?.price ? `${fmtUsd ? '' : ''}${priceCh >= 0 ? '+' : ''}${priceCh.toFixed(2)}%` : '—';
-  const interp = (cmp?.interpretation ?? 'UNCLEAR').replace(/_/g, ' ');
+  $('sf-price').textContent = snap?.price ? `${priceCh >= 0 ? '+' : ''}${priceCh.toFixed(2)}%` : '—';
+  const interp = lrLabel(cmpLr?.note || cmpLr?.relation || cmp?.interpretation || 'UNRESOLVED');
   const interpEl = $('sf-interpretation');
   interpEl.textContent = interp;
   interpEl.className = `sf-interpretation ${
-    interp.includes('DIVERGENCE') || interp.includes('COVERING') || interp.includes('LIQUIDATION') ? 'warn'
+    interp.includes('DIVERGENCE') || interp.includes('COVERING') || interp.includes('LIQUIDATION') || interp.includes('INEFFICIENT') ? 'warn'
       : interp.includes('SELL') ? 'sell'
       : interp.includes('BUY') ? 'buy' : ''
   }`;
 
-  const spot = cmp?.spot;
-  const futures = cmp?.futures;
+  const spotLeg = cmpLr?.spot;
+  const futLeg = cmpLr?.futures;
+  const spotLr = snap?.liquidityResponse;
   $('sf-spot').innerHTML = `<h3>Spot</h3>
-    ${sfRow('Executed', fmtUsd((spot?.aggressiveBuyVolume ?? 0) + (spot?.aggressiveSellVolume ?? 0)))}
-    ${sfRow('Buy', fmtUsd(spot?.aggressiveBuyVolume ?? w?.aggressiveBuyVolume ?? 0), 'pos')}
-    ${sfRow('Sell', fmtUsd(spot?.aggressiveSellVolume ?? w?.aggressiveSellVolume ?? 0), 'neg')}
-    ${sfRow('Delta', fmtUsd(spot?.delta ?? w?.delta ?? 0), (spot?.delta ?? 0) >= 0 ? 'pos' : 'neg')}
-    ${sfRow('CVD', w?.cvdDirection === 'UP' ? '↑' : w?.cvdDirection === 'DOWN' ? '↓' : '→')}
-    ${sfRow('Efficiency', spot?.efficiency ?? w?.efficiency?.rank ?? '—')}`;
+    ${sfRow('State', lrLabel(spotLeg?.state ?? spotLr?.state ?? w?.flow ?? '—'))}
+    ${sfRow('Agg Buy', fmtUsd(w?.aggressiveBuyVolume ?? 0), 'pos')}
+    ${sfRow('Agg Sell', fmtUsd(w?.aggressiveSellVolume ?? 0), 'neg')}
+    ${sfRow('Delta', fmtUsd(spotLeg?.delta ?? w?.delta ?? 0), (spotLeg?.delta ?? w?.delta ?? 0) >= 0 ? 'pos' : 'neg')}
+    ${sfRow('CVD', (spotLeg?.cvdDirection ?? w?.cvdDirection) === 'UP' ? '↑' : (spotLeg?.cvdDirection ?? w?.cvdDirection) === 'DOWN' ? '↓' : '→')}
+    ${sfRow('Efficiency', spotLeg?.efficiency ?? w?.efficiency?.rank ?? '—')}
+    ${sfRow('Liquidity', lrLabel(spotLeg?.bookResponse ?? spotLr?.askResponse ?? '—'))}`;
 
+  const oi = futLeg?.oiChangePercent ?? futLr?.oiChangePercent;
+  const shortLiq = futLeg?.shortLiquidationUsd ?? fut?.forcedBuyVolume ?? 0;
+  const longLiq = futLeg?.longLiquidationUsd ?? fut?.forcedSellVolume ?? 0;
   $('sf-futures').innerHTML = `<h3>Futures</h3>
-    ${sfRow('Executed', fmtUsd((futures?.aggressiveBuyVolume ?? fut?.aggressiveBuyVolume ?? 0) + (futures?.aggressiveSellVolume ?? fut?.aggressiveSellVolume ?? 0)))}
-    ${sfRow('Buy', fmtUsd(futures?.aggressiveBuyVolume ?? fut?.aggressiveBuyVolume ?? 0), 'pos')}
-    ${sfRow('Sell', fmtUsd(futures?.aggressiveSellVolume ?? fut?.aggressiveSellVolume ?? 0), 'neg')}
-    ${sfRow('Delta', fmtUsd(futures?.delta ?? fut?.delta ?? 0), (futures?.delta ?? 0) >= 0 ? 'pos' : 'neg')}
-    ${sfRow('OI', futures?.oiChangePercent == null ? '—' : `${futures.oiChangePercent >= 0 ? '+' : ''}${futures.oiChangePercent.toFixed(2)}%`)}
-    ${sfRow('Liquidations', fmtUsd(futures?.liquidationUsd ?? 0))}`;
+    ${sfRow('State', lrLabel(futLeg?.state ?? futLr?.state ?? '—'))}
+    ${sfRow('Agg Buy', fmtUsd(fut?.aggressiveBuyVolume ?? 0), 'pos')}
+    ${sfRow('Agg Sell', fmtUsd(fut?.aggressiveSellVolume ?? 0), 'neg')}
+    ${sfRow('Delta', fmtUsd(futLeg?.delta ?? fut?.delta ?? 0), (futLeg?.delta ?? fut?.delta ?? 0) >= 0 ? 'pos' : 'neg')}
+    ${sfRow('OI', oi == null ? '—' : `${oi >= 0 ? '+' : ''}${oi.toFixed(2)}%`)}
+    ${sfRow('OI context', lrLabel(futLeg?.oiInterpretation ?? futLr?.oiInterpretation ?? '—'))}
+    ${sfRow('Short liq', fmtUsd(shortLiq))}
+    ${sfRow('Long liq', fmtUsd(longLiq))}
+    ${sfRow('Efficiency', futLeg?.efficiency ?? futLr?.efficiency ?? '—')}`;
+
+  const combinedEl = $('sf-combined');
+  if (combinedEl) {
+    const conf = cmpLr?.confidenceScore ?? 0;
+    combinedEl.innerHTML = `<h3>Combined</h3>
+      ${sfRow('Cross-market', interp)}
+      ${sfRow('Confidence', `${Math.round(conf)} / 100`)}
+      ${sfRow('Confirmed', cmpLr?.confirmed ? 'YES' : 'NO')}
+      ${sfRow('Entry', lrLabel(spotLr?.entryContext ?? 'NO_ENTRY'))}`;
+  }
 
   const bits = SPOT_EXCHANGES.map((id) => {
     const v = snap?.exchanges?.[id];
@@ -1214,18 +1423,16 @@ function renderSpotCompare() {
   }).filter(Boolean);
   $('sf-exchanges').textContent = bits.length ? `Venue delta · ${bits.join(' · ')}` : '';
 
-  const cmpLr = snap?.liquidityResponse?.compare;
   const sfLiq = $('sf-liquidity');
   if (sfLiq) {
     if (!cmpLr) {
-      sfLiq.textContent = 'Liquidity response: waiting for independent spot and futures books…';
+      sfLiq.textContent = 'Cross-market confirmation: waiting for independent spot and futures books…';
     } else {
-      const rel = (cmpLr.relation ?? 'NEUTRAL').replace(/_/g, ' ');
-      sfLiq.innerHTML = `<strong>${rel}</strong>
-        · Spot ${cmpLr.spot.aggression} · ${cmpLr.spot.bookResponse.replace(/_/g, ' ')} · ${cmpLr.spot.efficiency} efficiency
-        · Futures ${cmpLr.futures.aggression} · ${cmpLr.futures.bookResponse.replace(/_/g, ' ')} · ${cmpLr.futures.efficiency} efficiency
+      sfLiq.innerHTML = `<strong>${interp}</strong>
+        · Spot ${lrLabel(cmpLr.spot.aggression)} · ${lrLabel(cmpLr.spot.bookResponse)} · ${cmpLr.spot.efficiency} efficiency
+        · Futures ${lrLabel(cmpLr.futures.aggression)} · ${lrLabel(cmpLr.futures.bookResponse)} · ${cmpLr.futures.efficiency} efficiency
         ${cmpLr.futures.oiChangePercent == null ? '' : ` · OI ${cmpLr.futures.oiChangePercent >= 0 ? '+' : ''}${cmpLr.futures.oiChangePercent.toFixed(2)}%`}
-        ${cmpLr.confirmed ? ' · confirmed' : ''}`;
+        ${cmpLr.inefficient ? ' · inefficient' : ''}`;
     }
   }
 }

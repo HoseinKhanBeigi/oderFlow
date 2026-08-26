@@ -101,14 +101,15 @@
       <div id="liq-response" class="liq-response">
         <div class="lr-head">
           <div>
-            <h2>Liquidity response</h2>
-            <p class="hint">Aggression × book reaction → price displacement. Resting liquidity is not executed volume.</p>
+            <h2>Market mechanics</h2>
+            <p class="hint">Who is attacking, who is defending, and whether the attack is working. Not a prediction.</p>
           </div>
           <div class="lr-state-wrap">
             <div id="lr-state" class="lr-state">BALANCED</div>
             <div id="lr-conf" class="lr-conf">LOW</div>
           </div>
         </div>
+        <div id="lr-primary" class="lr-primary"></div>
         <div id="lr-metrics" class="lr-metrics"></div>
         <div id="lr-why" class="lr-why hidden"></div>
         <div id="lr-reversal" class="lr-reversal hidden"></div>
@@ -141,14 +142,15 @@
       <div class="panel-head">
         <div>
           <h2>Spot vs futures</h2>
-          <p class="hint">Executed spot flow versus leveraged futures. Classifications are interpretations, not trade signals.</p>
+          <p class="hint">Independent spot and futures mechanics. Combined labels are interpretations, not trade signals.</p>
         </div>
         <span id="sf-price" class="liq-now">—</span>
       </div>
       <div id="sf-interpretation" class="sf-interpretation">Waiting for spot and futures windows…</div>
-      <div class="sf-grid">
+      <div class="sf-grid sf-grid-3">
         <div class="sf-col" id="sf-spot"></div>
         <div class="sf-col" id="sf-futures"></div>
+        <div class="sf-col" id="sf-combined"></div>
       </div>
       <div id="sf-exchanges" class="sf-exchanges"></div>
       <div id="sf-liquidity" class="sf-liquidity"></div>

@@ -11,7 +11,9 @@ export type NormKey =
   | 'absEfficiency'
   | 'dirEfficiency'
   | 'bpsPer100m'
-  | 'impactBps';
+  | 'impactBps'
+  | 'askRemaining'
+  | 'bidRemaining';
 
 /**
  * Per-asset rolling distributions. Thresholds are percentiles of this
@@ -46,6 +48,10 @@ export class MetricNormalizer {
 
   percentile(key: NormKey, value: number, tf = 1, window = this.defaultWindow): number {
     return this.stats(key, value, tf, window).percentile;
+  }
+
+  sampleSize(key: NormKey, tf = 1, window = this.defaultWindow): number {
+    return this.dist(key, tf, window).size;
   }
 
   private dist(key: NormKey, tf: number, window: number): RollingDistribution {
