@@ -40,5 +40,7 @@ export type { SpotFlowSnapshot, SpotExchangeId } from './spot/index.js';
 export { LiquidityResponseEngine } from './liquidity-response/index.js';
 export { emptyLiquidityResponse } from './liquidity-response/empty.js';
 export type { LiquidityResponseSnapshot } from './models/liquidity-response.js';
+export { evaluateDailySignal, emptyDailySignal, liquidityContextFromWindow } from './analysis/daily-signal.js';
+export type { DailySignal, DailyBias, DailySetup } from './models/daily-signal.js';
 
 export * from './models/index.js';

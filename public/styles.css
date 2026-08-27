@@ -198,6 +198,47 @@ body {
 .state-title { font-size: 1rem; font-weight: 600; }
 .state-help { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.85rem; line-height: 1.5; }
 
+.daily-setup {
+  margin-bottom: 0.85rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+}
+.daily-setup-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+}
+.daily-bias {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  background: var(--border);
+  color: var(--muted);
+}
+.daily-bias.long { background: var(--buy-dim); color: var(--buy); }
+.daily-bias.short { background: var(--sell-dim); color: var(--sell); }
+.daily-bias.wait { background: rgba(251, 191, 36, 0.12); color: var(--warn); }
+.daily-setup-title { font-size: 0.88rem; font-weight: 600; }
+.daily-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.7rem;
+  margin-top: 0.45rem;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.daily-levels .sup { color: var(--buy); }
+.daily-levels .res { color: var(--sell); }
+.daily-levels .poc { color: var(--warn); }
+
 .tf-tabs {
   display: flex;
   gap: 0.35rem;
@@ -410,6 +451,7 @@ body {
 .legend-item.fp-liq-ask { color: #f87171; }
 .legend-item.fp-liq-bid { color: #4ade80; }
 .legend-item.fp-abs { color: #fbbf24; }
+.legend-item.fp-sr { color: #86efac; }
 .legend-item.fp-psell { color: #fbbf24; }
 .legend-item.fp-pbuy { color: #60a5fa; }
 .legend-item.fp-rest-bid { color: #22d3ee; }
@@ -657,7 +699,7 @@ body {
   align-items: flex-end;
   gap: 0.35rem;
 }
-.chart-tf-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; max-width: 520px; }
+.chart-tf-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; max-width: 600px; }
 .chart-tf-tab {
   background: var(--card);
   border: 1px solid var(--border);

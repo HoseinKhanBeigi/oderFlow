@@ -72,6 +72,7 @@
           <button class="chart-tf-tab" data-ctf="60">1h</button>
           <button class="chart-tf-tab" data-ctf="120">2h</button>
           <button class="chart-tf-tab" data-ctf="240">4h</button>
+          <button class="chart-tf-tab" data-ctf="1440">1D</button>
         </div>
           <label id="imb-cfg" class="imb-cfg hidden" title="Highlight a price level when buy/sell ≥ this ratio">
             Imbalance
@@ -86,6 +87,7 @@
         <span class="legend-item fp-liq-ask liq-only">short liq ↑</span>
         <span class="legend-item fp-liq-bid liq-only">long liq ↓</span>
         <span class="legend-item fp-abs">absorption</span>
+        <span class="legend-item fp-sr">daily S/R</span>
         <span class="legend-item fp-psell">passive sell</span>
         <span class="legend-item fp-pbuy">passive buy</span>
         <span class="legend-item fp-rest-bid">resting bid</span>
@@ -171,11 +173,22 @@
         Aggressive flow measures taker trades — buyers crossing the ask or sellers crossing the bid.
       </p>
 
+      <div id="daily-setup" class="daily-setup">
+        <div class="daily-setup-head">
+          <span class="label">Daily setup</span>
+          <span id="daily-bias" class="daily-bias">WAIT</span>
+        </div>
+        <div id="daily-setup-title" class="daily-setup-title">Waiting for daily structure…</div>
+        <p id="daily-setup-help" class="hint">Footprint + support/resistance + live liquidity. Not a 10s impulse.</p>
+        <div id="daily-levels" class="daily-levels"></div>
+      </div>
+
       <div class="tf-tabs" id="tf-tabs">
         <button class="tf-tab active" data-tf="10s">10s impulse</button>
         <button class="tf-tab" data-tf="1m">1m</button>
         <button class="tf-tab" data-tf="5m">5m trend</button>
         <button class="tf-tab" data-tf="15m">15m</button>
+        <button class="tf-tab" data-tf="1D">1D</button>
       </div>
 
       <div class="metrics-grid">
@@ -317,6 +330,10 @@
         <div class="legend-block">
           <h3>Events</h3>
           <p>Bursts, large prints, market state changes, absorption, and liquidity pull / wall events appear in the events panel.</p>
+        </div>
+        <div class="legend-block">
+          <h3>Daily setup</h3>
+          <p>1D bias uses rolled-up footprint, volume-profile support/resistance, and whether live liquidity is defending those levels. WAIT means the daily pieces are not aligned — it is not a flat market call.</p>
         </div>
         <div class="legend-block">
           <h3>Liquidity</h3>

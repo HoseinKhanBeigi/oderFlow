@@ -26,6 +26,9 @@ function isSpotView() {
   return dataMode !== 'perp';
 }
 let lastSummary = null;
+let lastDailySignal = null;
+let dailySignalReq = 0;
+let dailySignalTimer = null;
 const summaries = {};
 const tapeBySymbol = {};
 const eventsBySymbol = {};
@@ -62,6 +65,17 @@ const TF_LABEL = {
   '1m': 'last 1 minute',
   '5m': 'last 5 minutes',
   '15m': 'last 15 minutes',
+  '1D': 'this daily bar',
+};
+
+const DAILY_SETUP_META = {
+  SUPPORT_HOLD: 'Support is holding',
+  RESISTANCE_REJECT: 'Resistance is rejecting',
+  BREAKOUT_UP: 'Holding above resistance',
+  BREAKDOWN: 'Trading below support',
+  FLOW_CONTINUATION: 'Daily flow continuation',
+  MID_RANGE: 'No daily level in play',
+  INSUFFICIENT: 'Not enough daily history',
 };
 
 const EX_SHORT = { binance: 'BN', bybit: 'BY', okx: 'OKX', bitget: 'BG', hyperliquid: 'HL', dydx: 'DX', bitstamp: 'BS' };
@@ -436,6 +450,18 @@ function forcedConfirms(side) {
 }
 
 function liveAbsorption() {
+  if (selectedTf === '1D') {
+    const abs = lastDailySignal?.flow?.absorbed;
+    if (!abs) return null;
+    const buyer = abs === 'BUYERS';
+    return {
+      buyer,
+      title: buyer ? 'Buyer absorption' : 'Seller absorption',
+      text: buyer
+        ? 'Daily buyer absorption — aggressive buying, daily high still capping price'
+        : 'Daily seller absorption — aggressive selling, daily low still holding',
+    };
+  }
   const w = lastSummary?.windows?.[selectedTf] || lastSummary?.windows?.['10s'];
   const a = w?.absorption;
   if (!a?.detected) return null;
@@ -695,6 +721,7 @@ function applySymbolFilter() {
   seedBook(selectedSymbol);
   startLiqEstimateLoop();
   renderSpotCompare();
+  startDailySignalLoop();
 }
 
 function chipHtml(c) {
@@ -804,8 +831,151 @@ function windowData(summary, tf) {
   return summary?.windows?.[tf] ?? summary?.windows?.['10s'];
 }
 
+function tfShort(tf = chartTfMinutes) {
+  if (tf >= 1440 && tf % 1440 === 0) return `${tf / 1440}D`;
+  if (tf % 60 === 0) return `${tf / 60}h`;
+  return `${tf}m`;
+}
+
+function startDailySignalLoop() {
+  if (dailySignalTimer) clearInterval(dailySignalTimer);
+  void loadDailySignal();
+  dailySignalTimer = setInterval(() => void loadDailySignal(), 20_000);
+}
+
+async function loadDailySignal() {
+  const symbol = selectedSymbol;
+  const req = ++dailySignalReq;
+  try {
+    const params = new URLSearchParams({
+      symbol,
+      exchange: selectedExchange,
+      market: footprintMarket(),
+    });
+    const data = await fetch(`/api/daily-signal?${params}`).then((r) => r.json());
+    if (req !== dailySignalReq || symbol !== selectedSymbol) return;
+    lastDailySignal = data;
+    renderDailySetup();
+    if (selectedTf === '1D') {
+      if (isSpotView()) updateSpotUi();
+      else if (lastSummary) updateUi();
+    }
+    drawFootprint();
+  } catch {
+    /* keep the last successful daily setup */
+  }
+}
+
+function renderDailySetup() {
+  const sig = lastDailySignal;
+  const biasEl = $('daily-bias');
+  const titleEl = $('daily-setup-title');
+  const helpEl = $('daily-setup-help');
+  const levelsEl = $('daily-levels');
+  if (!biasEl || !titleEl) return;
+  if (!sig) {
+    biasEl.textContent = 'WAIT';
+    biasEl.className = 'daily-bias wait';
+    titleEl.textContent = 'Waiting for daily structure…';
+    return;
+  }
+  const bias = sig.bias ?? 'WAIT';
+  biasEl.textContent = bias;
+  biasEl.className = `daily-bias ${bias.toLowerCase()}`;
+  titleEl.textContent = DAILY_SETUP_META[sig.setup] ?? (sig.setup ?? 'Daily setup').replace(/_/g, ' ');
+  if (helpEl) {
+    const conf = Math.round((sig.confidence ?? 0) * 100);
+    const src = sig.footprintComplete ? 'footprint' : 'OHLC structure (footprint history incomplete)';
+    helpEl.textContent = `${sig.reason ?? ''} · ${conf}% confidence · ${src}`;
+  }
+  if (levelsEl) {
+    const bits = [];
+    if (sig.levels?.support != null) bits.push(`<span class="sup">S ${fmtPrice(sig.levels.support)}</span>`);
+    if (sig.levels?.poc != null) bits.push(`<span class="poc">POC ${fmtPrice(sig.levels.poc)}</span>`);
+    if (sig.levels?.resistance != null) bits.push(`<span class="res">R ${fmtPrice(sig.levels.resistance)}</span>`);
+    if (sig.location) bits.push(`<span>${String(sig.location).replace(/_/g, ' ').toLowerCase()}</span>`);
+    levelsEl.innerHTML = bits.join('');
+  }
+}
+
+function renderDailyAsSignal(price, summary) {
+  const sig = lastDailySignal;
+  renderDailySetup();
+  if ($('price')) $('price').textContent = price > 0 ? `$${fmtPrice(price)}` : '—';
+  const coin = config?.coins?.find((c) => c.symbol === selectedSymbol);
+  const venue = isSpotView()
+    ? (selectedExchange === 'all' ? 'multi-exchange spot' : `${selectedExchange} spot`)
+    : coin?.venue === 'equity'
+      ? 'Binance equity perp'
+      : selectedExchange === 'all'
+        ? 'multi-exchange'
+        : selectedExchange;
+  if ($('symbol-label')) {
+    $('symbol-label').textContent = `${coin?.label ?? selectedSymbol} · ${venue} · daily`;
+  }
+  const bias = sig?.bias ?? 'WAIT';
+  const setup = sig?.setup ?? 'INSUFFICIENT';
+  $('state-badge').textContent = bias === 'WAIT' ? 'NO DAILY EDGE' : `${bias} · ${String(setup).replace(/_/g, ' ')}`;
+  $('state-badge').className = `state-badge ${bias === 'LONG' ? 'buy-flow' : bias === 'SHORT' ? 'sell-flow' : ''}`;
+  $('state-title').textContent = DAILY_SETUP_META[setup] ?? 'Daily setup';
+  $('state-help').textContent = sig?.reason
+    ?? 'Daily bias waits until footprint, support/resistance, and liquidity agree.';
+  const ch = sig?.flow?.todayChangePercent ?? 0;
+  const chEl = $('price-change');
+  if (chEl) {
+    chEl.textContent = `${ch >= 0 ? '+' : ''}${ch.toFixed(2)}% on the daily bar`;
+    chEl.className = `price-change ${ch > 0 ? 'up' : ch < 0 ? 'down' : ''}`;
+  }
+  $('flow-window-label').textContent = TF_LABEL['1D'];
+  const delta = sig?.flow?.todayDelta ?? 0;
+  $('delta').textContent = fmtUsd(delta);
+  $('delta').className = `value ${delta >= 0 ? 'pos' : 'neg'}`;
+  const dp = ((sig?.flow?.todayDeltaPercent ?? 0) * 100).toFixed(0);
+  $('delta-pct').textContent = delta >= 0 ? `${dp}% buy-side dominance` : `${Math.abs(Number(dp))}% sell-side dominance`;
+  $('score').textContent = String(sig?.score ?? 0);
+  $('score').style.color = (sig?.score ?? 0) > 0 ? 'var(--buy)' : (sig?.score ?? 0) < 0 ? 'var(--sell)' : 'inherit';
+  $('impact').textContent = (sig?.location ?? 'UNKNOWN').replace(/_/g, ' ');
+  $('impact-help').textContent = sig?.pathOfLeastResistance
+    ? `Path of least resistance ${sig.pathOfLeastResistance.toLowerCase()}`
+    : 'Daily location vs support / resistance';
+  $('confidence').textContent = sig ? `${Math.round(sig.confidence * 100)}%` : '—';
+  $('flow-multiple').textContent = sig?.footprintComplete ? 'Daily footprint complete' : 'Using OHLC until footprint fills in';
+  const buy = sig?.flow?.todayBuy ?? 0;
+  const sell = sig?.flow?.todaySell ?? 0;
+  const total = buy + sell || 1;
+  $('buy-bar').style.width = `${(buy / total) * 100}%`;
+  $('sell-bar').style.width = `${(sell / total) * 100}%`;
+  $('buy-vol').textContent = fmtUsd(buy);
+  $('sell-vol').textContent = fmtUsd(sell);
+  const absBox = $('absorption-box');
+  if (sig?.flow?.absorbed) {
+    absBox.classList.remove('hidden');
+    $('absorption-title').textContent = sig.flow.absorbed === 'SELLERS' ? 'SELLER ABSORPTION' : 'BUYER ABSORPTION';
+    $('absorption-text').textContent = sig.flow.absorbed === 'SELLERS'
+      ? 'Aggressive selling into the daily low, price holding — passive buyers absorbing.'
+      : 'Aggressive buying into the daily high, price stalling — passive sellers absorbing.';
+  } else {
+    absBox.classList.add('hidden');
+  }
+  const w = summary?.windows?.['15m'] ?? summary?.windows?.['1m'] ?? summary?.windows?.['10s'];
+  if (w) {
+    renderFlowBattle(w);
+    renderMovePotential(w.movePotential);
+  }
+  if (summary) renderCompare(summary);
+  renderLiquidityResponse();
+}
+
 function updateUi() {
   if (isSpotView()) return;
+  if (selectedTf === '1D') {
+    if (lastSummary && lastSummary.symbol === selectedSymbol) {
+      renderDailyAsSignal(lastSummary.price, lastSummary);
+    } else {
+      renderDailyAsSignal(lastDailySignal?.price ?? 0, null);
+    }
+    return;
+  }
   if (!lastSummary || lastSummary.symbol !== selectedSymbol) return;
   const w = windowData(lastSummary, selectedTf);
   if (!w) return;
@@ -1199,11 +1369,18 @@ function updateSpotUi() {
   const coin = config?.coins?.find((c) => c.symbol === snap.symbol);
   const venue = selectedExchange === 'all' ? 'multi-exchange spot' : `${selectedExchange} spot`;
   $('symbol-label').textContent = `${coin?.label ?? snap.symbol} · ${venue}`;
+  if (selectedTf === '1D') {
+    renderDailyAsSignal(snap.price, null);
+    renderSpotHud(snap);
+    renderSpotCompare();
+    renderLiquidityResponse();
+    return;
+  }
   if (w && $('price')) {
     $('price').textContent = snap.price > 0 ? `$${fmtPrice(snap.price)}` : '—';
     const ch = w.efficiency?.priceChangePercent ?? 0;
     const chEl = $('price-change');
-    chEl.textContent = `${ch >= 0 ? '+' : ''}${ch.toFixed(3)}% in ${chartTfMinutes}m`;
+    chEl.textContent = `${ch >= 0 ? '+' : ''}${ch.toFixed(3)}% in ${tfShort(chartTfMinutes)}`;
     chEl.className = `price-change ${ch > 0 ? 'up' : ch < 0 ? 'down' : ''}`;
     $('state-badge').textContent = (w.flow ?? 'BALANCED').replace(/_/g, ' ');
     $('state-badge').className = `state-badge ${w.flow?.includes('BUY') ? 'buy-flow' : w.flow?.includes('SELL') ? 'sell-flow' : w.flags?.length ? 'absorption' : ''}`;
@@ -1383,7 +1560,7 @@ function setupTabs() {
 
 // ═══════ Footprint / Order Flow Chart (canvas-based) ═══════
 
-const CHART_TFS = [1, 5, 15, 30, 45, 60, 120, 240];
+const CHART_TFS = [1, 5, 15, 30, 45, 60, 120, 240, 1440];
 let chartTfMinutes = 1;
 /** Current in-progress 1m bar per `symbol_exchange_1`, pushed by the server. */
 const footprintStore = {};
@@ -1501,6 +1678,7 @@ function initChart() {
     snapChartToLive();
     seedFootprintKlines();
     renderLiquidityResponse();
+    void loadDailySignal();
   });
   document.getElementById('chart-ex-tabs')?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-ex]');
@@ -1511,6 +1689,7 @@ function initChart() {
     seedFootprintKlines();
     subscribeFootprint();
     renderTape();
+    void loadDailySignal();
   });
   document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
 }
@@ -1567,6 +1746,7 @@ function cloneFpBar(bar) {
 }
 
 function fpKlineInterval(tf = chartTfMinutes) {
+  if (tf === 1440) return '1d';
   if (tf === 240) return '4h';
   if (tf === 120) return '2h';
   if (tf === 60) return '1h';
@@ -2116,7 +2296,13 @@ function drawFootprint() {
     ctx.fillStyle = '#8b949e';
     const d = new Date(bar.time * 1000);
     const cx = x + barWidth / 2;
-    ctx.fillText(`${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`, cx, topPad + chartH + 13);
+    let timeLabel;
+    if (chartTfMinutes >= 1440) {
+      timeLabel = `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+    } else {
+      timeLabel = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    }
+    ctx.fillText(timeLabel, cx, topPad + chartH + 13);
 
     const delta = bar.totalBuy - bar.totalSell;
     const barUsd = bar.totalBuy + bar.totalSell;
@@ -2155,6 +2341,15 @@ function drawFootprint() {
       overlay: liqOverlay,
     });
   }
+  drawDailySrOverlay(ctx, {
+    leftPad,
+    plotRight,
+    yForPrice,
+    topPad,
+    chartH,
+    globalHigh,
+    globalLow,
+  });
 
   ctx.lineWidth = 1;
 }
@@ -2264,10 +2459,47 @@ function drawLiqOverlay(ctx, { leftPad, plotRight, yForPrice, topPad, chartH, gl
   ctx.restore();
 }
 
+function drawDailySrOverlay(ctx, { leftPad, plotRight, yForPrice, topPad, chartH, globalHigh, globalLow }) {
+  const levels = lastDailySignal?.levels;
+  if (!levels) return;
+  const rows = [
+    levels.support != null ? { price: levels.support, label: 'S', color: '#4ade80', dash: [6, 4] } : null,
+    levels.resistance != null ? { price: levels.resistance, label: 'R', color: '#f87171', dash: [6, 4] } : null,
+    levels.poc != null ? { price: levels.poc, label: 'POC', color: '#fbbf24', dash: [2, 3] } : null,
+  ].filter(Boolean);
+  if (!rows.length) return;
+  ctx.save();
+  ctx.font = 'bold 10px JetBrains Mono, monospace';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'right';
+  for (const r of rows) {
+    if (r.price < globalLow || r.price > globalHigh) continue;
+    const y = yForPrice(r.price);
+    if (y < topPad + 2 || y > topPad + chartH - 2) continue;
+    ctx.strokeStyle = r.color;
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.78;
+    ctx.setLineDash(r.dash);
+    ctx.beginPath();
+    ctx.moveTo(leftPad, y);
+    ctx.lineTo(plotRight, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    const tag = `${r.label} ${fmtPrice(r.price)}`;
+    const tw = ctx.measureText(tag).width;
+    ctx.fillStyle = 'rgba(13, 17, 23, 0.82)';
+    ctx.fillRect(plotRight - tw - 10, y - 7, tw + 8, 14);
+    ctx.fillStyle = r.color;
+    ctx.fillText(tag, plotRight - 6, y);
+  }
+  ctx.restore();
+}
+
 function updateFpLevNow(flowUsd, liveBar) {
   const el = document.getElementById('fp-lev-now');
   if (!el) return;
-  const tf = chartTfMinutes % 60 === 0 ? `${chartTfMinutes / 60}h` : `${chartTfMinutes}m`;
+  const tf = tfShort(chartTfMinutes);
   if (isSpotView()) {
     const buy = liveBar?.totalBuy ?? 0;
     const sell = liveBar?.totalSell ?? 0;
@@ -2374,6 +2606,7 @@ async function init() {
   seedFootprintKlines();
   drawFootprint();
   renderTape();
+  startDailySignalLoop();
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
