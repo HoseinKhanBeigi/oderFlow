@@ -13,3 +13,5 @@ public/simulator.bundle.js
 public/simulator.bundle.js.map
 public/sim.worker.js
 public/sim.worker.js.map
+public/sim-live.bundle.js
+public/sim-live.bundle.js.map

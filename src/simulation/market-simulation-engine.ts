@@ -234,7 +234,8 @@ export class MarketSimulationEngine {
 
     this.runCascade(now);
 
-    const flow = this.flow.endTick(now);
+    const tickFlow = this.flow.endTick(now);
+    const flow = this.flow.window(now, TRAIL_WINDOW_MS[this.trailWindow]);
     const priceAfterWalk = this.book.price || prevPrice;
     let realizedBps = prevPrice > 0 ? ((priceAfterWalk - prevPrice) / prevPrice) * 10_000 : 0;
 
@@ -242,8 +243,8 @@ export class MarketSimulationEngine {
     const nearbyBid = this.book.nearbyDepth('bid');
 
     const liq = this.liquidity.endTick({
-      aggressiveBuy: flow.aggressiveBuy,
-      aggressiveSell: flow.aggressiveSell,
+      aggressiveBuy: tickFlow.aggressiveBuy,
+      aggressiveSell: tickFlow.aggressiveSell,
       priceChangeBps: realizedBps,
       nearbyAsk,
       nearbyBid,
@@ -286,6 +287,8 @@ export class MarketSimulationEngine {
       this.returns.add((price - prevPrice) / prevPrice);
     }
     this.trailBuf.push({ timestamp: now, price });
+    const origin = this.priceAt(now - TRAIL_WINDOW_MS[this.trailWindow]) ?? prevPrice;
+    const windowBps = origin > 0 ? ((price - origin) / origin) * 10_000 : realizedBps;
 
     const liqSnap = this.liquidations.current();
     const oiSnap = this.oi.snapshot();
@@ -303,7 +306,7 @@ export class MarketSimulationEngine {
       aggressiveBuy: flow.aggressiveBuy,
       aggressiveSell: flow.aggressiveSell,
       delta: flow.delta,
-      priceChangeBps: realizedBps,
+      priceChangeBps: windowBps,
       levelsConsumedUp: this.levelsUp,
       levelsConsumedDown: this.levelsDown,
       askConsumption: liq.askConsumption,
@@ -340,7 +343,7 @@ export class MarketSimulationEngine {
       1,
     );
 
-    const visual = this.visualHints(flow, liq, now);
+    const visual = this.visualHints(tickFlow, liq, now);
     const trail = this.trailSince(now);
 
     const state: MarketSimulationState = {
@@ -349,8 +352,8 @@ export class MarketSimulationEngine {
       marketType: this.marketType,
       price,
       previousPrice: prevPrice,
-      priceChange: price - prevPrice,
-      priceChangeBps: realizedBps,
+      priceChange: price - origin,
+      priceChangeBps: windowBps,
       spread: this.book.spread(),
       spreadBps: this.book.spreadBps(),
       aggressiveBuy: flow.aggressiveBuy,
@@ -595,6 +598,15 @@ export class MarketSimulationEngine {
       if (p.timestamp >= from) out.push(p);
     }
     return out;
+  }
+
+  private priceAt(from: number): number | null {
+    let found: number | null = null;
+    for (const p of this.trailBuf.values()) {
+      if (p.timestamp >= from) return p.price;
+      found = p.price;
+    }
+    return found;
   }
 
   private visualHints(

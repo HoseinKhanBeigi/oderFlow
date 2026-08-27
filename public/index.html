@@ -18,7 +18,7 @@
       </div>
     </div>
     <div class="header-meta">
-      <a class="sim-link" href="/simulator.html">Simulator</a>
+      <a class="sim-link" href="/simulator.html">Scenarios</a>
       <div class="data-mode-tabs" id="data-mode-tabs">
         <button class="data-mode-tab active" data-mode="perp" type="button">FUTURES</button>
         <button class="data-mode-tab" data-mode="spot" type="button">SPOT</button>
@@ -128,6 +128,41 @@
           <div class="ds-cell sl"><span class="label">Stop</span><span id="ds-sl" class="ds-val">—</span></div>
         </div>
         <p id="ds-reason" class="hint">Reload the page after pulling this update so the daily endpoint is live.</p>
+      </div>
+    </section>
+
+    <section class="panel sim-live-panel" id="sim-live-panel">
+      <div class="panel-head">
+        <div>
+          <h2>Live microstructure</h2>
+          <p class="hint">Same symbol, market, and aggressive prints as the footprint above. Walls are the live book; particles are taker flow. Not a price forecast.</p>
+        </div>
+        <div class="sim-live-meta">
+          <span id="sim-live-window" class="muted">30s window</span>
+          <span id="sim-live-badge" class="liq-now">Waiting for book…</span>
+        </div>
+      </div>
+      <div class="sim-live-wrap">
+        <div id="sim-live-canvas" class="sim-live-canvas"></div>
+        <div class="sim-live-side">
+          <div id="sim-live-state" class="state-pill">—</div>
+          <div id="sim-live-mechanics" class="hint">Connecting to live order flow…</div>
+          <dl class="state-dl sim-live-dl">
+            <div><dt>Aggressive buy</dt><dd id="sim-live-buy">—</dd></div>
+            <div><dt>Aggressive sell</dt><dd id="sim-live-sell">—</dd></div>
+            <div><dt>Delta</dt><dd id="sim-live-delta">—</dd></div>
+            <div><dt>Ask depth</dt><dd id="sim-live-ask">—</dd></div>
+            <div><dt>Bid depth</dt><dd id="sim-live-bid">—</dd></div>
+            <div><dt>Effort vs result</dt><dd id="sim-live-effort">—</dd></div>
+          </dl>
+          <div class="pressure sim-live-pressure">
+            <span>Sell</span>
+            <div class="pressure-track"><div id="sim-live-needle" class="pressure-needle"></div></div>
+            <span>Buy</span>
+          </div>
+          <h3 id="sim-live-why-h" class="sim-why-h">WHY?</h3>
+          <ul id="sim-live-why" class="why-list"></ul>
+        </div>
       </div>
     </section>
 
@@ -362,6 +397,7 @@
     </section>
   </main>
 
+  <script src="/sim-live.bundle.js"></script>
   <script src="/app.js" type="module"></script>
 </body>
 </html>

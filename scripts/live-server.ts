@@ -34,6 +34,7 @@ import {
 import { timeframeFromMinutes, type SignalTimeframe } from '../src/models/daily-signal.js';
 import { SimulationHub } from '../src/simulation/hub.js';
 import { listPresets } from '../src/simulation/presets.js';
+import { TRAIL_WINDOW_MS, type TrailWindowId } from '../src/simulation/types.js';
 import { buildSimulator } from './build-simulator.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -304,12 +305,13 @@ const footprintSubs = new Map<WebSocket, FootprintSub>();
 interface SimSub {
   symbol: string;
   market: 'spot' | 'perp' | 'combined';
+  trail: TrailWindowId;
 }
 const simSubs = new Map<WebSocket, SimSub>();
 
 wss.on('connection', (socket) => {
   socket.on('message', (raw) => {
-    let msg: { type?: string; symbol?: unknown; exchange?: unknown; market?: unknown };
+    let msg: { type?: string; symbol?: unknown; exchange?: unknown; market?: unknown; trail?: unknown };
     try {
       msg = JSON.parse(String(raw)) as typeof msg;
     } catch {
@@ -320,7 +322,15 @@ wss.on('connection', (socket) => {
       const rawMarket = String(msg.market ?? 'futures').toLowerCase();
       const market: SimSub['market'] =
         rawMarket === 'spot' ? 'spot' : rawMarket === 'combined' ? 'combined' : 'perp';
-      simSubs.set(socket, { symbol, market });
+      const trailRaw = String(msg.trail ?? '30s');
+      const trail: TrailWindowId = trailRaw in TRAIL_WINDOW_MS ? (trailRaw as TrailWindowId) : '30s';
+      simSubs.set(socket, { symbol, market, trail });
+      if (market === 'combined') {
+        simHub.engine(symbol, 'spot').setTrailWindow(trail);
+        simHub.engine(symbol, 'perp').setTrailWindow(trail);
+      } else {
+        simHub.engine(symbol, market).setTrailWindow(trail);
+      }
       sendSimState(socket);
       return;
     }

@@ -35,14 +35,32 @@ let realtimeSymbol = 'BTCUSDT';
 let worker: Worker | null = null;
 
 function boot(): void {
+  const params = new URLSearchParams(location.search);
+  if (params.get('symbol')) realtimeSymbol = params.get('symbol')!.toUpperCase();
+  ($('sim-symbol') as HTMLInputElement).value = realtimeSymbol;
+  const qMarket = params.get('market');
+  if (qMarket === 'spot' || qMarket === 'futures' || qMarket === 'combined' || qMarket === 'perp') {
+    channel = qMarket === 'perp' ? 'futures' : qMarket;
+    const btn = document.querySelector(`#markets [data-market="${channel}"]`) as HTMLElement | null;
+    if (btn) markActive('#markets [data-market]', btn);
+  }
+
   renderer = new PhaserRenderer($('sim-canvas'));
   fillPresets();
   bindControls();
   clock.onTick((t) => onTick(t));
-  clock.play();
   $('disclaimer').textContent =
     'Market microstructure simulation — it does not predict the exact future price. It shows how aggressive flow interacts with passive liquidity.';
   connectRealtime();
+
+  if (params.get('mode') === 'realtime') {
+    mode = 'realtime';
+    markActive('#modes [data-mode]', document.querySelector('#modes [data-mode="realtime"]') as HTMLElement);
+    clock.pause();
+    setPlayingUi(false);
+  } else {
+    clock.play();
+  }
 }
 
 function onTick(t: number): void {
@@ -103,7 +121,11 @@ function bindControls(): void {
     markActive('#modes [data-mode]', btn);
     if (mode === 'replay') void loadReplay();
     else if (mode === 'synthetic') resetCurrent();
-    else subscribeSim();
+    else {
+      clock.pause();
+      setPlayingUi(true);
+      subscribeSim();
+    }
   });
 
   $('markets').addEventListener('click', (e) => {

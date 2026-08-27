@@ -10,6 +10,7 @@ export async function buildSimulator(watch = false): Promise<void> {
     entryPoints: {
       'simulator.bundle': join(root, 'simulator/boot.ts'),
       'sim.worker': join(root, 'simulator/sim.worker.ts'),
+      'sim-live.bundle': join(root, 'simulator/live-embed.ts'),
     },
     outdir: join(root, 'public'),
     bundle: true,
