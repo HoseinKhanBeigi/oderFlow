@@ -44,3 +44,4 @@ export { evaluateDailySignal, emptyDailySignal, liquidityContextFromWindow } fro
 export type { DailySignal, DailyBias, DailySetup } from './models/daily-signal.js';
 
 export * from './models/index.js';
+export * as simulation from './simulation/index.js';

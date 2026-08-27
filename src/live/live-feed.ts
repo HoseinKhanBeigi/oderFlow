@@ -9,7 +9,7 @@ import {
   unwrapBinancePayload,
 } from '../exchange/types.js';
 import { EXCHANGE_LABELS, parseExchangesEnv, type ExchangeId } from '../exchange/venues.js';
-import type { MarketTrade, MarketType, OrderBookSnapshot } from '../models/trade.js';
+import type { LiquidationEvent, MarketTrade, MarketType, OrderBookSnapshot } from '../models/trade.js';
 import type { WindowSnapshot } from '../models/signals.js';
 import type { BinanceAggTrade, BinanceBookTicker, BinanceForceOrder, BinanceTrade } from '../exchange/types.js';
 import { DEFAULT_WATCHLIST, minUsdFor, type WatchCoin } from './watchlist.js';
@@ -107,6 +107,7 @@ export type LiveFeedListener = (event: LiveFeedEvent) => void;
  * The footprint recorder needs the full stream, not just large prints.
  */
 export type RawTradeListener = (trade: MarketTrade, exchange: ExchangeId) => void;
+export type RawLiquidationListener = (liq: LiquidationEvent) => void;
 
 function parseBookLevels(rows: unknown): { price: number; quantity: number; quoteValue: number }[] {
   if (!Array.isArray(rows)) return [];
@@ -134,6 +135,7 @@ export class LiveBinanceFeed {
   private readonly lastStates = new Map<string, Partial<Record<'10s' | '1m' | '5m', string>>>();
   private readonly listeners = new Set<LiveFeedListener>();
   private readonly rawTradeListeners = new Set<RawTradeListener>();
+  private readonly rawLiqListeners = new Set<RawLiquidationListener>();
   private readonly spot = new BinanceSpotAdapter();
   private readonly futures = new BinanceFuturesAdapter();
   private readonly venueUp: Partial<Record<ExchangeId, boolean>> = {};
@@ -198,6 +200,11 @@ export class LiveBinanceFeed {
   onAnyTrade(listener: RawTradeListener): () => void {
     this.rawTradeListeners.add(listener);
     return () => this.rawTradeListeners.delete(listener);
+  }
+
+  onAnyLiquidation(listener: RawLiquidationListener): () => void {
+    this.rawLiqListeners.add(listener);
+    return () => this.rawLiqListeners.delete(listener);
   }
 
   start(): void {
@@ -320,7 +327,16 @@ export class LiveBinanceFeed {
       const raw = (data.o ? data : { e: 'forceOrder', E: Date.now(), o: data }) as unknown as BinanceForceOrder;
       if (raw?.o?.s) {
         const liq = this.futures.normalizeForceOrder(raw);
-        if (this.coins.some((c) => c.symbol === liq.symbol)) this.engine.ingestLiquidation(liq);
+        if (this.coins.some((c) => c.symbol === liq.symbol)) {
+          this.engine.ingestLiquidation(liq);
+          for (const listener of this.rawLiqListeners) {
+            try {
+              listener(liq);
+            } catch (err) {
+              console.error('[feed] liquidation listener failed:', err instanceof Error ? err.message : err);
+            }
+          }
+        }
       }
     }
 

@@ -9,3 +9,7 @@ coverage/
 .env
 .env.*
 !.env.example
+public/simulator.bundle.js
+public/simulator.bundle.js.map
+public/sim.worker.js
+public/sim.worker.js.map

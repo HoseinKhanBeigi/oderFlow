@@ -32,6 +32,9 @@ import {
   liquidityContextFromWindow,
 } from '../src/analysis/daily-signal.js';
 import { timeframeFromMinutes, type SignalTimeframe } from '../src/models/daily-signal.js';
+import { SimulationHub } from '../src/simulation/hub.js';
+import { listPresets } from '../src/simulation/presets.js';
+import { buildSimulator } from './build-simulator.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC = join(__dirname, '../public');
@@ -64,6 +67,7 @@ const MIME: Record<string, string> = {
   '.html': 'text/html',
   '.css': 'text/css',
   '.js': 'application/javascript',
+  '.map': 'application/json',
   '.svg': 'image/svg+xml',
 };
 
@@ -94,12 +98,18 @@ const spotRecorder = new FootprintRecorder({
   flushMs: Number(process.env.FOOTPRINT_FLUSH_MS ?? 15_000),
 });
 const spotHub = new SpotFlowEngine(IMBALANCE_RATIO);
+const simHub = new SimulationHub();
 
-perpFeed.onAnyTrade((trade, exchange) => perpRecorder.ingest(trade, exchange));
+perpFeed.onAnyTrade((trade, exchange) => {
+  perpRecorder.ingest(trade, exchange);
+  simHub.ingestTrade(trade, exchange);
+});
 spotFeed.onAnyTrade((trade, exchange) => {
   if (!spotHub.ingestTrade(trade, exchange)) return;
   spotRecorder.ingest(trade, exchange);
+  simHub.ingestTrade(trade, exchange);
 });
+perpFeed.onAnyLiquidation((liq) => simHub.ingestLiquidation(liq));
 
 const server = createServer(async (req, res) => {
     if (req.url?.startsWith('/api/depth')) {
@@ -198,6 +208,25 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.url?.startsWith('/api/simulation/replay')) {
+      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+      const symbol = (u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase();
+      const market = parseMarketParam(u.searchParams.get('market'));
+      const minutes = clampInt(u.searchParams.get('minutes'), 60, 1, 240);
+      const now = Date.now();
+      json(res, {
+        symbol,
+        market,
+        events: simHub.log(symbol, market).slice(now - minutes * 60_000, now),
+      });
+      return;
+    }
+
+    if (req.url === '/api/simulation/presets') {
+      json(res, { presets: listPresets() });
+      return;
+    }
+
     if (req.url === '/api/health') {
       json(res, {
         ok: true,
@@ -272,13 +301,27 @@ interface FootprintSub {
   market: 'spot' | 'perp';
 }
 const footprintSubs = new Map<WebSocket, FootprintSub>();
+interface SimSub {
+  symbol: string;
+  market: 'spot' | 'perp' | 'combined';
+}
+const simSubs = new Map<WebSocket, SimSub>();
 
-  wss.on('connection', (socket) => {
+wss.on('connection', (socket) => {
   socket.on('message', (raw) => {
     let msg: { type?: string; symbol?: unknown; exchange?: unknown; market?: unknown };
     try {
       msg = JSON.parse(String(raw)) as typeof msg;
     } catch {
+      return;
+    }
+    if (msg.type === 'sub_sim') {
+      const symbol = String(msg.symbol ?? 'BTCUSDT').toUpperCase();
+      const rawMarket = String(msg.market ?? 'futures').toLowerCase();
+      const market: SimSub['market'] =
+        rawMarket === 'spot' ? 'spot' : rawMarket === 'combined' ? 'combined' : 'perp';
+      simSubs.set(socket, { symbol, market });
+      sendSimState(socket);
       return;
     }
     if (msg.type !== 'sub_footprint') return;
@@ -292,7 +335,10 @@ const footprintSubs = new Map<WebSocket, FootprintSub>();
     });
     sendLiveFootprint(socket);
   });
-  socket.on('close', () => footprintSubs.delete(socket));
+  socket.on('close', () => {
+    footprintSubs.delete(socket);
+    simSubs.delete(socket);
+  });
 });
 
 function sendLiveFootprint(socket: WebSocket): void {
@@ -308,20 +354,57 @@ function sendLiveFootprint(socket: WebSocket): void {
   socket.send(JSON.stringify({ type: 'footprint_live', symbol: sub.symbol, market: sub.market, bars }));
 }
 
+function sendSimState(socket: WebSocket): void {
+  const sub = simSubs.get(socket);
+  if (!sub || socket.readyState !== WebSocket.OPEN) return;
+  if (sub.market === 'combined') {
+    const cross = simHub.cross(sub.symbol).snapshot();
+    socket.send(JSON.stringify({ type: 'sim_state', state: cross.futures ?? cross.spot, cross }));
+    return;
+  }
+  socket.send(JSON.stringify({ type: 'sim_state', state: simHub.engine(sub.symbol, sub.market).snapshot() }));
+}
+
 const liveFootprintTimer = setInterval(() => {
   for (const socket of footprintSubs.keys()) sendLiveFootprint(socket);
 }, Number(process.env.FOOTPRINT_PUSH_MS ?? 1_000));
 liveFootprintTimer.unref?.();
 
+const simTimer = setInterval(() => {
+  const now = Date.now();
+  for (const coin of coins) {
+    simHub.tick(coin.symbol, 'perp', now);
+    if (coin.venue === 'crypto') simHub.tick(coin.symbol, 'spot', now);
+  }
+  for (const socket of simSubs.keys()) sendSimState(socket);
+}, 80);
+simTimer.unref?.();
+
 perpFeed.on((ev) => {
   if (ev.type === 'summary') {
     spotHub.setFuturesWindow(ev.summary.symbol, ev.summary.windows['1m'] as WindowSnapshot);
+  }
+  if (ev.type === 'book') {
+    simHub.ingestBook({
+      symbol: ev.symbol,
+      marketType: 'perp',
+      timestamp: Date.now(),
+      bids: ev.bids,
+      asks: ev.asks,
+    });
   }
   broadcast({ ...ev, market: 'perp' });
 });
 spotFeed.on((ev) => {
   if (ev.type === 'book') {
     spotHub.ingestBook({
+      symbol: ev.symbol,
+      marketType: 'spot',
+      timestamp: Date.now(),
+      bids: ev.bids,
+      asks: ev.asks,
+    });
+    simHub.ingestBook({
       symbol: ev.symbol,
       marketType: 'spot',
       timestamp: Date.now(),
@@ -356,7 +439,9 @@ const oiTimer = setInterval(() => {
         if (est.oiUsd > 0) {
           spotHub.setOi(coin.symbol, est.oiUsd);
           perpFeed.engine.getSymbol(coin.symbol, 'perp').liquidityResponse.noteOi(est.oiUsd);
+          simHub.ingestOi(coin.symbol, est.oiUsd);
         }
+        if (est.fundingRate != null) simHub.ingestFunding(coin.symbol, est.fundingRate);
       } catch {
         /* OI is optional context */
       }
@@ -365,19 +450,25 @@ const oiTimer = setInterval(() => {
 }, 30_000);
 oiTimer.unref?.();
 
-server.listen(PORT, () => {
-  const crypto = coins.filter((c) => c.venue === 'crypto');
-  const equity = coins.filter((c) => c.venue === 'equity');
-  console.log(`\n  Order Flow Dashboard`);
-  console.log(`  http://localhost:${PORT}`);
-  console.log(`  Exchanges (perp): ${EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
-  console.log(`  Exchanges (spot): ${SPOT_EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
-  console.log(`  Crypto perp + spot footprint: ${crypto.map((c) => c.label).join(' · ')}`);
-  console.log(`  Equity perp (Binance): ${equity.map((c) => c.label).join(' · ')}`);
-  console.log(
-    `  Footprint history: ${isStorageEnabled() ? `Postgres · ${RETENTION_DAYS}d retention` : 'disabled (set DATABASE_URL)'}`,
-  );
-  console.log(`  SpaceX is not listed on Binance.\n`);
+void buildSimulator().catch((err) => {
+  console.error('  Simulator bundle failed:', err instanceof Error ? err.message : err);
+  console.error('  Dashboard will still start; /simulator.html needs a successful bundle.');
+}).finally(() => {
+  server.listen(PORT, () => {
+    const crypto = coins.filter((c) => c.venue === 'crypto');
+    const equity = coins.filter((c) => c.venue === 'equity');
+    console.log(`\n  Order Flow Dashboard`);
+    console.log(`  http://localhost:${PORT}`);
+    console.log(`  Simulator: http://localhost:${PORT}/simulator.html`);
+    console.log(`  Exchanges (perp): ${EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
+    console.log(`  Exchanges (spot): ${SPOT_EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
+    console.log(`  Crypto perp + spot footprint: ${crypto.map((c) => c.label).join(' · ')}`);
+    console.log(`  Equity perp (Binance): ${equity.map((c) => c.label).join(' · ')}`);
+    console.log(
+      `  Footprint history: ${isStorageEnabled() ? `Postgres · ${RETENTION_DAYS}d retention` : 'disabled (set DATABASE_URL)'}`,
+    );
+    console.log(`  SpaceX is not listed on Binance.\n`);
+  });
 });
 
 function parseExchangeParam(raw: string | null): ExchangeId {
@@ -657,6 +748,7 @@ type LiqEstimate = {
   symbol: string;
   price: number;
   oiUsd: number;
+  fundingRate: number | null;
   longRatio: number;
   shortRatio: number;
   split: 'position' | 'account' | 'none';
@@ -683,7 +775,7 @@ async function getLiqEstimate(symbol: string): Promise<LiqEstimate> {
   const q = encodeURIComponent(symbol);
   const [oi, mark, pos, acc] = await Promise.all([
     binanceJson<{ openInterest?: string }>(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${q}`),
-    binanceJson<{ markPrice?: string }>(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${q}`),
+    binanceJson<{ markPrice?: string; lastFundingRate?: string }>(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${q}`),
     binanceJson<Array<{ longAccount?: string; shortAccount?: string }>>(
       `https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=${q}&period=5m&limit=1`,
     ),
@@ -701,10 +793,12 @@ async function getLiqEstimate(symbol: string): Promise<LiqEstimate> {
   const usePos = posLong > 0 && posShort > 0;
   const longRatio = usePos ? posLong : accLong > 0 ? accLong : 0.5;
   const shortRatio = usePos ? posShort : accShort > 0 ? accShort : 0.5;
+  const fundingRate = Number((mark as { lastFundingRate?: string }).lastFundingRate);
   const data: LiqEstimate = {
     symbol,
     price: Number.isFinite(price) ? price : 0,
     oiUsd: Number.isFinite(contracts) && Number.isFinite(price) ? contracts * price : 0,
+    fundingRate: Number.isFinite(fundingRate) ? fundingRate : null,
     longRatio,
     shortRatio,
     split: usePos ? 'position' : accLong > 0 ? 'account' : 'none',
@@ -719,6 +813,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   console.log(`\n  ${signal} — flushing footprint buffer…`);
   clearInterval(liveFootprintTimer);
+  clearInterval(simTimer);
   perpFeed.stop();
   spotFeed.stop();
   // Railway sends SIGTERM on redeploy; without this the last bars are lost.
