@@ -238,6 +238,62 @@ body {
 .daily-levels .sup { color: var(--buy); }
 .daily-levels .res { color: var(--sell); }
 .daily-levels .poc { color: var(--warn); }
+.daily-levels .tp { color: var(--buy); }
+.daily-levels .sl { color: var(--sell); }
+
+.daily-signal-banner {
+  margin-top: 0.65rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel2);
+}
+.ds-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 0.45rem;
+}
+.ds-bias {
+  font-family: var(--mono);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 0.35rem 0.7rem;
+  border-radius: 6px;
+  background: var(--border);
+  color: var(--muted);
+}
+.ds-bias.long { background: var(--buy-dim); color: var(--buy); }
+.ds-bias.short { background: var(--sell-dim); color: var(--sell); }
+.ds-bias.wait { background: rgba(251, 191, 36, 0.12); color: var(--warn); }
+.ds-setup { font-size: 1.05rem; font-weight: 600; margin-bottom: 0.55rem; }
+.ds-plan {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+.ds-cell {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.45rem 0.55rem;
+}
+.ds-cell.tp { border-color: rgba(34, 197, 94, 0.35); }
+.ds-cell.sl { border-color: rgba(239, 68, 68, 0.35); }
+.ds-val {
+  display: block;
+  font-family: var(--mono);
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-top: 0.15rem;
+}
+.ds-cell.tp .ds-val { color: var(--buy); }
+.ds-cell.sl .ds-val { color: var(--sell); }
+@media (max-width: 720px) {
+  .ds-plan { grid-template-columns: 1fr 1fr; }
+}
 
 .tf-tabs {
   display: flex;

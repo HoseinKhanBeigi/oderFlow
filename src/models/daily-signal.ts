@@ -75,4 +75,14 @@ export interface DailySignal {
   structureShift: string;
   pathOfLeastResistance: PathOfLeastResistance;
   footprintComplete: boolean;
+  plan: DailyTradePlan;
+}
+
+export interface DailyTradePlan {
+  entry: number | null;
+  sl: number | null;
+  tp1: number | null;
+  tp2: number | null;
+  tp1Pct: number;
+  tp2Pct: number;
 }

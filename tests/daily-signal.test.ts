@@ -131,6 +131,10 @@ describe('daily signal', () => {
     expect(sig.score).toBeGreaterThan(35);
     expect(sig.levels.support).not.toBeNull();
     expect(sig.evidence.some((e) => /absorbed|support|Bid wall/i.test(e))).toBe(true);
+    expect(sig.plan.entry).toBeCloseTo(109.2, 4);
+    expect(sig.plan.tp1).toBeCloseTo(109.2 * 1.01, 4);
+    expect(sig.plan.tp2).toBeCloseTo(109.2 * 1.02, 4);
+    expect(sig.plan.sl).toBeLessThan(109.2);
   });
 
   it('leans SHORT when buying is absorbed at daily resistance', () => {

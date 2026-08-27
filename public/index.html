@@ -100,21 +100,22 @@
         <span class="legend-item lev-10 liq-only">≤10x</span>
         <span class="legend-item lev-whale liq-only">≤5x whale</span>
       </div>
-      <div id="liq-response" class="liq-response">
-        <div class="lr-head">
+      <div id="daily-signal-banner" class="daily-signal-banner">
+        <div class="ds-head">
           <div>
-            <h2>Market mechanics</h2>
-            <p class="hint">Who is attacking, who is defending, and whether the attack is working. Not a prediction.</p>
+            <h2>Daily signal</h2>
+            <p class="hint">Long/short from footprint + S/R + liquidity. Take-profit is a 1% then 2% move.</p>
           </div>
-          <div class="lr-state-wrap">
-            <div id="lr-state" class="lr-state">BALANCED</div>
-            <div id="lr-conf" class="lr-conf">LOW</div>
-          </div>
+          <div id="ds-bias" class="ds-bias wait">WAIT</div>
         </div>
-        <div id="lr-primary" class="lr-primary"></div>
-        <div id="lr-metrics" class="lr-metrics"></div>
-        <div id="lr-why" class="lr-why hidden"></div>
-        <div id="lr-reversal" class="lr-reversal hidden"></div>
+        <div id="ds-setup" class="ds-setup">Waiting for daily structure…</div>
+        <div class="ds-plan">
+          <div class="ds-cell"><span class="label">Entry</span><span id="ds-entry" class="ds-val">—</span></div>
+          <div class="ds-cell tp"><span class="label">TP 1%</span><span id="ds-tp1" class="ds-val">—</span></div>
+          <div class="ds-cell tp"><span class="label">TP 2%</span><span id="ds-tp2" class="ds-val">—</span></div>
+          <div class="ds-cell sl"><span class="label">Stop</span><span id="ds-sl" class="ds-val">—</span></div>
+        </div>
+        <p id="ds-reason" class="hint">Reload the page after pulling this update so the daily endpoint is live.</p>
       </div>
     </section>
 
@@ -333,7 +334,7 @@
         </div>
         <div class="legend-block">
           <h3>Daily setup</h3>
-          <p>1D bias uses rolled-up footprint, volume-profile support/resistance, and whether live liquidity is defending those levels. WAIT means the daily pieces are not aligned — it is not a flat market call.</p>
+          <p>1D prints LONG or SHORT when footprint, support/resistance, and liquidity lean the same way. TP is a 1% then 2% move from entry. WAIT means those pieces are not aligned.</p>
         </div>
         <div class="legend-block">
           <h3>Liquidity</h3>
@@ -342,10 +343,6 @@
         <div class="legend-block">
           <h3>Flow battle</h3>
           <p>Positive delta is not a buyer win. Aggressive buyers vs passive sellers, and aggressive sellers vs passive buyers. Winner is who actually controls price.</p>
-        </div>
-        <div class="legend-block">
-          <h3>Liquidity response</h3>
-          <p>Executed cells are aggressive prints. Hatched outlines are resting bids/asks. Replenishment and withdrawal are book changes, not volume. Absorption needs large effort, weak price result, and book confirmation.</p>
         </div>
       </div>
     </section>

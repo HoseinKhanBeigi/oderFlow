@@ -8,6 +8,7 @@ import type {
   DailyLiquidityContext,
   DailySetup,
   DailySignal,
+  DailyTradePlan,
 } from '../models/daily-signal.js';
 import { buildDailyLevels } from './daily-levels.js';
 
@@ -47,6 +48,7 @@ export function emptyDailySignal(
     structureShift: 'NONE',
     pathOfLeastResistance: 'BALANCED',
     footprintComplete: false,
+    plan: { entry: null, sl: null, tp1: null, tp2: null, tp1Pct: 1, tp2Pct: 2 },
     ...extras,
   };
 }
@@ -85,8 +87,8 @@ export function evaluateDailySignal(input: {
   const aligned = evidence.length;
   const conflicts = conflictCount(score, flow, levels.location, liq);
   const confidence = clamp(0.28 + aligned * 0.1 - conflicts * 0.12, 0.15, 0.92);
-  const strong = Math.abs(score) >= 35 && confidence >= 0.48;
-  const bias: DailyBias = !strong ? 'WAIT' : score > 0 ? 'LONG' : 'SHORT';
+  const bias: DailyBias = Math.abs(score) < 12 ? 'WAIT' : score > 0 ? 'LONG' : 'SHORT';
+  const setupOut = bias === 'WAIT' && setup !== 'INSUFFICIENT' ? (Math.abs(score) < 12 ? 'MID_RANGE' : setup) : setup;
 
   return {
     timeframe: '1D',
@@ -94,11 +96,11 @@ export function evaluateDailySignal(input: {
     market: input.market,
     price,
     bias,
-    setup: bias === 'WAIT' && setup !== 'INSUFFICIENT' ? (Math.abs(score) < 18 ? 'MID_RANGE' : setup) : setup,
+    setup: setupOut,
     location: levels.location,
     score: Math.round(score),
     confidence: Number(confidence.toFixed(2)),
-    reason: primaryReason(bias, setup, levels.location, flow),
+    reason: primaryReason(bias, setupOut, levels.location, flow),
     evidence: evidence.slice(0, 6),
     levels: {
       support: levels.support,
@@ -112,6 +114,7 @@ export function evaluateDailySignal(input: {
     structureShift: levels.structure.shift,
     pathOfLeastResistance: liq?.pathOfLeastResistance ?? 'BALANCED',
     footprintComplete: Boolean(input.footprintComplete && last.totalBuy + last.totalSell > 0),
+    plan: buildTradePlan(bias, price, levels.support, levels.resistance),
   };
 }
 
@@ -326,6 +329,36 @@ function primaryReason(
   if (bias === 'LONG') return `Daily bias leans long from ${location.replace(/_/g, ' ').toLowerCase()}.`;
   if (bias === 'SHORT') return `Daily bias leans short from ${location.replace(/_/g, ' ').toLowerCase()}.`;
   return 'Daily footprint, liquidity, and support/resistance are not aligned.';
+}
+
+function buildTradePlan(
+  bias: DailyBias,
+  price: number,
+  support: number | null,
+  resistance: number | null,
+): DailyTradePlan {
+  const empty: DailyTradePlan = { entry: null, sl: null, tp1: null, tp2: null, tp1Pct: 1, tp2Pct: 2 };
+  if (bias === 'WAIT' || !(price > 0)) return empty;
+  if (bias === 'LONG') {
+    const slFromLevel = support != null && support < price && (price - support) / price <= 0.015;
+    return {
+      entry: price,
+      tp1: price * 1.01,
+      tp2: price * 1.02,
+      sl: slFromLevel ? support : price * 0.99,
+      tp1Pct: 1,
+      tp2Pct: 2,
+    };
+  }
+  const slFromLevel = resistance != null && resistance > price && (resistance - price) / price <= 0.015;
+  return {
+    entry: price,
+    tp1: price * 0.99,
+    tp2: price * 0.98,
+    sl: slFromLevel ? resistance : price * 1.01,
+    tp1Pct: 1,
+    tp2Pct: 2,
+  };
 }
 
 function fmtPx(price: number): string {

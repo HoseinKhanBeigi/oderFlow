@@ -852,7 +852,10 @@ async function loadDailySignal() {
       exchange: selectedExchange,
       market: footprintMarket(),
     });
-    const data = await fetch(`/api/daily-signal?${params}`).then((r) => r.json());
+    const data = await fetch(`/api/daily-signal?${params}`).then((r) => {
+      if (!r.ok) throw new Error(`daily-signal ${r.status}`);
+      return r.json();
+    });
     if (req !== dailySignalReq || symbol !== selectedSymbol) return;
     lastDailySignal = data;
     renderDailySetup();
@@ -862,39 +865,75 @@ async function loadDailySignal() {
     }
     drawFootprint();
   } catch {
-    /* keep the last successful daily setup */
+    if (req !== dailySignalReq) return;
+    lastDailySignal = {
+      bias: 'WAIT',
+      setup: 'INSUFFICIENT',
+      reason: 'Daily signal API is not running — restart npm start and refresh.',
+      plan: {},
+    };
+    renderDailySetup();
   }
 }
 
 function renderDailySetup() {
   const sig = lastDailySignal;
+  const bias = sig?.bias ?? 'WAIT';
+  const setup = sig?.setup ?? 'INSUFFICIENT';
+  const plan = sig?.plan ?? {};
+  const title = DAILY_SETUP_META[setup] ?? String(setup).replace(/_/g, ' ');
+
   const biasEl = $('daily-bias');
   const titleEl = $('daily-setup-title');
   const helpEl = $('daily-setup-help');
   const levelsEl = $('daily-levels');
-  if (!biasEl || !titleEl) return;
-  if (!sig) {
-    biasEl.textContent = 'WAIT';
-    biasEl.className = 'daily-bias wait';
-    titleEl.textContent = 'Waiting for daily structure…';
-    return;
+  if (biasEl) {
+    biasEl.textContent = bias;
+    biasEl.className = `daily-bias ${bias.toLowerCase()}`;
   }
-  const bias = sig.bias ?? 'WAIT';
-  biasEl.textContent = bias;
-  biasEl.className = `daily-bias ${bias.toLowerCase()}`;
-  titleEl.textContent = DAILY_SETUP_META[sig.setup] ?? (sig.setup ?? 'Daily setup').replace(/_/g, ' ');
+  if (titleEl) titleEl.textContent = sig ? title : 'Waiting for daily structure…';
   if (helpEl) {
-    const conf = Math.round((sig.confidence ?? 0) * 100);
-    const src = sig.footprintComplete ? 'footprint' : 'OHLC structure (footprint history incomplete)';
-    helpEl.textContent = `${sig.reason ?? ''} · ${conf}% confidence · ${src}`;
+    if (!sig) helpEl.textContent = 'Footprint + support/resistance + live liquidity. TP is 1% then 2%.';
+    else {
+      const conf = Math.round((sig.confidence ?? 0) * 100);
+      helpEl.textContent = `${sig.reason ?? ''} · ${conf}% confidence`;
+    }
   }
   if (levelsEl) {
     const bits = [];
-    if (sig.levels?.support != null) bits.push(`<span class="sup">S ${fmtPrice(sig.levels.support)}</span>`);
-    if (sig.levels?.poc != null) bits.push(`<span class="poc">POC ${fmtPrice(sig.levels.poc)}</span>`);
-    if (sig.levels?.resistance != null) bits.push(`<span class="res">R ${fmtPrice(sig.levels.resistance)}</span>`);
-    if (sig.location) bits.push(`<span>${String(sig.location).replace(/_/g, ' ').toLowerCase()}</span>`);
+    if (sig?.levels?.support != null) bits.push(`<span class="sup">S ${fmtPrice(sig.levels.support)}</span>`);
+    if (sig?.levels?.poc != null) bits.push(`<span class="poc">POC ${fmtPrice(sig.levels.poc)}</span>`);
+    if (sig?.levels?.resistance != null) bits.push(`<span class="res">R ${fmtPrice(sig.levels.resistance)}</span>`);
+    if (plan.tp1 != null) bits.push(`<span class="tp">TP1 ${fmtPrice(plan.tp1)}</span>`);
+    if (plan.tp2 != null) bits.push(`<span class="tp">TP2 ${fmtPrice(plan.tp2)}</span>`);
+    if (plan.sl != null) bits.push(`<span class="sl">SL ${fmtPrice(plan.sl)}</span>`);
     levelsEl.innerHTML = bits.join('');
+  }
+
+  const dsBias = $('ds-bias');
+  const dsSetup = $('ds-setup');
+  const dsReason = $('ds-reason');
+  if (dsBias) {
+    dsBias.textContent = bias;
+    dsBias.className = `ds-bias ${bias.toLowerCase()}`;
+  }
+  if (dsSetup) dsSetup.textContent = sig ? title : 'Waiting for daily structure…';
+  const setPlan = (id, value) => {
+    const el = $(id);
+    if (el) el.textContent = value != null && Number.isFinite(value) ? `$${fmtPrice(value)}` : '—';
+  };
+  setPlan('ds-entry', plan.entry);
+  setPlan('ds-tp1', plan.tp1);
+  setPlan('ds-tp2', plan.tp2);
+  setPlan('ds-sl', plan.sl);
+  if (dsReason) {
+    if (!sig) {
+      dsReason.textContent = 'If this stays empty, restart the dashboard so /api/daily-signal is live.';
+    } else if (bias === 'WAIT') {
+      dsReason.textContent = sig.reason || 'No 1–2% setup — footprint, S/R, and liquidity are not aligned.';
+    } else {
+      dsReason.textContent = `${sig.reason} Entry now · TP1 1% · TP2 2%.`;
+    }
   }
 }
 
@@ -1044,6 +1083,7 @@ function updateUi() {
   renderMovePotential(w.movePotential);
   renderCompare(lastSummary);
   renderLiquidityResponse();
+  renderDailySetup();
 }
 
 function battleLabel(s) {
@@ -1417,6 +1457,7 @@ function updateSpotUi() {
   renderSpotHud(snap);
   renderSpotCompare();
   renderLiquidityResponse();
+  renderDailySetup();
 }
 
 function renderSpotHud(snap) {
@@ -2460,12 +2501,15 @@ function drawLiqOverlay(ctx, { leftPad, plotRight, yForPrice, topPad, chartH, gl
 }
 
 function drawDailySrOverlay(ctx, { leftPad, plotRight, yForPrice, topPad, chartH, globalHigh, globalLow }) {
-  const levels = lastDailySignal?.levels;
-  if (!levels) return;
+  const levels = lastDailySignal?.levels ?? {};
+  const plan = lastDailySignal?.plan ?? {};
   const rows = [
     levels.support != null ? { price: levels.support, label: 'S', color: '#4ade80', dash: [6, 4] } : null,
     levels.resistance != null ? { price: levels.resistance, label: 'R', color: '#f87171', dash: [6, 4] } : null,
     levels.poc != null ? { price: levels.poc, label: 'POC', color: '#fbbf24', dash: [2, 3] } : null,
+    plan.tp1 != null ? { price: plan.tp1, label: 'TP1 1%', color: '#22c55e', dash: [4, 3] } : null,
+    plan.tp2 != null ? { price: plan.tp2, label: 'TP2 2%', color: '#86efac', dash: [2, 3] } : null,
+    plan.sl != null ? { price: plan.sl, label: 'SL', color: '#fb7185', dash: [3, 3] } : null,
   ].filter(Boolean);
   if (!rows.length) return;
   ctx.save();
