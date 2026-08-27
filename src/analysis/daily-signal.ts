@@ -48,7 +48,16 @@ export function emptyDailySignal(
     structureShift: 'NONE',
     pathOfLeastResistance: 'BALANCED',
     footprintComplete: false,
-    plan: { entry: null, sl: null, tp1: null, tp2: null, tp1Pct: 1, tp2Pct: 2 },
+    plan: {
+      entry: null,
+      sl: null,
+      tp1: null,
+      tp2: null,
+      tp1Pct: 1,
+      tp2Pct: 2,
+      entryMode: 'NONE',
+      entryWhy: '',
+    },
     ...extras,
   };
 }
@@ -114,7 +123,16 @@ export function evaluateDailySignal(input: {
     structureShift: levels.structure.shift,
     pathOfLeastResistance: liq?.pathOfLeastResistance ?? 'BALANCED',
     footprintComplete: Boolean(input.footprintComplete && last.totalBuy + last.totalSell > 0),
-    plan: buildTradePlan(bias, price, levels.support, levels.resistance),
+    plan: buildTradePlan({
+      bias,
+      price,
+      location: levels.location,
+      support: levels.support,
+      resistance: levels.resistance,
+      poc: levels.poc,
+      hvns: levels.hvns,
+      walls: liq?.walls ?? [],
+    }),
   };
 }
 
@@ -331,34 +349,142 @@ function primaryReason(
   return 'Daily footprint, liquidity, and support/resistance are not aligned.';
 }
 
-function buildTradePlan(
-  bias: DailyBias,
-  price: number,
-  support: number | null,
-  resistance: number | null,
-): DailyTradePlan {
-  const empty: DailyTradePlan = { entry: null, sl: null, tp1: null, tp2: null, tp1Pct: 1, tp2Pct: 2 };
-  if (bias === 'WAIT' || !(price > 0)) return empty;
-  if (bias === 'LONG') {
-    const slFromLevel = support != null && support < price && (price - support) / price <= 0.015;
-    return {
-      entry: price,
-      tp1: price * 1.01,
-      tp2: price * 1.02,
-      sl: slFromLevel ? support : price * 0.99,
-      tp1Pct: 1,
-      tp2Pct: 2,
-    };
-  }
-  const slFromLevel = resistance != null && resistance > price && (resistance - price) / price <= 0.015;
-  return {
-    entry: price,
-    tp1: price * 0.99,
-    tp2: price * 0.98,
-    sl: slFromLevel ? resistance : price * 1.01,
+function buildTradePlan(input: {
+  bias: DailyBias;
+  price: number;
+  location: DailySignal['location'];
+  support: number | null;
+  resistance: number | null;
+  poc: number | null;
+  hvns: number[];
+  walls: DailyLiquidityContext['walls'];
+}): DailyTradePlan {
+  const empty: DailyTradePlan = {
+    entry: null,
+    sl: null,
+    tp1: null,
+    tp2: null,
     tp1Pct: 1,
     tp2Pct: 2,
+    entryMode: 'NONE',
+    entryWhy: '',
   };
+  const { bias, price } = input;
+  if (bias === 'WAIT' || !(price > 0)) return empty;
+
+  const picked = bias === 'LONG' ? pickLongEntry(input) : pickShortEntry(input);
+  if (picked == null) {
+    return {
+      ...empty,
+      entryWhy: bias === 'LONG'
+        ? 'No support / bid wall close enough — do not chase this price.'
+        : 'No resistance / ask wall close enough — do not chase this price.',
+    };
+  }
+
+  const atLevel = Math.abs(price - picked.price) / price <= 0.004;
+  const breakoutNow =
+    (bias === 'LONG' && input.location === 'ABOVE_RESISTANCE' && Math.abs(price - picked.price) / price <= 0.0035) ||
+    (bias === 'SHORT' && input.location === 'BELOW_SUPPORT' && Math.abs(price - picked.price) / price <= 0.0035);
+  const now = atLevel || breakoutNow;
+  const entry = atLevel || breakoutNow ? price : picked.price;
+  const mode: DailyTradePlan['entryMode'] = now ? 'NOW' : 'WAIT_FOR_LEVEL';
+
+  if (bias === 'LONG') {
+    return {
+      entry,
+      tp1: entry * 1.01,
+      tp2: entry * 1.02,
+      sl: Math.min(picked.price * 0.996, entry * 0.99),
+      tp1Pct: 1,
+      tp2Pct: 2,
+      entryMode: mode,
+      entryWhy: mode === 'NOW' ? `Enter here · ${picked.why}` : `Wait for ${picked.why} — do not buy this print`,
+    };
+  }
+  return {
+    entry,
+    tp1: entry * 0.99,
+    tp2: entry * 0.98,
+    sl: Math.max(picked.price * 1.004, entry * 1.01),
+    tp1Pct: 1,
+    tp2Pct: 2,
+    entryMode: mode,
+    entryWhy: mode === 'NOW' ? `Enter here · ${picked.why}` : `Wait for ${picked.why} — do not sell this print`,
+  };
+}
+
+function pickLongEntry(input: {
+  price: number;
+  location: DailySignal['location'];
+  support: number | null;
+  resistance: number | null;
+  poc: number | null;
+  hvns: number[];
+  walls: DailyLiquidityContext['walls'];
+}): { price: number; why: string } | null {
+  const { price } = input;
+  const maxDist = price * 0.02;
+  const wall = nearestWall(input.walls, 'BID_LIQUIDITY_WALL', price, 'below', maxDist);
+  if (input.location === 'ABOVE_RESISTANCE' && input.resistance != null && price - input.resistance <= maxDist) {
+    if (wall && wall.price >= input.resistance * 0.998) return { price: wall.price, why: `bid wall ${fmtPx(wall.price)}` };
+    return { price: input.resistance, why: 'retest of broken resistance' };
+  }
+  if (wall) return { price: wall.price, why: `bid wall ${fmtPx(wall.price)}` };
+  if (input.support != null && price - input.support <= maxDist) {
+    return { price: input.support, why: `daily support ${fmtPx(input.support)}` };
+  }
+  if (input.poc != null && input.poc < price && price - input.poc <= maxDist) {
+    return { price: input.poc, why: `POC ${fmtPx(input.poc)}` };
+  }
+  const hvn = input.hvns.filter((p) => p < price && price - p <= maxDist).sort((a, b) => b - a)[0];
+  if (hvn != null) return { price: hvn, why: `high-volume node ${fmtPx(hvn)}` };
+  return null;
+}
+
+function pickShortEntry(input: {
+  price: number;
+  location: DailySignal['location'];
+  support: number | null;
+  resistance: number | null;
+  poc: number | null;
+  hvns: number[];
+  walls: DailyLiquidityContext['walls'];
+}): { price: number; why: string } | null {
+  const { price } = input;
+  const maxDist = price * 0.02;
+  const wall = nearestWall(input.walls, 'ASK_LIQUIDITY_WALL', price, 'above', maxDist);
+  if (input.location === 'BELOW_SUPPORT' && input.support != null && input.support > price) {
+    if (input.support - price <= maxDist) return { price: input.support, why: 'retest of broken support' };
+  }
+  if (wall) return { price: wall.price, why: `ask wall ${fmtPx(wall.price)}` };
+  if (input.resistance != null && input.resistance - price <= maxDist) {
+    return { price: input.resistance, why: `daily resistance ${fmtPx(input.resistance)}` };
+  }
+  if (input.poc != null && input.poc > price && input.poc - price <= maxDist) {
+    return { price: input.poc, why: `POC ${fmtPx(input.poc)}` };
+  }
+  const hvn = input.hvns.filter((p) => p > price && p - price <= maxDist).sort((a, b) => a - b)[0];
+  if (hvn != null) return { price: hvn, why: `high-volume node ${fmtPx(hvn)}` };
+  return null;
+}
+
+function nearestWall(
+  walls: DailyLiquidityContext['walls'],
+  kind: 'BID_LIQUIDITY_WALL' | 'ASK_LIQUIDITY_WALL',
+  price: number,
+  side: 'below' | 'above',
+  maxDist: number,
+): { price: number; why: string } | null {
+  const hits = walls.filter((w) => {
+    if (w.kind !== kind || w.status !== 'ACTIVE') return false;
+    const dist = side === 'below' ? price - w.price : w.price - price;
+    return dist >= -price * 0.001 && dist <= maxDist;
+  });
+  if (!hits.length) return null;
+  hits.sort((a, b) => Math.abs(a.price - price) - Math.abs(b.price - price));
+  const w = hits[0]!;
+  return { price: w.price, why: kind === 'BID_LIQUIDITY_WALL' ? `bid wall ${fmtPx(w.price)}` : `ask wall ${fmtPx(w.price)}` };
 }
 
 function fmtPx(price: number): string {

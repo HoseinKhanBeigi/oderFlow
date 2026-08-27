@@ -131,10 +131,13 @@ describe('daily signal', () => {
     expect(sig.score).toBeGreaterThan(35);
     expect(sig.levels.support).not.toBeNull();
     expect(sig.evidence.some((e) => /absorbed|support|Bid wall/i.test(e))).toBe(true);
-    expect(sig.plan.entry).toBeCloseTo(109.2, 4);
-    expect(sig.plan.tp1).toBeCloseTo(109.2 * 1.01, 4);
-    expect(sig.plan.tp2).toBeCloseTo(109.2 * 1.02, 4);
-    expect(sig.plan.sl).toBeLessThan(109.2);
+    expect(sig.plan.entry).toBeLessThan(109.2);
+    expect(sig.plan.entry).toBeGreaterThan(107);
+    expect(sig.plan.entryMode).toBe('WAIT_FOR_LEVEL');
+    expect(sig.plan.tp1).toBeCloseTo((sig.plan.entry ?? 0) * 1.01, 4);
+    expect(sig.plan.tp2).toBeCloseTo((sig.plan.entry ?? 0) * 1.02, 4);
+    expect(sig.plan.sl).toBeLessThan(sig.plan.entry ?? 109);
+    expect(sig.plan.entryWhy).toMatch(/support|bid wall/i);
   });
 
   it('leans SHORT when buying is absorbed at daily resistance', () => {
@@ -206,5 +209,41 @@ describe('daily signal', () => {
     });
     expect(sig.bias).toBe('WAIT');
     expect(['MID_RANGE', 'FLOW_CONTINUATION']).toContain(sig.setup);
+  });
+
+  it('does not chase mid-range price — LONG waits for support', () => {
+    const bars = seriesWithPrior(
+      { low: 100, high: 124, close: 112 },
+      {
+        high: 114,
+        low: 110,
+        close: 113,
+        totalBuy: 6_000_000,
+        totalSell: 1_200_000,
+      },
+    );
+    const sig = evaluateDailySignal({
+      symbol: 'BTCUSDT',
+      market: 'perp',
+      bars,
+      price: 113,
+      liquidity: {
+        price: 113,
+        pathOfLeastResistance: 'UP',
+        nearbyAsk: 700_000,
+        nearbyBid: 4_000_000,
+        askConsumption: 0.5,
+        bidConsumption: 0.1,
+        walls: [{ kind: 'BID_LIQUIDITY_WALL', price: 111.4, status: 'ACTIVE', quoteValue: 8_000_000 }],
+        vacuums: [{ kind: 'UPSIDE_LIQUIDITY_VACUUM', fromPrice: 114, toPrice: 118 }],
+        absorptionType: null,
+      },
+      footprintComplete: true,
+    });
+    expect(sig.bias).toBe('LONG');
+    expect(sig.plan.entry).not.toBeNull();
+    expect(sig.plan.entry).toBeLessThan(113);
+    expect(sig.plan.entryMode).toBe('WAIT_FOR_LEVEL');
+    expect(sig.plan.entryWhy).toMatch(/wait|support|bid wall|POC|node/i);
   });
 });

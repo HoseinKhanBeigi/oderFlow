@@ -904,6 +904,7 @@ function renderDailySetup() {
     if (sig?.levels?.support != null) bits.push(`<span class="sup">S ${fmtPrice(sig.levels.support)}</span>`);
     if (sig?.levels?.poc != null) bits.push(`<span class="poc">POC ${fmtPrice(sig.levels.poc)}</span>`);
     if (sig?.levels?.resistance != null) bits.push(`<span class="res">R ${fmtPrice(sig.levels.resistance)}</span>`);
+    if (plan.entry != null) bits.push(`<span class="poc">IN ${fmtPrice(plan.entry)}</span>`);
     if (plan.tp1 != null) bits.push(`<span class="tp">TP1 ${fmtPrice(plan.tp1)}</span>`);
     if (plan.tp2 != null) bits.push(`<span class="tp">TP2 ${fmtPrice(plan.tp2)}</span>`);
     if (plan.sl != null) bits.push(`<span class="sl">SL ${fmtPrice(plan.sl)}</span>`);
@@ -926,13 +927,26 @@ function renderDailySetup() {
   setPlan('ds-tp1', plan.tp1);
   setPlan('ds-tp2', plan.tp2);
   setPlan('ds-sl', plan.sl);
+  const entryNote = $('ds-entry-note');
+  const entryCell = $('ds-entry')?.parentElement;
+  if (entryNote) {
+    if (plan.entryMode === 'NOW') entryNote.textContent = plan.entryWhy || 'Price is at the level — enter here';
+    else if (plan.entryMode === 'WAIT_FOR_LEVEL') entryNote.textContent = plan.entryWhy || 'Wait for this level — do not chase';
+    else entryNote.textContent = plan.entryWhy || '—';
+  }
+  if (entryCell) {
+    entryCell.classList.toggle('now', plan.entryMode === 'NOW');
+    entryCell.classList.toggle('wait-level', plan.entryMode === 'WAIT_FOR_LEVEL');
+  }
   if (dsReason) {
     if (!sig) {
       dsReason.textContent = 'If this stays empty, restart the dashboard so /api/daily-signal is live.';
-    } else if (bias === 'WAIT') {
-      dsReason.textContent = sig.reason || 'No 1–2% setup — footprint, S/R, and liquidity are not aligned.';
+    } else if (bias === 'WAIT' || plan.entryMode === 'NONE') {
+      dsReason.textContent = sig.reason || plan.entryWhy || 'No 1–2% setup — footprint, S/R, and liquidity are not aligned.';
+    } else if (plan.entryMode === 'WAIT_FOR_LEVEL') {
+      dsReason.textContent = `Do not enter ${fmtPrice(sig.price ?? 0)}. Limit ${bias === 'LONG' ? 'buy' : 'sell'} ${plan.entry != null ? fmtPrice(plan.entry) : '—'} · TP1 1% · TP2 2%. ${plan.entryWhy ?? ''}`;
     } else {
-      dsReason.textContent = `${sig.reason} Entry now · TP1 1% · TP2 2%.`;
+      dsReason.textContent = `${plan.entryWhy ?? sig.reason} TP1 1% · TP2 2% from that entry.`;
     }
   }
 }
@@ -2510,6 +2524,7 @@ function drawDailySrOverlay(ctx, { leftPad, plotRight, yForPrice, topPad, chartH
     plan.tp1 != null ? { price: plan.tp1, label: 'TP1 1%', color: '#22c55e', dash: [4, 3] } : null,
     plan.tp2 != null ? { price: plan.tp2, label: 'TP2 2%', color: '#86efac', dash: [2, 3] } : null,
     plan.sl != null ? { price: plan.sl, label: 'SL', color: '#fb7185', dash: [3, 3] } : null,
+    plan.entry != null ? { price: plan.entry, label: plan.entryMode === 'NOW' ? 'ENTRY NOW' : 'WAIT ENTRY', color: '#60a5fa', dash: [8, 3] } : null,
   ].filter(Boolean);
   if (!rows.length) return;
   ctx.save();

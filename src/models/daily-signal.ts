@@ -85,4 +85,7 @@ export interface DailyTradePlan {
   tp2: number | null;
   tp1Pct: number;
   tp2Pct: number;
+  /** NOW = price is at the level. WAIT_FOR_LEVEL = do not chase, wait for this price. */
+  entryMode: 'NOW' | 'WAIT_FOR_LEVEL' | 'NONE';
+  entryWhy: string;
 }

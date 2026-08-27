@@ -104,13 +104,17 @@
         <div class="ds-head">
           <div>
             <h2>Daily signal</h2>
-            <p class="hint">Long/short from footprint + S/R + liquidity. Take-profit is a 1% then 2% move.</p>
+            <p class="hint">Entry is a support/resistance or liquidity wall — not whatever print is on the tape. TP is 1% then 2% from that entry.</p>
           </div>
           <div id="ds-bias" class="ds-bias wait">WAIT</div>
         </div>
         <div id="ds-setup" class="ds-setup">Waiting for daily structure…</div>
         <div class="ds-plan">
-          <div class="ds-cell"><span class="label">Entry</span><span id="ds-entry" class="ds-val">—</span></div>
+          <div class="ds-cell">
+            <span class="label">Entry</span>
+            <span id="ds-entry" class="ds-val">—</span>
+            <span id="ds-entry-note" class="ds-note">—</span>
+          </div>
           <div class="ds-cell tp"><span class="label">TP 1%</span><span id="ds-tp1" class="ds-val">—</span></div>
           <div class="ds-cell tp"><span class="label">TP 2%</span><span id="ds-tp2" class="ds-val">—</span></div>
           <div class="ds-cell sl"><span class="label">Stop</span><span id="ds-sl" class="ds-val">—</span></div>
