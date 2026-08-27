@@ -246,4 +246,41 @@ describe('daily signal', () => {
     expect(sig.plan.entryMode).toBe('WAIT_FOR_LEVEL');
     expect(sig.plan.entryWhy).toMatch(/wait|support|bid wall|POC|node/i);
   });
+
+  it('accepts 1H and 4H timeframes with matching copy', () => {
+    const bars = seriesWithPrior(
+      { low: 108, high: 120, close: 112 },
+      {
+        high: 111,
+        low: 107.5,
+        close: 110.4,
+        totalBuy: 1_000_000,
+        totalSell: 5_000_000,
+      },
+    );
+    const hourly = evaluateDailySignal({
+      symbol: 'BTCUSDT',
+      market: 'perp',
+      bars,
+      price: 109.2,
+      liquidity: defendingBid,
+      footprintComplete: true,
+      timeframe: '1H',
+    });
+    expect(hourly.timeframe).toBe('1H');
+    expect(hourly.reason.toLowerCase()).toMatch(/1h/);
+    expect(hourly.reason.toLowerCase()).not.toMatch(/daily/);
+
+    const fourHour = evaluateDailySignal({
+      symbol: 'BTCUSDT',
+      market: 'perp',
+      bars,
+      price: 109.2,
+      liquidity: defendingBid,
+      footprintComplete: true,
+      timeframe: '4H',
+    });
+    expect(fourHour.timeframe).toBe('4H');
+    expect(fourHour.reason.toLowerCase()).toMatch(/4h/);
+  });
 });

@@ -31,6 +31,7 @@ import {
   evaluateDailySignal,
   liquidityContextFromWindow,
 } from '../src/analysis/daily-signal.js';
+import { timeframeFromMinutes, type SignalTimeframe } from '../src/models/daily-signal.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC = join(__dirname, '../public');
@@ -177,7 +178,9 @@ const server = createServer(async (req, res) => {
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
-          ...emptyDailySignal((u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase(), parseMarketParam(u.searchParams.get('market'))),
+          ...emptyDailySignal((u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase(), parseMarketParam(u.searchParams.get('market')), {
+            timeframe: parseSignalTf(u.searchParams.get('tf')).timeframe,
+          }),
           error: err instanceof Error ? err.message : 'daily signal failed',
         }));
       }
@@ -414,18 +417,31 @@ function clampInt(raw: string | null, fallback: number, min: number, max: number
 
 const dailySignalCache = new Map<string, { at: number; payload: ReturnType<typeof evaluateDailySignal> }>();
 
+const SIGNAL_KLINE: Record<number, { interval: string; limit: number; spanDays: number }> = {
+  60: { interval: '1h', limit: 250, spanDays: 10 },
+  240: { interval: '4h', limit: 150, spanDays: 20 },
+  1440: { interval: '1d', limit: 60, spanDays: 0 },
+};
+
+function parseSignalTf(raw: string | null): { minutes: number; timeframe: SignalTimeframe } {
+  const n = Number(raw);
+  if (n === 60 || n === 240 || n === 1440) return { minutes: n, timeframe: timeframeFromMinutes(n) };
+  return { minutes: 1440, timeframe: '1D' };
+}
+
 async function getDailySignal(params: URLSearchParams): Promise<ReturnType<typeof evaluateDailySignal>> {
   const symbol = (params.get('symbol') ?? 'BTCUSDT').toUpperCase();
   const market = parseMarketParam(params.get('market'));
   const exchanges = parseFootprintExchanges(params.get('exchange'), market);
-  const key = `${market}|${symbol}|${exchanges.join(',')}`;
+  const { minutes: tf, timeframe } = parseSignalTf(params.get('tf'));
+  const key = `${market}|${symbol}|${exchanges.join(',')}|${tf}`;
   const hit = dailySignalCache.get(key);
   if (hit && Date.now() - hit.at < 15_000) return hit.payload;
 
   const live = liveWindow(symbol, market);
   const price = live?.price && live.price > 0 ? live.price : 0;
-  const { bars, complete } = await loadDailyBars(symbol, market, exchanges);
-  const klineBars = await loadDailyKlines(symbol, market, exchanges[0] ?? 'binance');
+  const { bars, complete } = await loadDailyBars(symbol, market, exchanges, tf);
+  const klineBars = await loadDailyKlines(symbol, market, exchanges[0] ?? 'binance', tf);
   const merged = mergeDailyBars(klineBars, bars);
   const signal = evaluateDailySignal({
     symbol,
@@ -434,6 +450,7 @@ async function getDailySignal(params: URLSearchParams): Promise<ReturnType<typeo
     price,
     liquidity: live ? liquidityContextFromWindow(live) : null,
     footprintComplete: complete && bars.some((b) => b.totalBuy + b.totalSell > 0),
+    timeframe,
   });
   dailySignalCache.set(key, { at: Date.now(), payload: signal });
   if (dailySignalCache.size > 80) {
@@ -456,12 +473,15 @@ async function loadDailyBars(
   symbol: string,
   market: 'spot' | 'perp',
   exchanges: ExchangeId[],
+  tfMinutes: number,
 ): Promise<{ bars: FootprintBar[]; complete: boolean }> {
   if (!isStorageEnabled()) return { bars: [], complete: false };
   await recorderFor(market).flush();
   const nowSec = Math.floor(Date.now() / 1000);
   const liveFrom = nowSec - (nowSec % 60);
-  const fromSec = liveFrom - RETENTION_DAYS * 1440 * 60;
+  const spec = SIGNAL_KLINE[tfMinutes] ?? SIGNAL_KLINE[1440]!;
+  const spanDays = spec.spanDays > 0 ? spec.spanDays : RETENTION_DAYS;
+  const fromSec = liveFrom - spanDays * 1440 * 60;
   const rows = await loadBars({
     symbol,
     market,
@@ -469,12 +489,18 @@ async function loadDailyBars(
     fromSec,
     toSec: liveFrom,
   });
-  return { bars: rollup(rows, 1440), complete: rows.length > 0 };
+  return { bars: rollup(rows, tfMinutes), complete: rows.length > 0 };
 }
 
-async function loadDailyKlines(symbol: string, market: 'spot' | 'perp', exchange: ExchangeId): Promise<FootprintBar[]> {
+async function loadDailyKlines(
+  symbol: string,
+  market: 'spot' | 'perp',
+  exchange: ExchangeId,
+  tfMinutes: number,
+): Promise<FootprintBar[]> {
   try {
-    const rows = await fetchVenueKlines(exchange, symbol, '1d', market, 60);
+    const spec = SIGNAL_KLINE[tfMinutes] ?? SIGNAL_KLINE[1440]!;
+    const rows = await fetchVenueKlines(exchange, symbol, spec.interval, market, spec.limit);
     return barsFromKlines(rows, { symbol, exchange, market });
   } catch {
     return [];

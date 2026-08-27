@@ -27,8 +27,10 @@ function isSpotView() {
 }
 let lastSummary = null;
 let lastDailySignal = null;
+const lastDailyByTf = {};
 let dailySignalReq = 0;
 let dailySignalTimer = null;
+let signalTfMinutes = 1440;
 const summaries = {};
 const tapeBySymbol = {};
 const eventsBySymbol = {};
@@ -65,18 +67,38 @@ const TF_LABEL = {
   '1m': 'last 1 minute',
   '5m': 'last 5 minutes',
   '15m': 'last 15 minutes',
+  '1H': 'this 1h bar',
+  '4H': 'this 4h bar',
   '1D': 'this daily bar',
 };
 
-const DAILY_SETUP_META = {
-  SUPPORT_HOLD: 'Support is holding',
-  RESISTANCE_REJECT: 'Resistance is rejecting',
-  BREAKOUT_UP: 'Holding above resistance',
-  BREAKDOWN: 'Trading below support',
-  FLOW_CONTINUATION: 'Daily flow continuation',
-  MID_RANGE: 'No daily level in play',
-  INSUFFICIENT: 'Not enough daily history',
-};
+const SIGNAL_TF_NAME = { 60: '1h', 240: '4h', 1440: 'daily' };
+const SIGNAL_TF_CODE = { 60: '1H', 240: '4H', 1440: '1D' };
+
+function isHtfSignalTab(tf = selectedTf) {
+  return tf === '1H' || tf === '4H' || tf === '1D';
+}
+
+function signalAdj(minutes = signalTfMinutes) {
+  return SIGNAL_TF_NAME[minutes] ?? SIGNAL_TF_NAME[1440];
+}
+
+function signalCode(minutes = signalTfMinutes) {
+  return SIGNAL_TF_CODE[minutes] ?? '1D';
+}
+
+function setupMeta(setup, adj = signalAdj()) {
+  const map = {
+    SUPPORT_HOLD: 'Support is holding',
+    RESISTANCE_REJECT: 'Resistance is rejecting',
+    BREAKOUT_UP: 'Holding above resistance',
+    BREAKDOWN: 'Trading below support',
+    FLOW_CONTINUATION: `${adj} flow continuation`,
+    MID_RANGE: `No ${adj} level in play`,
+    INSUFFICIENT: `Not enough ${adj} history`,
+  };
+  return map[setup] ?? String(setup).replace(/_/g, ' ');
+}
 
 const EX_SHORT = { binance: 'BN', bybit: 'BY', okx: 'OKX', bitget: 'BG', hyperliquid: 'HL', dydx: 'DX', bitstamp: 'BS' };
 const DEFAULT_EXCHANGES = ['binance', 'bybit', 'okx', 'bitget', 'hyperliquid', 'dydx', 'bitstamp'];
@@ -450,16 +472,17 @@ function forcedConfirms(side) {
 }
 
 function liveAbsorption() {
-  if (selectedTf === '1D') {
+  if (isHtfSignalTab()) {
     const abs = lastDailySignal?.flow?.absorbed;
     if (!abs) return null;
     const buyer = abs === 'BUYERS';
+    const adj = signalAdj();
     return {
       buyer,
       title: buyer ? 'Buyer absorption' : 'Seller absorption',
       text: buyer
-        ? 'Daily buyer absorption — aggressive buying, daily high still capping price'
-        : 'Daily seller absorption — aggressive selling, daily low still holding',
+        ? `${adj} buyer absorption — aggressive buying, ${adj} high still capping price`
+        : `${adj} seller absorption — aggressive selling, ${adj} low still holding`,
     };
   }
   const w = lastSummary?.windows?.[selectedTf] || lastSummary?.windows?.['10s'];
@@ -837,6 +860,31 @@ function tfShort(tf = chartTfMinutes) {
   return `${tf}m`;
 }
 
+function syncSignalTfTabs() {
+  document.querySelectorAll('#ds-tf-tabs [data-stf]').forEach((b) => {
+    b.classList.toggle('active', Number(b.dataset.stf) === signalTfMinutes);
+  });
+}
+
+function setSignalTf(minutes, { reload = true } = {}) {
+  const tf = minutes === 60 || minutes === 240 || minutes === 1440 ? minutes : 1440;
+  const changed = tf !== signalTfMinutes;
+  signalTfMinutes = tf;
+  syncSignalTfTabs();
+  if (isHtfSignalTab(selectedTf)) {
+    selectedTf = signalCode(tf);
+    document.querySelectorAll('#tf-tabs .tf-tab').forEach((b) => b.classList.toggle('active', b.dataset.tf === selectedTf));
+  }
+  lastDailySignal = lastDailyByTf[tf] ?? lastDailySignal;
+  renderDailySetup();
+  if (isHtfSignalTab()) {
+    if (isSpotView()) updateSpotUi();
+    else updateUi();
+  }
+  drawFootprint();
+  if (reload && changed) void loadDailySignal();
+}
+
 function startDailySignalLoop() {
   if (dailySignalTimer) clearInterval(dailySignalTimer);
   void loadDailySignal();
@@ -845,21 +893,25 @@ function startDailySignalLoop() {
 
 async function loadDailySignal() {
   const symbol = selectedSymbol;
+  const tf = signalTfMinutes;
   const req = ++dailySignalReq;
   try {
     const params = new URLSearchParams({
       symbol,
       exchange: selectedExchange,
       market: footprintMarket(),
+      tf: String(tf),
     });
     const data = await fetch(`/api/daily-signal?${params}`).then((r) => {
       if (!r.ok) throw new Error(`daily-signal ${r.status}`);
       return r.json();
     });
     if (req !== dailySignalReq || symbol !== selectedSymbol) return;
+    lastDailyByTf[tf] = data;
+    if (tf !== signalTfMinutes) return;
     lastDailySignal = data;
     renderDailySetup();
-    if (selectedTf === '1D') {
+    if (isHtfSignalTab()) {
       if (isSpotView()) updateSpotUi();
       else if (lastSummary) updateUi();
     }
@@ -867,9 +919,10 @@ async function loadDailySignal() {
   } catch {
     if (req !== dailySignalReq) return;
     lastDailySignal = {
+      timeframe: signalCode(tf),
       bias: 'WAIT',
       setup: 'INSUFFICIENT',
-      reason: 'Daily signal API is not running — restart npm start and refresh.',
+      reason: `${signalCode(tf)} signal API is not running — restart npm start and refresh.`,
       plan: {},
     };
     renderDailySetup();
@@ -881,17 +934,21 @@ function renderDailySetup() {
   const bias = sig?.bias ?? 'WAIT';
   const setup = sig?.setup ?? 'INSUFFICIENT';
   const plan = sig?.plan ?? {};
-  const title = DAILY_SETUP_META[setup] ?? String(setup).replace(/_/g, ' ');
+  const adj = signalAdj();
+  const code = sig?.timeframe ?? signalCode();
+  const title = setupMeta(setup, adj);
 
   const biasEl = $('daily-bias');
   const titleEl = $('daily-setup-title');
   const helpEl = $('daily-setup-help');
   const levelsEl = $('daily-levels');
+  const labelEl = $('daily-setup-label');
+  if (labelEl) labelEl.textContent = `${code} setup`;
   if (biasEl) {
     biasEl.textContent = bias;
     biasEl.className = `daily-bias ${bias.toLowerCase()}`;
   }
-  if (titleEl) titleEl.textContent = sig ? title : 'Waiting for daily structure…';
+  if (titleEl) titleEl.textContent = sig ? title : `Waiting for ${adj} structure…`;
   if (helpEl) {
     if (!sig) helpEl.textContent = 'Footprint + support/resistance + live liquidity. TP is 1% then 2%.';
     else {
@@ -911,6 +968,8 @@ function renderDailySetup() {
     levelsEl.innerHTML = bits.join('');
   }
 
+  const dsTitle = $('ds-title');
+  if (dsTitle) dsTitle.textContent = `${code} signal`;
   const dsBias = $('ds-bias');
   const dsSetup = $('ds-setup');
   const dsReason = $('ds-reason');
@@ -918,7 +977,7 @@ function renderDailySetup() {
     dsBias.textContent = bias;
     dsBias.className = `ds-bias ${bias.toLowerCase()}`;
   }
-  if (dsSetup) dsSetup.textContent = sig ? title : 'Waiting for daily structure…';
+  if (dsSetup) dsSetup.textContent = sig ? title : `Waiting for ${adj} structure…`;
   const setPlan = (id, value) => {
     const el = $(id);
     if (el) el.textContent = value != null && Number.isFinite(value) ? `$${fmtPrice(value)}` : '—';
@@ -942,7 +1001,7 @@ function renderDailySetup() {
     if (!sig) {
       dsReason.textContent = 'If this stays empty, restart the dashboard so /api/daily-signal is live.';
     } else if (bias === 'WAIT' || plan.entryMode === 'NONE') {
-      dsReason.textContent = sig.reason || plan.entryWhy || 'No 1–2% setup — footprint, S/R, and liquidity are not aligned.';
+      dsReason.textContent = sig.reason || plan.entryWhy || `No 1–2% setup — ${adj} footprint, S/R, and liquidity are not aligned.`;
     } else if (plan.entryMode === 'WAIT_FOR_LEVEL') {
       dsReason.textContent = `Do not enter ${fmtPrice(sig.price ?? 0)}. Limit ${bias === 'LONG' ? 'buy' : 'sell'} ${plan.entry != null ? fmtPrice(plan.entry) : '—'} · TP1 1% · TP2 2%. ${plan.entryWhy ?? ''}`;
     } else {
@@ -953,6 +1012,8 @@ function renderDailySetup() {
 
 function renderDailyAsSignal(price, summary) {
   const sig = lastDailySignal;
+  const adj = signalAdj();
+  const code = sig?.timeframe ?? signalCode();
   renderDailySetup();
   if ($('price')) $('price').textContent = price > 0 ? `$${fmtPrice(price)}` : '—';
   const coin = config?.coins?.find((c) => c.symbol === selectedSymbol);
@@ -964,22 +1025,22 @@ function renderDailyAsSignal(price, summary) {
         ? 'multi-exchange'
         : selectedExchange;
   if ($('symbol-label')) {
-    $('symbol-label').textContent = `${coin?.label ?? selectedSymbol} · ${venue} · daily`;
+    $('symbol-label').textContent = `${coin?.label ?? selectedSymbol} · ${venue} · ${code}`;
   }
   const bias = sig?.bias ?? 'WAIT';
   const setup = sig?.setup ?? 'INSUFFICIENT';
-  $('state-badge').textContent = bias === 'WAIT' ? 'NO DAILY EDGE' : `${bias} · ${String(setup).replace(/_/g, ' ')}`;
+  $('state-badge').textContent = bias === 'WAIT' ? `NO ${code} EDGE` : `${bias} · ${String(setup).replace(/_/g, ' ')}`;
   $('state-badge').className = `state-badge ${bias === 'LONG' ? 'buy-flow' : bias === 'SHORT' ? 'sell-flow' : ''}`;
-  $('state-title').textContent = DAILY_SETUP_META[setup] ?? 'Daily setup';
+  $('state-title').textContent = setupMeta(setup, adj);
   $('state-help').textContent = sig?.reason
-    ?? 'Daily bias waits until footprint, support/resistance, and liquidity agree.';
+    ?? `${adj} bias waits until footprint, support/resistance, and liquidity agree.`;
   const ch = sig?.flow?.todayChangePercent ?? 0;
   const chEl = $('price-change');
   if (chEl) {
-    chEl.textContent = `${ch >= 0 ? '+' : ''}${ch.toFixed(2)}% on the daily bar`;
+    chEl.textContent = `${ch >= 0 ? '+' : ''}${ch.toFixed(2)}% on the ${adj} bar`;
     chEl.className = `price-change ${ch > 0 ? 'up' : ch < 0 ? 'down' : ''}`;
   }
-  $('flow-window-label').textContent = TF_LABEL['1D'];
+  $('flow-window-label').textContent = TF_LABEL[code] ?? TF_LABEL['1D'];
   const delta = sig?.flow?.todayDelta ?? 0;
   $('delta').textContent = fmtUsd(delta);
   $('delta').className = `value ${delta >= 0 ? 'pos' : 'neg'}`;
@@ -990,9 +1051,9 @@ function renderDailyAsSignal(price, summary) {
   $('impact').textContent = (sig?.location ?? 'UNKNOWN').replace(/_/g, ' ');
   $('impact-help').textContent = sig?.pathOfLeastResistance
     ? `Path of least resistance ${sig.pathOfLeastResistance.toLowerCase()}`
-    : 'Daily location vs support / resistance';
+    : `${adj} location vs support / resistance`;
   $('confidence').textContent = sig ? `${Math.round(sig.confidence * 100)}%` : '—';
-  $('flow-multiple').textContent = sig?.footprintComplete ? 'Daily footprint complete' : 'Using OHLC until footprint fills in';
+  $('flow-multiple').textContent = sig?.footprintComplete ? `${code} footprint complete` : 'Using OHLC until footprint fills in';
   const buy = sig?.flow?.todayBuy ?? 0;
   const sell = sig?.flow?.todaySell ?? 0;
   const total = buy + sell || 1;
@@ -1021,7 +1082,7 @@ function renderDailyAsSignal(price, summary) {
 
 function updateUi() {
   if (isSpotView()) return;
-  if (selectedTf === '1D') {
+  if (isHtfSignalTab()) {
     if (lastSummary && lastSummary.symbol === selectedSymbol) {
       renderDailyAsSignal(lastSummary.price, lastSummary);
     } else {
@@ -1423,7 +1484,7 @@ function updateSpotUi() {
   const coin = config?.coins?.find((c) => c.symbol === snap.symbol);
   const venue = selectedExchange === 'all' ? 'multi-exchange spot' : `${selectedExchange} spot`;
   $('symbol-label').textContent = `${coin?.label ?? snap.symbol} · ${venue}`;
-  if (selectedTf === '1D') {
+  if (isHtfSignalTab()) {
     renderDailyAsSignal(snap.price, null);
     renderSpotHud(snap);
     renderSpotCompare();
@@ -1608,8 +1669,11 @@ function setupTabs() {
     const btn = e.target.closest('.tf-tab');
     if (!btn) return;
     selectedTf = btn.dataset.tf;
-    document.querySelectorAll('.tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
-    updateUi();
+    document.querySelectorAll('#tf-tabs .tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
+    if (selectedTf === '1H') setSignalTf(60);
+    else if (selectedTf === '4H') setSignalTf(240);
+    else if (selectedTf === '1D') setSignalTf(1440);
+    else updateUi();
   });
 }
 
@@ -1725,6 +1789,11 @@ function initChart() {
   fpCanvas.addEventListener('pointerup', endDrag);
   fpCanvas.addEventListener('pointercancel', endDrag);
 
+  document.getElementById('ds-tf-tabs')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-stf]');
+    if (!btn) return;
+    setSignalTf(Number(btn.dataset.stf));
+  });
   document.getElementById('chart-tf-tabs')?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-ctf]');
     if (!btn) return;
@@ -1733,7 +1802,8 @@ function initChart() {
     snapChartToLive();
     seedFootprintKlines();
     renderLiquidityResponse();
-    void loadDailySignal();
+    if (chartTfMinutes === 60 || chartTfMinutes === 240 || chartTfMinutes === 1440) setSignalTf(chartTfMinutes);
+    else void loadDailySignal();
   });
   document.getElementById('chart-ex-tabs')?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-ex]');
@@ -2517,9 +2587,10 @@ function drawLiqOverlay(ctx, { leftPad, plotRight, yForPrice, topPad, chartH, gl
 function drawDailySrOverlay(ctx, { leftPad, plotRight, yForPrice, topPad, chartH, globalHigh, globalLow }) {
   const levels = lastDailySignal?.levels ?? {};
   const plan = lastDailySignal?.plan ?? {};
+  const tfTag = lastDailySignal?.timeframe ?? signalCode();
   const rows = [
-    levels.support != null ? { price: levels.support, label: 'S', color: '#4ade80', dash: [6, 4] } : null,
-    levels.resistance != null ? { price: levels.resistance, label: 'R', color: '#f87171', dash: [6, 4] } : null,
+    levels.support != null ? { price: levels.support, label: `${tfTag} S`, color: '#4ade80', dash: [6, 4] } : null,
+    levels.resistance != null ? { price: levels.resistance, label: `${tfTag} R`, color: '#f87171', dash: [6, 4] } : null,
     levels.poc != null ? { price: levels.poc, label: 'POC', color: '#fbbf24', dash: [2, 3] } : null,
     plan.tp1 != null ? { price: plan.tp1, label: 'TP1 1%', color: '#22c55e', dash: [4, 3] } : null,
     plan.tp2 != null ? { price: plan.tp2, label: 'TP2 2%', color: '#86efac', dash: [2, 3] } : null,

@@ -1,6 +1,20 @@
 import type { PathOfLeastResistance } from './movement.js';
 import type { LiquidityWall, LiquidityVacuum } from './liquidity.js';
 
+export type SignalTimeframe = '1H' | '4H' | '1D';
+
+export const SIGNAL_TF_MINUTES: Record<SignalTimeframe, number> = {
+  '1H': 60,
+  '4H': 240,
+  '1D': 1440,
+};
+
+export function timeframeFromMinutes(tf: number): SignalTimeframe {
+  if (tf === 60) return '1H';
+  if (tf === 240) return '4H';
+  return '1D';
+}
+
 export type DailyBias = 'LONG' | 'SHORT' | 'WAIT';
 
 export type DailySetup =
@@ -52,7 +66,7 @@ export interface DailyFlowSnapshot {
 }
 
 export interface DailySignal {
-  timeframe: '1D';
+  timeframe: SignalTimeframe;
   symbol: string;
   market: 'spot' | 'perp' | 'stock';
   price: number;

@@ -87,7 +87,7 @@
         <span class="legend-item fp-liq-ask liq-only">short liq ↑</span>
         <span class="legend-item fp-liq-bid liq-only">long liq ↓</span>
         <span class="legend-item fp-abs">absorption</span>
-        <span class="legend-item fp-sr">daily S/R</span>
+        <span class="legend-item fp-sr">S/R</span>
         <span class="legend-item fp-psell">passive sell</span>
         <span class="legend-item fp-pbuy">passive buy</span>
         <span class="legend-item fp-rest-bid">resting bid</span>
@@ -103,12 +103,19 @@
       <div id="daily-signal-banner" class="daily-signal-banner">
         <div class="ds-head">
           <div>
-            <h2>Daily signal</h2>
+            <div class="ds-title-row">
+              <h2 id="ds-title">Daily signal</h2>
+              <div class="ds-tf-tabs" id="ds-tf-tabs">
+                <button class="chart-tf-tab" data-stf="60" type="button">1H</button>
+                <button class="chart-tf-tab" data-stf="240" type="button">4H</button>
+                <button class="chart-tf-tab active" data-stf="1440" type="button">1D</button>
+              </div>
+            </div>
             <p class="hint">Entry is a support/resistance or liquidity wall — not whatever print is on the tape. TP is 1% then 2% from that entry.</p>
           </div>
           <div id="ds-bias" class="ds-bias wait">WAIT</div>
         </div>
-        <div id="ds-setup" class="ds-setup">Waiting for daily structure…</div>
+        <div id="ds-setup" class="ds-setup">Waiting for structure…</div>
         <div class="ds-plan">
           <div class="ds-cell">
             <span class="label">Entry</span>
@@ -180,7 +187,7 @@
 
       <div id="daily-setup" class="daily-setup">
         <div class="daily-setup-head">
-          <span class="label">Daily setup</span>
+          <span class="label" id="daily-setup-label">Daily setup</span>
           <span id="daily-bias" class="daily-bias">WAIT</span>
         </div>
         <div id="daily-setup-title" class="daily-setup-title">Waiting for daily structure…</div>
@@ -193,6 +200,8 @@
         <button class="tf-tab" data-tf="1m">1m</button>
         <button class="tf-tab" data-tf="5m">5m trend</button>
         <button class="tf-tab" data-tf="15m">15m</button>
+        <button class="tf-tab" data-tf="1H">1H</button>
+        <button class="tf-tab" data-tf="4H">4H</button>
         <button class="tf-tab" data-tf="1D">1D</button>
       </div>
 
@@ -337,8 +346,8 @@
           <p>Bursts, large prints, market state changes, absorption, and liquidity pull / wall events appear in the events panel.</p>
         </div>
         <div class="legend-block">
-          <h3>Daily setup</h3>
-          <p>1D prints LONG or SHORT when footprint, support/resistance, and liquidity lean the same way. TP is a 1% then 2% move from entry. WAIT means those pieces are not aligned.</p>
+          <h3>Directional setup</h3>
+          <p>1H, 4H, and 1D print LONG or SHORT when footprint, support/resistance, and liquidity lean the same way. Entry is the level, not the live tape. TP is 1% then 2% from that entry. WAIT means those pieces are not aligned.</p>
         </div>
         <div class="legend-block">
           <h3>Liquidity</h3>

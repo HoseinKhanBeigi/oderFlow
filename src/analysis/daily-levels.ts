@@ -24,10 +24,8 @@ interface ProfileBin {
   volume: number;
 }
 
-const LOOKBACK_DAYS = 20;
-
-export function buildDailyLevels(bars: FootprintBar[], price: number): DailyLevels {
-  const recent = bars.slice(-LOOKBACK_DAYS);
+export function buildDailyLevels(bars: FootprintBar[], price: number, lookback = 20): DailyLevels {
+  const recent = bars.slice(-lookback);
   const structure = detectStructure(asMinuteBars(recent));
   const atr = dailyAtr(recent);
   const profile = volumeProfile(recent, price);
@@ -54,11 +52,11 @@ export function buildDailyLevels(bars: FootprintBar[], price: number): DailyLeve
       volume: h.volume,
     });
   }
-  pushSwing(candidates, structure.swingLow, 'SUPPORT', 'daily swing low');
-  pushSwing(candidates, structure.swingHigh, 'RESISTANCE', 'daily swing high');
+  pushSwing(candidates, structure.swingLow, 'SUPPORT', 'swing low');
+  pushSwing(candidates, structure.swingHigh, 'RESISTANCE', 'swing high');
   if (prior) {
-    pushSwing(candidates, prior.low, 'SUPPORT', 'prior-day low');
-    pushSwing(candidates, prior.high, 'RESISTANCE', 'prior-day high');
+    pushSwing(candidates, prior.low, 'SUPPORT', 'prior-bar low');
+    pushSwing(candidates, prior.high, 'RESISTANCE', 'prior-bar high');
   }
   if (last) {
     const absorbed = absorptionLevel(last);
@@ -181,7 +179,7 @@ function absorptionLevel(bar: FootprintBar): DailyLevel | null {
     return {
       price: bestBuy.price,
       kind: 'RESISTANCE',
-      source: 'buy absorption at daily high',
+      source: 'buy absorption at bar high',
       volume: bestBuy.buy + bestBuy.sell,
     };
   }
@@ -189,7 +187,7 @@ function absorptionLevel(bar: FootprintBar): DailyLevel | null {
     return {
       price: bestSell.price,
       kind: 'SUPPORT',
-      source: 'sell absorption at daily low',
+      source: 'sell absorption at bar low',
       volume: bestSell.buy + bestSell.sell,
     };
   }

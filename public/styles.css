@@ -248,6 +248,14 @@ body {
   border-radius: 8px;
   background: var(--panel2);
 }
+.ds-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+.ds-title-row h2 { margin: 0; }
+.ds-tf-tabs { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .ds-head {
   display: flex;
   justify-content: space-between;

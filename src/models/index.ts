@@ -37,7 +37,9 @@ export type {
   DailySetup,
   DailySignal,
   DailyLiquidityContext,
+  SignalTimeframe,
 } from './daily-signal.js';
+export { SIGNAL_TF_MINUTES, timeframeFromMinutes } from './daily-signal.js';
 export type {
   AggressionSide,
   LiquidityTf,

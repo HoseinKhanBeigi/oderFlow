@@ -9,19 +9,29 @@ import type {
   DailySetup,
   DailySignal,
   DailyTradePlan,
+  SignalTimeframe,
 } from '../models/daily-signal.js';
 import { buildDailyLevels } from './daily-levels.js';
 
 const MIN_BARS = 6;
-const RECENT_DAYS = 5;
+const RECENT_BARS = 5;
+const LOOKBACK: Record<SignalTimeframe, number> = { '1H': 48, '4H': 36, '1D': 20 };
+
+function tfAdj(tf: SignalTimeframe): string {
+  if (tf === '1H') return '1h';
+  if (tf === '4H') return '4h';
+  return 'daily';
+}
 
 export function emptyDailySignal(
   symbol: string,
   market: DailySignal['market'],
   extras: Partial<DailySignal> = {},
 ): DailySignal {
+  const timeframe: SignalTimeframe = extras.timeframe ?? '1D';
+  const adj = tfAdj(timeframe);
   return {
-    timeframe: '1D',
+    timeframe,
     symbol,
     market,
     price: 0,
@@ -30,7 +40,7 @@ export function emptyDailySignal(
     location: 'UNKNOWN',
     score: 0,
     confidence: 0,
-    reason: 'Need more daily footprint history before a setup can form.',
+    reason: `Need more ${adj} footprint history before a setup can form.`,
     evidence: [],
     levels: { support: null, resistance: null, poc: null, hvns: [], all: [] },
     flow: {
@@ -69,26 +79,30 @@ export function evaluateDailySignal(input: {
   price?: number;
   liquidity?: DailyLiquidityContext | null;
   footprintComplete?: boolean;
+  timeframe?: SignalTimeframe;
 }): DailySignal {
+  const timeframe = input.timeframe ?? '1D';
+  const adj = tfAdj(timeframe);
   const bars = [...input.bars].sort((a, b) => a.time - b.time);
   const last = bars[bars.length - 1];
   const price = input.price && input.price > 0 ? input.price : (last?.close ?? 0);
   if (!last || bars.length < MIN_BARS || price <= 0) {
     return emptyDailySignal(input.symbol, input.market, {
       price,
+      timeframe,
       footprintComplete: Boolean(input.footprintComplete),
     });
   }
 
-  const levels = buildDailyLevels(bars, price);
+  const levels = buildDailyLevels(bars, price, LOOKBACK[timeframe]);
   const flow = dailyFlow(bars, last);
   const liq = input.liquidity ?? null;
   const evidence: string[] = [];
   let score = 0;
 
-  score += flowScore(flow, evidence);
+  score += flowScore(flow, evidence, adj);
   score += locationScore(levels.location, levels.support, levels.resistance, price, evidence);
-  score += structureScore(levels.structure.bias, levels.structure.shift, evidence);
+  score += structureScore(levels.structure.bias, levels.structure.shift, evidence, adj);
   score += liquidityScore(liq, levels.support, levels.resistance, evidence);
 
   score = clamp(score, -100, 100);
@@ -100,7 +114,7 @@ export function evaluateDailySignal(input: {
   const setupOut = bias === 'WAIT' && setup !== 'INSUFFICIENT' ? (Math.abs(score) < 12 ? 'MID_RANGE' : setup) : setup;
 
   return {
-    timeframe: '1D',
+    timeframe,
     symbol: input.symbol,
     market: input.market,
     price,
@@ -109,7 +123,7 @@ export function evaluateDailySignal(input: {
     location: levels.location,
     score: Math.round(score),
     confidence: Number(confidence.toFixed(2)),
-    reason: primaryReason(bias, setupOut, levels.location, flow),
+    reason: primaryReason(bias, setupOut, levels.location, flow, adj),
     evidence: evidence.slice(0, 6),
     levels: {
       support: levels.support,
@@ -137,7 +151,7 @@ export function evaluateDailySignal(input: {
 }
 
 function dailyFlow(bars: FootprintBar[], today: FootprintBar): DailyFlowSnapshot {
-  const recent = bars.slice(-RECENT_DAYS);
+  const recent = bars.slice(-RECENT_BARS);
   const todayVol = today.totalBuy + today.totalSell;
   const recentBuy = recent.reduce((s, b) => s + b.totalBuy, 0);
   const recentSell = recent.reduce((s, b) => s + b.totalSell, 0);
@@ -165,28 +179,28 @@ function dailyFlow(bars: FootprintBar[], today: FootprintBar): DailyFlowSnapshot
   };
 }
 
-function flowScore(flow: DailyFlowSnapshot, evidence: string[]): number {
+function flowScore(flow: DailyFlowSnapshot, evidence: string[], adj: string): number {
   let score = 0;
   score += clamp(flow.recentDeltaPercent * 30, -18, 18);
   if (flow.absorbed === 'SELLERS') {
     score += 20;
-    evidence.push('Aggressive selling absorbed — daily low is holding');
+    evidence.push(`Aggressive selling absorbed — ${adj} low is holding`);
   } else if (flow.absorbed === 'BUYERS') {
     score -= 20;
-    evidence.push('Aggressive buying absorbed — daily high is capping price');
+    evidence.push(`Aggressive buying absorbed — ${adj} high is capping price`);
   } else {
     score += clamp(flow.todayDeltaPercent * 40, -28, 28);
   }
   if (flow.efficient && flow.todayDelta > 0) {
     score += 12;
-    evidence.push(`Daily buying is moving price (+${flow.todayChangePercent.toFixed(2)}%)`);
+    evidence.push(`${adj} buying is moving price (+${flow.todayChangePercent.toFixed(2)}%)`);
   } else if (flow.efficient && flow.todayDelta < 0) {
     score -= 12;
-    evidence.push(`Daily selling is moving price (${flow.todayChangePercent.toFixed(2)}%)`);
+    evidence.push(`${adj} selling is moving price (${flow.todayChangePercent.toFixed(2)}%)`);
   }
   if (Math.abs(flow.todayDelta) > 0) {
     evidence.push(
-      `Today Δ ${flow.todayDelta >= 0 ? '+' : ''}${formatQuote(flow.todayDelta)} (${(flow.todayDeltaPercent * 100).toFixed(0)}%)`,
+      `Bar Δ ${flow.todayDelta >= 0 ? '+' : ''}${formatQuote(flow.todayDelta)} (${(flow.todayDeltaPercent * 100).toFixed(0)}%)`,
     );
   }
   return score;
@@ -222,21 +236,21 @@ function locationScore(
   }
 }
 
-function structureScore(bias: string, shift: string, evidence: string[]): number {
+function structureScore(bias: string, shift: string, evidence: string[], adj: string): number {
   let score = 0;
   if (bias === 'HH_HL') {
     score += 10;
-    evidence.push('Daily structure: higher highs and higher lows');
+    evidence.push(`${adj} structure: higher highs and higher lows`);
   } else if (bias === 'LH_LL') {
     score -= 10;
-    evidence.push('Daily structure: lower highs and lower lows');
+    evidence.push(`${adj} structure: lower highs and lower lows`);
   }
   if (shift === 'BULLISH_BOS' || shift === 'BULLISH_CHOCH') {
     score += 10;
-    evidence.push(`Daily ${shift.replace(/_/g, ' ').toLowerCase()}`);
+    evidence.push(`${adj} ${shift.replace(/_/g, ' ').toLowerCase()}`);
   } else if (shift === 'BEARISH_BOS' || shift === 'BEARISH_CHOCH') {
     score -= 10;
-    evidence.push(`Daily ${shift.replace(/_/g, ' ').toLowerCase()}`);
+    evidence.push(`${adj} ${shift.replace(/_/g, ' ').toLowerCase()}`);
   }
   return score;
 }
@@ -323,30 +337,31 @@ function primaryReason(
   setup: DailySetup,
   location: DailySignal['location'],
   flow: DailyFlowSnapshot,
+  adj: string,
 ): string {
   if (bias === 'WAIT' && setup === 'MID_RANGE') {
-    return 'Daily location is mid-range and footprint is not aligned enough for a directional setup.';
+    return `${adj} location is mid-range and footprint is not aligned enough for a directional setup.`;
   }
   if (setup === 'SUPPORT_HOLD') {
-    return 'Daily support is holding: selling is being absorbed and aggressive buyers still have a location edge.';
+    return `${adj} support is holding: selling is being absorbed and aggressive buyers still have a location edge.`;
   }
   if (setup === 'RESISTANCE_REJECT') {
-    return 'Daily resistance is capping price: buying is being absorbed and sellers control the level.';
+    return `${adj} resistance is capping price: buying is being absorbed and sellers control the level.`;
   }
   if (setup === 'BREAKOUT_UP') {
-    return 'Price is holding above daily resistance with buy-side footprint confirming the break.';
+    return `Price is holding above ${adj} resistance with buy-side footprint confirming the break.`;
   }
   if (setup === 'BREAKDOWN') {
-    return 'Price is trading below daily support with sell-side footprint confirming the break.';
+    return `Price is trading below ${adj} support with sell-side footprint confirming the break.`;
   }
   if (setup === 'FLOW_CONTINUATION') {
     return flow.todayDelta >= 0
-      ? 'No nearby level in play — daily buy flow is still the stronger force.'
-      : 'No nearby level in play — daily sell flow is still the stronger force.';
+      ? `No nearby level in play — ${adj} buy flow is still the stronger force.`
+      : `No nearby level in play — ${adj} sell flow is still the stronger force.`;
   }
-  if (bias === 'LONG') return `Daily bias leans long from ${location.replace(/_/g, ' ').toLowerCase()}.`;
-  if (bias === 'SHORT') return `Daily bias leans short from ${location.replace(/_/g, ' ').toLowerCase()}.`;
-  return 'Daily footprint, liquidity, and support/resistance are not aligned.';
+  if (bias === 'LONG') return `${adj} bias leans long from ${location.replace(/_/g, ' ').toLowerCase()}.`;
+  if (bias === 'SHORT') return `${adj} bias leans short from ${location.replace(/_/g, ' ').toLowerCase()}.`;
+  return `${adj} footprint, liquidity, and support/resistance are not aligned.`;
 }
 
 function buildTradePlan(input: {
@@ -432,7 +447,7 @@ function pickLongEntry(input: {
   }
   if (wall) return { price: wall.price, why: `bid wall ${fmtPx(wall.price)}` };
   if (input.support != null && price - input.support <= maxDist) {
-    return { price: input.support, why: `daily support ${fmtPx(input.support)}` };
+    return { price: input.support, why: `support ${fmtPx(input.support)}` };
   }
   if (input.poc != null && input.poc < price && price - input.poc <= maxDist) {
     return { price: input.poc, why: `POC ${fmtPx(input.poc)}` };
@@ -459,7 +474,7 @@ function pickShortEntry(input: {
   }
   if (wall) return { price: wall.price, why: `ask wall ${fmtPx(wall.price)}` };
   if (input.resistance != null && input.resistance - price <= maxDist) {
-    return { price: input.resistance, why: `daily resistance ${fmtPx(input.resistance)}` };
+    return { price: input.resistance, why: `resistance ${fmtPx(input.resistance)}` };
   }
   if (input.poc != null && input.poc > price && input.poc - price <= maxDist) {
     return { price: input.poc, why: `POC ${fmtPx(input.poc)}` };
