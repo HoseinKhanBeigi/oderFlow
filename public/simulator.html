@@ -3,117 +3,51 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Microstructure Backtest Lab</title>
+  <title>Strategy chart</title>
   <link rel="stylesheet" href="/simulator.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
 <body>
-  <div class="lab">
-    <header class="lab-top">
+  <div class="play">
+    <header class="play-top">
       <a class="back-link" href="/">← Order flow</a>
       <div class="brand-mini">
         <span class="logo">◈</span>
-        <strong>Backtest Lab</strong>
+        <strong>Strategy chart</strong>
       </div>
       <label class="field">Symbol
-        <input id="lab-symbol" value="BTCUSDT" spellcheck="false" />
+        <input id="play-symbol" value="BTCUSDT" spellcheck="false" />
       </label>
-      <div class="chip-row" id="lab-market">
-        <button type="button" data-market="perp" class="active">Futures</button>
-        <button type="button" data-market="spot">Spot</button>
-      </div>
-      <label class="field">Exchange
-        <select id="lab-exchange">
-          <option value="binance">Binance</option>
-          <option value="bybit">Bybit</option>
-          <option value="okx">OKX</option>
-          <option value="bitget">Bitget</option>
-        </select>
+      <label class="field">Start price
+        <input id="play-price" type="number" value="79100" step="50" />
       </label>
-      <div class="chip-row" id="lab-tf"></div>
-      <div class="chip-row" id="lab-mode">
-        <button type="button" data-mode="BACKTEST" class="active">Backtest</button>
-        <button type="button" data-mode="REPLAY">Replay</button>
-        <button type="button" data-mode="FORWARD_TEST">Forward test</button>
-        <button type="button" data-mode="WALK_FORWARD">Walk-forward</button>
+      <div class="chip-row" id="play-speed">
+        <button type="button" data-speed="slow">Slow</button>
+        <button type="button" data-speed="normal" class="active">Normal</button>
+        <button type="button" data-speed="fast">Fast</button>
       </div>
-      <label class="field">From <input id="lab-from" type="date" /></label>
-      <label class="field">To <input id="lab-to" type="date" /></label>
-      <div class="chip-row" id="lab-range">
-        <button type="button" data-range="1">24h</button>
-        <button type="button" data-range="7">7d</button>
-        <button type="button" data-range="30" class="active">30d</button>
-        <button type="button" data-range="90">90d</button>
-      </div>
-      <button id="btn-run" class="primary" type="button">Run backtest</button>
+      <button id="btn-play" class="primary" type="button">Play</button>
+      <a class="back-link lab-link" href="/lab.html">Advanced backtest</a>
     </header>
 
-    <p id="lab-banner" class="lab-banner">If these exact order-flow conditions occurred historically, what happened next? Decisions use only data known at that timestamp.</p>
-
-    <div class="lab-main">
+    <div class="play-main">
       <section class="lab-chart-wrap">
-        <div class="chart-overlays">
-          <span>Indicators</span>
-          <div id="overlay-menu" class="overlay-menu"></div>
-        </div>
         <div id="tv-chart" class="tv-chart"></div>
-        <div id="hover-tip" class="hover-tip hidden"></div>
+        <div class="play-status">
+          <strong id="play-status-line">Pick a strategy, set the numbers, press Play.</strong>
+          <span id="play-status-sub"></span>
+        </div>
       </section>
 
-      <aside class="lab-side">
+      <aside class="lab-side play-side">
         <h2>Strategy</h2>
-        <label class="field full">Preset
-          <select id="lab-preset"></select>
-        </label>
-        <p id="strat-notes" class="hint"></p>
-        <div class="side-tabs">
-          <button type="button" class="active" data-side="rules">Rules</button>
-          <button type="button" data-side="exec">Entry / exit</button>
-          <button type="button" data-side="risk">Risk</button>
-        </div>
-        <div id="side-rules" class="side-pane"></div>
-        <div id="side-exec" class="side-pane hidden"></div>
-        <div id="side-risk" class="side-pane hidden"></div>
-        <div class="side-actions">
-          <button type="button" id="btn-save">Save strategy</button>
-          <input id="save-name" placeholder="BTC Seller Absorption v1" />
-        </div>
+        <div class="chip-row wrap" id="play-presets"></div>
+        <h2 class="after">Parameters</h2>
+        <p class="hint">These are the same intensity knobs as the strategy. Play runs the scenario and draws the candles as price moves.</p>
+        <div id="play-sliders"></div>
       </aside>
     </div>
-
-    <div id="run-progress" class="run-progress hidden">
-      <div class="run-progress-bar"><i id="run-bar"></i></div>
-      <span id="run-meta">Starting…</span>
-    </div>
-
-    <div class="lab-kpis" id="lab-kpis">
-      <div><span>Net PnL</span><strong id="k-pnl">—</strong></div>
-      <div><span>Return</span><strong id="k-ret">—</strong></div>
-      <div><span>Profit factor</span><strong id="k-pf">—</strong></div>
-      <div><span>Win rate</span><strong id="k-wr">—</strong></div>
-      <div><span>Max DD</span><strong id="k-dd">—</strong></div>
-      <div><span>Trades</span><strong id="k-n">—</strong></div>
-      <div><span>Expectancy</span><strong id="k-exp">—</strong></div>
-      <div><span>Sharpe</span><strong id="k-sh">—</strong></div>
-    </div>
-
-    <footer class="lab-bottom">
-      <div class="bottom-tabs" id="bottom-tabs">
-        <button type="button" class="active" data-tab="trades">Trades</button>
-        <button type="button" data-tab="equity">Equity</button>
-        <button type="button" data-tab="signals">Signals</button>
-        <button type="button" data-tab="types">By type</button>
-        <button type="button" data-tab="coverage">Data coverage</button>
-        <button type="button" data-tab="explain">Diagnostics</button>
-      </div>
-      <div id="tab-trades" class="bottom-pane"></div>
-      <div id="tab-equity" class="bottom-pane hidden"></div>
-      <div id="tab-signals" class="bottom-pane hidden"></div>
-      <div id="tab-types" class="bottom-pane hidden"></div>
-      <div id="tab-coverage" class="bottom-pane hidden"></div>
-      <div id="tab-explain" class="bottom-pane hidden"></div>
-    </footer>
   </div>
   <script src="/simulator.bundle.js"></script>
 </body>

@@ -488,7 +488,8 @@ void buildSimulator().catch((err) => {
     const equity = coins.filter((c) => c.venue === 'equity');
     console.log(`\n  Order Flow Dashboard`);
     console.log(`  http://localhost:${PORT}`);
-    console.log(`  Backtest lab: http://localhost:${PORT}/simulator.html`);
+    console.log(`  Strategy chart: http://localhost:${PORT}/simulator.html`);
+    console.log(`  Backtest lab: http://localhost:${PORT}/lab.html`);
     console.log(`  Exchanges (perp): ${EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
     console.log(`  Exchanges (spot): ${SPOT_EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
     console.log(`  Crypto perp + spot footprint: ${crypto.map((c) => c.label).join(' · ')}`);

@@ -11,7 +11,11 @@ coverage/
 !.env.example
 public/simulator.bundle.js
 public/simulator.bundle.js.map
+public/lab.bundle.js
+public/lab.bundle.js.map
 public/sim.worker.js
 public/sim.worker.js.map
+public/scenario.worker.js
+public/scenario.worker.js.map
 public/sim-live.bundle.js
 public/sim-live.bundle.js.map

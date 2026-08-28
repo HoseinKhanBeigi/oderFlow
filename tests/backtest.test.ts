@@ -4,6 +4,8 @@ import { FeatureBuilder } from '../src/backtest/features.js';
 import { MicrostructureBacktestEngine } from '../src/backtest/engine.js';
 import { and, cond } from '../src/backtest/conditions.js';
 import { getStrategyPreset } from '../src/backtest/presets.js';
+import { runSignalStudy, getStudyPreset } from '../src/backtest/signal-study.js';
+import { coverageGate } from '../src/backtest/coverage.js';
 import type { DataCoverage, MarketBar, Strategy } from '../src/backtest/types.js';
 import { DEFAULT_EXECUTION, DEFAULT_RISK } from '../src/backtest/types.js';
 
@@ -258,5 +260,44 @@ describe('presets', () => {
     expect(s.longSetup).toBeTruthy();
     expect(s.longEntry).toBeTruthy();
     expect(s.execution.orderType).toBe('MARKET');
+  });
+});
+
+describe('signal study', () => {
+  it('measures forward returns against a same-window baseline without look-ahead', () => {
+    const bars: MarketBar[] = [];
+    for (let i = 0; i < 150; i++) {
+      const absorb = i >= 80 && i <= 83;
+      const rally = i >= 84;
+      bars.push(
+        bar(i, {
+          aggressiveSell: absorb ? 8_000_000 : 12_000,
+          aggressiveBuy: 9_000,
+          bidReplenishment: absorb ? 92 : 20,
+          open: absorb || rally ? 100 : 99.4,
+          close: rally ? 100 + (i - 83) * 0.6 : 100,
+          high: rally ? 100 + (i - 83) * 0.6 + 0.2 : 100.1,
+          low: 99.2,
+        }),
+      );
+    }
+    const study = runSignalStudy(bars, getStudyPreset('seller_abs'), 15, '100', bars[0]!.time);
+    expect(study.occurrences).toBeGreaterThan(0);
+    const h1 = study.horizons.find((h) => h.horizon === '1h');
+    expect(h1).toBeTruthy();
+    expect(h1!.count).toBe(study.occurrences);
+    expect(h1!.posPct).toBeGreaterThan(h1!.baselinePosPct);
+    expect(h1!.edge).toBeGreaterThan(0);
+  });
+});
+
+describe('coverage gate', () => {
+  it('rejects absorption strategies when footprint coverage is missing', () => {
+    const gate = coverageGate(getStrategyPreset('SELLER_ABSORPTION'), {
+      ...coverage(10),
+      trades: 0,
+    });
+    expect(gate.reject).toBe(true);
+    expect(gate.warnings.some((w) => /footprint/i.test(w))).toBe(true);
   });
 });

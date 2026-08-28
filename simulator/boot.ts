@@ -1,16 +1,19 @@
 import { LabChart, type OverlayId } from './chart.js';
 import {
   cloneStrategy,
+  coverageGate,
   emptyCustomStrategy,
   getStrategyPreset,
   listStrategyPresets,
   METRICS,
   OPERATORS,
+  STUDY_PRESETS,
 } from '../src/backtest/index.js';
 import type {
   BacktestResult,
   BacktestRunConfig,
   Condition,
+  ConditionGroup,
   LabMode,
   LabSignal,
   LabTrade,
@@ -18,6 +21,7 @@ import type {
   RuleNode,
   Strategy,
 } from '../src/backtest/types.js';
+import type { SignalStudyResult } from '../src/backtest/signal-study.js';
 
 const $ = (id: string) => document.getElementById(id)!;
 const TFS = [1, 5, 15, 30, 45, 60, 120, 240];
@@ -45,6 +49,7 @@ function boot(): void {
   fillTf();
   fillPresets();
   fillOverlays();
+  fillStudyPresets();
   setRangeDays(30);
   bind();
   paintStrategy();
@@ -94,7 +99,15 @@ function fillPresets(): void {
 function fillOverlays(): void {
   const root = $('overlay-menu');
   root.innerHTML = '';
+  let group = '';
   for (const o of chart.overlayList()) {
+    if (o.group !== group) {
+      group = o.group;
+      const lab = document.createElement('span');
+      lab.className = 'ov-group';
+      lab.textContent = group;
+      root.appendChild(lab);
+    }
     const b = document.createElement('button');
     b.type = 'button';
     b.dataset.overlay = o.id;
@@ -102,6 +115,24 @@ function fillOverlays(): void {
     if (chart.isOverlay(o.id)) b.classList.add('active');
     root.appendChild(b);
   }
+}
+
+function fillStudyPresets(): void {
+  const sel = $('study-preset') as HTMLSelectElement;
+  sel.innerHTML = '';
+  for (const p of STUDY_PRESETS) {
+    const o = document.createElement('option');
+    o.value = p.id;
+    o.textContent = p.label;
+    sel.appendChild(o);
+  }
+}
+
+function syncOverlayButtons(): void {
+  $('overlay-menu').querySelectorAll('[data-overlay]').forEach((btn) => {
+    const id = (btn as HTMLElement).dataset.overlay as OverlayId;
+    btn.classList.toggle('active', chart.isOverlay(id));
+  });
 }
 
 function bind(): void {
@@ -134,9 +165,9 @@ function bind(): void {
     const btn = (e.target as HTMLElement).closest('[data-overlay]') as HTMLElement | null;
     if (!btn) return;
     const id = btn.dataset.overlay as OverlayId;
-    const on = !btn.classList.contains('active');
-    btn.classList.toggle('active', on);
+    const on = !chart.isOverlay(id);
     chart.toggleOverlay(id, on);
+    syncOverlayButtons();
   });
   $('lab-preset').addEventListener('change', () => {
     const v = ($('lab-preset') as HTMLSelectElement).value;
@@ -149,6 +180,10 @@ function bind(): void {
   });
   $('btn-run').addEventListener('click', () => void run());
   $('btn-save').addEventListener('click', saveCurrent);
+  $('btn-study').addEventListener('click', () => void runStudy());
+  $('inspect-close').addEventListener('click', () => $('inspect-panel').classList.add('hidden'));
+  $('side-rules').addEventListener('click', onRuleClick);
+  $('side-rules').addEventListener('change', () => syncRulesFromDom());
   document.querySelector('.side-tabs')!.addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest('[data-side]') as HTMLElement | null;
     if (!btn) return;
@@ -162,7 +197,7 @@ function bind(): void {
     const btn = (e.target as HTMLElement).closest('[data-tab]') as HTMLElement | null;
     if (!btn) return;
     document.querySelectorAll('#bottom-tabs button').forEach((b) => b.classList.toggle('active', b === btn));
-    for (const id of ['trades', 'equity', 'signals', 'types', 'coverage', 'explain']) {
+    for (const id of ['trades', 'equity', 'signals', 'study', 'types', 'coverage', 'explain']) {
       $(`tab-${id}`).classList.toggle('hidden', id !== btn.dataset.tab);
     }
   });
@@ -172,9 +207,19 @@ function bind(): void {
   $('lab-symbol').addEventListener('change', () => {
     symbol = ($('lab-symbol') as HTMLInputElement).value.toUpperCase() || 'BTCUSDT';
   });
+  chart.onClick((time) => {
+    if (time == null || !result) return;
+    const sig = pickSignal(result.signals, time);
+    const trade = result.trades.find((t) => t.signalId === sig?.id) ?? result.trades.find((t) => t.entryTime === time);
+    if (sig) openInspect(sig, trade);
+    if (trade) {
+      chart.showTrade(trade);
+      chart.goTo(trade.entryTime);
+    } else if (sig) chart.goTo(sig.barTime);
+  });
   chart.onCrosshair((time) => {
     if (time == null || !result) return;
-    const sig = [...result.signals].reverse().find((s) => s.barTime === time && (s.kind.includes('ENTRY') || s.kind === 'ABSORPTION'));
+    const sig = pickSignal(result.signals, time);
     const tip = $('hover-tip');
     if (!sig) {
       tip.classList.add('hidden');
@@ -235,7 +280,16 @@ async function run(): Promise<void> {
     bars = data.bars;
     signalFromSec = data.signalFromSec ?? from;
     chart.setBars(bars);
-    paintCoverage(data.coverage);
+    const gate = coverageGate(strategy, data.coverage!);
+    paintCoverage({ ...data.coverage!, warnings: gate.warnings });
+    if (gate.reject) {
+      $('lab-banner').textContent = gate.warnings.join(' ');
+      showTab('coverage');
+      throw new Error(gate.warnings[gate.warnings.length - 1] ?? 'Required data is missing.');
+    }
+    if (gate.warnings.length) {
+      $('lab-banner').textContent = gate.warnings[gate.warnings.length - 1] ?? '';
+    }
     const config: BacktestRunConfig = {
       mode,
       tfMinutes: tf,
@@ -335,6 +389,8 @@ function paintTrades(trades: LabTrade[]): void {
       if (!t) return;
       chart.showTrade(t);
       chart.goTo(t.entryTime);
+      const sig = result?.signals.find((s) => s.id === t.signalId);
+      if (sig) openInspect(sig, t);
     },
   );
 }
@@ -355,7 +411,11 @@ function paintSignals(signals: LabSignal[]): void {
     'tab-signals',
     (i) => {
       const s = rows[i];
-      if (s) chart.goTo(s.barTime);
+      if (!s) return;
+      chart.goTo(s.barTime);
+      const trade = result?.trades.find((t) => t.signalId === s.id);
+      openInspect(s, trade);
+      if (trade) chart.showTrade(trade);
     },
   );
 }
@@ -417,7 +477,6 @@ function paintStrategy(): void {
     block('Short setup', strategy.shortSetup) +
     block('Short entry', strategy.shortEntry) +
     block('Context (no auto entry)', strategy.context);
-  bindRuleEditors($('side-rules'));
   $('side-exec').innerHTML = `
     <div class="exec-grid">
       <label>Order <select id="ex-type"><option>MARKET</option><option>LIMIT</option><option>STOP</option></select></label>
@@ -445,13 +504,15 @@ function paintStrategy(): void {
 }
 
 function block(title: string, node?: RuleNode): string {
-  if (!node) return `<div class="rule-block"><header>${title}</header><button type="button" data-add="${title}">+ condition</button></div>`;
-  return `<div class="rule-block" data-title="${esc(title)}"><header>${title}</header>${renderNode(node)}</div>`;
+  const body = node
+    ? renderNode(node.type === 'group' ? node : { type: 'group', bool: 'AND', children: [node] })
+    : `<div class="cond-group"><button type="button" class="bool-toggle" data-bool>AND</button></div>`;
+  return `<div class="rule-block" data-title="${esc(title)}"><header>${title}</header>${body}<div class="add-row"><button type="button" data-add="${esc(title)}">+ condition</button><button type="button" data-add-group="${esc(title)}">+ group</button></div></div>`;
 }
 
 function renderNode(node: RuleNode): string {
   if (node.type === 'group') {
-    return `<div class="cond-group"><div class="bool-label">${node.not ? 'NOT ' : ''}${node.bool}</div>${node.children.map(renderNode).join('')}</div>`;
+    return `<div class="cond-group"><button type="button" class="bool-toggle" data-bool>${node.not ? 'NOT ' : ''}${node.bool}</button>${node.children.map(renderNode).join('')}</div>`;
   }
   return condRow(node);
 }
@@ -462,25 +523,169 @@ function condRow(c: Condition): string {
   return `<div class="cond-row" data-cond="1"><select data-k="metric">${metrics}</select><select data-k="op">${ops}</select><input data-k="value" type="number" step="0.1" value="${c.value}" /><button type="button" data-del="1">×</button></div>`;
 }
 
-function bindRuleEditors(root: HTMLElement): void {
-  root.querySelectorAll('[data-del]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      (btn as HTMLElement).closest('.cond-row')?.remove();
-      syncRulesFromDom();
+function onRuleClick(e: Event): void {
+  const t = e.target as HTMLElement;
+  if (t.closest('[data-del]')) {
+    t.closest('.cond-row')?.remove();
+    syncRulesFromDom();
+    return;
+  }
+  const add = t.closest('[data-add]') as HTMLElement | null;
+  if (add) {
+    const wrap = add.closest('.rule-block');
+    const group = wrap?.querySelector(':scope > .cond-group') ?? wrap?.querySelector('.cond-group');
+    if (!group) return;
+    group.insertAdjacentHTML('beforeend', condRow({ type: 'cond', metric: 'aggressiveSell', op: 'percentile_above', value: 85 }));
+    syncRulesFromDom();
+    return;
+  }
+  const addGroup = t.closest('[data-add-group]') as HTMLElement | null;
+  if (addGroup) {
+    const wrap = addGroup.closest('.rule-block');
+    const group = wrap?.querySelector(':scope > .cond-group');
+    if (!group) return;
+    group.insertAdjacentHTML(
+      'beforeend',
+      `<div class="cond-group"><button type="button" class="bool-toggle" data-bool>OR</button>${condRow({ type: 'cond', metric: 'spotDelta', op: 'turns_positive', value: 0 })}</div>`,
+    );
+    syncRulesFromDom();
+    return;
+  }
+  const boolBtn = t.closest('[data-bool]') as HTMLElement | null;
+  if (boolBtn) {
+    const not = boolBtn.textContent?.includes('NOT');
+    const or = boolBtn.textContent?.includes('OR');
+    boolBtn.textContent = `${not ? 'NOT ' : ''}${or ? 'AND' : 'OR'}`;
+    syncRulesFromDom();
+  }
+}
+
+function pickSignal(signals: LabSignal[], time: number): LabSignal | undefined {
+  const at = signals.filter((s) => s.barTime === time && s.kind !== 'CONTEXT');
+  return at.find((s) => s.kind.includes('ENTRY')) ?? at.find((s) => s.kind.includes('SETUP')) ?? at[at.length - 1];
+}
+
+function openInspect(sig: LabSignal, trade?: LabTrade): void {
+  const snap = sig.snapshot;
+  $('inspect-panel').classList.remove('hidden');
+  $('inspect-title').textContent = sig.kind.replace(/_/g, ' ');
+  const rows: Array<[string, string]> = [
+    ['Timestamp', fmtTime(sig.timestamp || sig.barTime)],
+    ['Price', snap.price.toFixed(2)],
+    ['Strategy', `${sig.strategy} v${sig.strategyVersion}`],
+    ['Score', sig.score.toFixed(0)],
+    ['Confidence', `${sig.confidence.toFixed(0)} / 100`],
+    ['Delta', snap.delta.toFixed(0)],
+    ['CVD', snap.cvd.toFixed(0)],
+    ['Spot delta', snap.spotDelta.toFixed(0)],
+    ['Futures delta', snap.futuresDelta.toFixed(0)],
+    ['OI', snap.oi ? snap.oi.toFixed(0) : '—'],
+    ['Funding', snap.funding ? snap.funding.toFixed(4) : '—'],
+    ['Bid repl.', `${snap.bidReplenishment.toFixed(0)}p`],
+    ['Ask repl.', `${snap.askReplenishment.toFixed(0)}p`],
+    ['Bid wdr.', `${snap.bidWithdrawal.toFixed(0)}p`],
+    ['Ask wdr.', `${snap.askWithdrawal.toFixed(0)}p`],
+    ['Seller abs.', snap.sellerAbsorption ? 'TRUE' : '—'],
+    ['Buyer abs.', snap.buyerAbsorption ? 'TRUE' : '—'],
+    ['Structure', snap.structure.shift.replace(/_/g, ' ')],
+    ['Data quality', snap.dataQuality.toFixed(0)],
+    ['Fwd 15m', fmtFwd(sig.forwardReturns['15m'])],
+    ['Fwd 1h', fmtFwd(sig.forwardReturns['1h'])],
+    ['Fwd 4h', fmtFwd(sig.forwardReturns['4h'])],
+  ];
+  if (trade) {
+    rows.push(
+      ['Exit', trade.exitPrice != null ? trade.exitPrice.toFixed(2) : 'open'],
+      ['PnL', money(trade.pnl)],
+      ['R', trade.r.toFixed(2)],
+      ['MAE', `${trade.maePct.toFixed(2)}%`],
+      ['MFE', `${trade.mfePct.toFixed(2)}%`],
+    );
+  }
+  const ev = sig.evidence.map((e) => `${esc(e.label)}: ${esc(e.value)}${e.percentile != null ? ` (${e.percentile.toFixed(0)}p)` : ''}`).join('<br/>');
+  $('inspect-body').innerHTML =
+    `<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}</dl>` +
+    (ev ? `<div class="inspect-ev">${ev}</div>` : '');
+}
+
+function showTab(id: string): void {
+  document.querySelectorAll('#bottom-tabs button').forEach((b) => b.classList.toggle('active', (b as HTMLElement).dataset.tab === id));
+  for (const t of ['trades', 'equity', 'signals', 'study', 'types', 'coverage', 'explain']) {
+    $(`tab-${t}`).classList.toggle('hidden', t !== id);
+  }
+}
+
+async function ensureBars(): Promise<void> {
+  if (bars.length) return;
+  const from = dateSec($('lab-from') as HTMLInputElement);
+  const to = dateSec($('lab-to') as HTMLInputElement) + 86_400;
+  const url = `/api/lab/dataset?symbol=${encodeURIComponent(symbol)}&market=${market}&exchange=${encodeURIComponent(exchange)}&tf=${tf}&from=${from}&to=${to}&window=500`;
+  const data = (await (await fetch(url)).json()) as { bars?: MarketBar[]; coverage?: BacktestResult['coverage']; signalFromSec?: number; error?: string };
+  if (!data.bars?.length) throw new Error(data.error || 'No candles returned for this range.');
+  bars = data.bars;
+  signalFromSec = data.signalFromSec ?? from;
+  chart.setBars(bars);
+  paintCoverage(data.coverage);
+}
+
+async function runStudy(): Promise<void> {
+  $('btn-study').setAttribute('disabled', 'true');
+  showProgress(true, 4, 'Loading bars for signal study…');
+  try {
+    await ensureBars();
+    showTab('study');
+    await new Promise<void>((resolve, reject) => {
+      worker?.terminate();
+      worker = new Worker('/backtest.worker.js');
+      worker.onmessage = (ev: MessageEvent<{ type: string; result?: SignalStudyResult; message?: string }>) => {
+        const msg = ev.data;
+        if (msg.type === 'error') {
+          reject(new Error(msg.message));
+          return;
+        }
+        if (msg.type === 'study' && msg.result) {
+          paintStudy(msg.result);
+          resolve();
+        }
+      };
+      worker.onerror = (e) => reject(e.error ?? new Error('Study worker failed'));
+      worker.postMessage({
+        type: 'study',
+        bars,
+        presetId: ($('study-preset') as HTMLSelectElement).value,
+        tfMinutes: tf,
+        window: '500',
+        signalFromSec,
+      });
     });
-  });
-  root.querySelectorAll('[data-add]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const wrap = (btn as HTMLElement).closest('.rule-block');
-      if (!wrap) return;
-      wrap.insertAdjacentHTML('beforeend', condRow({ type: 'cond', metric: 'aggressiveSell', op: 'percentile_above', value: 85 }));
-      bindRuleEditors(wrap as HTMLElement);
-      syncRulesFromDom();
-    });
-  });
-  root.querySelectorAll('.cond-row select, .cond-row input').forEach((el) => {
-    el.addEventListener('change', () => syncRulesFromDom());
-  });
+  } catch (err) {
+    $('study-body').textContent = err instanceof Error ? err.message : String(err);
+  } finally {
+    $('btn-study').removeAttribute('disabled');
+    showProgress(false, 100, '');
+  }
+}
+
+function paintStudy(study: SignalStudyResult): void {
+  const flag = study.insufficientSample
+    ? `<p class="oos-flag">INSUFFICIENT SAMPLE (${study.occurrences} occurrences). Treat edge as noise.</p>`
+    : '';
+  const kpis = `<div class="study-kpis"><span>Occurrences <strong>${study.occurrences}</strong></span></div>`;
+  const rows = study.horizons.map((h) => [
+    h.horizon,
+    String(h.count),
+    `${h.avg >= 0 ? '+' : ''}${h.avg.toFixed(2)}%`,
+    `${h.median >= 0 ? '+' : ''}${h.median.toFixed(2)}%`,
+    `${h.posPct.toFixed(1)}%`,
+    `${h.negPct.toFixed(1)}%`,
+    `${h.baselinePosPct.toFixed(1)}%`,
+    `<span class="${h.edge >= 0 ? 'edge-pos' : 'edge-neg'}">${h.count ? `${h.edge >= 0 ? '+' : ''}${h.edge.toFixed(1)} pp` : '—'}</span>`,
+    `${h.avgMae.toFixed(2)}%`,
+    `${h.avgMfe.toFixed(2)}%`,
+  ]);
+  $('study-body').innerHTML =
+    `<p class="hint">${esc(study.label)} — forward returns after the condition vs every bar in the same window (baseline). Edge is the difference in probability that price is higher.</p>${flag}${kpis}` +
+    table(['Horizon', 'n', 'Avg', 'Median', 'P(up)', 'P(down)', 'Baseline P(up)', 'Edge', 'MAE', 'MFE'], rows, 'study-body');
 }
 
 function syncRulesFromDom(): void {
@@ -488,20 +693,44 @@ function syncRulesFromDom(): void {
   strategy.longEntry = nodeFromBlock('Long entry');
   strategy.shortSetup = nodeFromBlock('Short setup');
   strategy.shortEntry = nodeFromBlock('Short entry');
+  strategy.context = nodeFromBlock('Context (no auto entry)');
 }
 
 function nodeFromBlock(title: string): RuleNode | undefined {
   const blockEl = [...document.querySelectorAll('#side-rules .rule-block')].find((el) => el.querySelector('header')?.textContent === title);
   if (!blockEl) return undefined;
-  const rows = [...blockEl.querySelectorAll('.cond-row')] as HTMLElement[];
-  if (!rows.length) return undefined;
-  const conds: Condition[] = rows.map((row) => ({
+  const group = blockEl.querySelector(':scope > .cond-group');
+  if (group) {
+    const parsed = parseGroup(group);
+    if (!parsed.children.length) return undefined;
+    return parsed.children.length === 1 && !parsed.not ? parsed.children[0] : parsed;
+  }
+  return undefined;
+}
+
+function parseGroup(el: Element): ConditionGroup {
+  const toggle = el.querySelector(':scope > [data-bool]');
+  const text = toggle?.textContent ?? 'AND';
+  const children: RuleNode[] = [];
+  for (const child of el.children) {
+    if ((child as HTMLElement).classList.contains('cond-row')) children.push(parseCond(child as HTMLElement));
+    else if ((child as HTMLElement).classList.contains('cond-group')) children.push(parseGroup(child));
+  }
+  return {
+    type: 'group',
+    bool: text.includes('OR') ? 'OR' : 'AND',
+    not: text.includes('NOT') || undefined,
+    children,
+  };
+}
+
+function parseCond(row: HTMLElement): Condition {
+  return {
     type: 'cond',
     metric: (row.querySelector('[data-k="metric"]') as HTMLSelectElement).value as Condition['metric'],
     op: (row.querySelector('[data-k="op"]') as HTMLSelectElement).value as Condition['op'],
     value: Number((row.querySelector('[data-k="value"]') as HTMLInputElement).value) || 0,
-  }));
-  return conds.length === 1 ? conds[0] : { type: 'group', bool: 'AND', children: conds };
+  };
 }
 
 function readExecRisk(): void {
@@ -580,8 +809,9 @@ function loadSaved(): Strategy[] {
 }
 
 function tooltipHtml(s: LabSignal): string {
-  const ev = s.evidence.slice(0, 8).map((e) => `${esc(e.label)}: ${esc(e.value)}`).join('<br/>');
-  return `<strong>${esc(s.kind.replace(/_/g, ' '))}</strong>${fmtTime(s.barTime)} · ${s.price.toFixed(2)}<br/>score ${s.score.toFixed(0)} · dq ${s.confidence.toFixed(0)}<br/>${ev}`;
+  const snap = s.snapshot;
+  const ev = s.evidence.slice(0, 6).map((e) => `${esc(e.label)}: ${esc(e.value)}`).join('<br/>');
+  return `<strong>${esc(s.kind.replace(/_/g, ' '))}</strong>${fmtTime(s.barTime)} · ${s.price.toFixed(2)}<br/>score ${s.score.toFixed(0)} · conf ${s.confidence.toFixed(0)}<br/>Δ ${snap.delta.toFixed(0)} · CVD ${snap.cvd.toFixed(0)} · OI ${snap.oi ? snap.oi.toFixed(0) : '—'}<br/>${ev}`;
 }
 
 function table(headers: string[], rows: string[][], paneId: string, onRow?: (i: number) => void): string {

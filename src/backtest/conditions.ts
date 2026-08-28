@@ -1,5 +1,5 @@
 import { metricValue } from './features.js';
-import type { Condition, ConditionGroup, FeatureSnapshot, RuleNode } from './types.js';
+import type { Condition, ConditionGroup, FeatureSnapshot, MetricId, RuleNode } from './types.js';
 
 export function evalRule(
   node: RuleNode | undefined,
@@ -128,4 +128,10 @@ export function cond(
   persistBars?: number,
 ): Condition {
   return persistBars != null ? { type: 'cond', metric, op, value, persistBars } : { type: 'cond', metric, op, value };
+}
+
+export function collectMetrics(node?: RuleNode): MetricId[] {
+  if (!node) return [];
+  if (node.type === 'cond') return [node.metric];
+  return node.children.flatMap((child) => collectMetrics(child));
 }

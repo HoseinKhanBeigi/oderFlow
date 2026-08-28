@@ -9,6 +9,7 @@ import { OpenInterestEngine, FundingEngine } from '../src/simulation/oi-funding.
 import { CalibrationStore, defaultCalibration, validateImpact } from '../src/simulation/calibration.js';
 import type { SimulationEvent } from '../src/simulation/events.js';
 import { SimulationClock } from '../src/simulation/clock.js';
+import { candlesFromStates } from '../simulator/sim-candles.js';
 
 function btcBook() {
   return {
@@ -385,5 +386,20 @@ describe('simulation clock is independent of frames', () => {
     clock.step();
     clock.step();
     expect(ticks).toEqual([50, 100]);
+  });
+});
+
+describe('scenario ticks become chart candles', () => {
+  it('builds sequential OHLC from seller absorption', () => {
+    const { states, spec } = new ScenarioEngine().runPreset('SELLER_ABSORPTION', { durationMs: 1_000 });
+    const { bars, frames } = candlesFromStates(states, spec.startPrice, 4, 1_700_000_000);
+    expect(bars.length).toBeGreaterThan(4);
+    expect(bars.length).toBe(frames.length);
+    expect(bars[0]!.open).toBe(spec.startPrice);
+    for (let i = 1; i < bars.length; i++) {
+      expect(bars[i]!.time).toBe(bars[i - 1]!.time + 1);
+      expect(bars[i]!.open).toBe(bars[i - 1]!.close);
+    }
+    expect(bars[bars.length - 1]!.close).toBe(states[states.length - 1]!.price);
   });
 });
