@@ -872,16 +872,6 @@ body {
 .chart-live-btn.hidden { display: none; }
 
 .data-mode-tabs { display: flex; gap: 0.3rem; }
-.sim-link {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--accent);
-  text-decoration: none;
-  padding: 0.28rem 0.55rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-.sim-link:hover { border-color: var(--accent); }
 .data-mode-tab {
   font-family: var(--font);
   font-size: 0.68rem;

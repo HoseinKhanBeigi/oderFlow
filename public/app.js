@@ -2989,11 +2989,6 @@ function subscribeSimulator() {
   }));
   const win = $('sim-live-window');
   if (win) win.textContent = `${trail} window · matches footprint`;
-  const link = document.querySelector('.sim-link');
-  if (link) {
-    const q = new URLSearchParams({ mode: 'realtime', symbol: selectedSymbol, market: simMarket() });
-    link.href = `/simulator.html?${q}`;
-  }
 }
 
 let simLive = null;

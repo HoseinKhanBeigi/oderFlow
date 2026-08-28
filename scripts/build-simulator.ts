@@ -8,7 +8,6 @@ export async function buildSimulator(watch = false): Promise<void> {
   const options: esbuild.BuildOptions = {
     absWorkingDir: root,
     entryPoints: {
-      'simulator.bundle': join(root, 'simulator/play.ts'),
       'lab.bundle': join(root, 'simulator/boot.ts'),
       'backtest.worker': join(root, 'simulator/backtest.worker.ts'),
       'scenario.worker': join(root, 'simulator/scenario.worker.ts'),

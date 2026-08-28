@@ -283,6 +283,11 @@ const server = createServer(async (req, res) => {
   }
 
   const requested = req.url?.split('?')[0] || '/';
+  if (requested === '/simulator.html' || requested === '/simulator.bundle.js' || requested === '/simulator.bundle.js.map') {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not found');
+    return;
+  }
   const path = requested === '/' ? '/index.html' : requested;
   if (!path.startsWith('/') || path.includes('..')) {
     res.writeHead(400);
@@ -481,14 +486,13 @@ oiTimer.unref?.();
 
 void buildSimulator().catch((err) => {
   console.error('  Simulator bundle failed:', err instanceof Error ? err.message : err);
-  console.error('  Dashboard will still start; /simulator.html needs a successful bundle.');
+  console.error('  Dashboard will still start; /lab.html needs a successful bundle.');
 }).finally(() => {
   server.listen(PORT, () => {
     const crypto = coins.filter((c) => c.venue === 'crypto');
     const equity = coins.filter((c) => c.venue === 'equity');
     console.log(`\n  Order Flow Dashboard`);
     console.log(`  http://localhost:${PORT}`);
-    console.log(`  Strategy chart: http://localhost:${PORT}/simulator.html`);
     console.log(`  Backtest lab: http://localhost:${PORT}/lab.html`);
     console.log(`  Exchanges (perp): ${EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
     console.log(`  Exchanges (spot): ${SPOT_EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
