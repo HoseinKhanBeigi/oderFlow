@@ -1720,8 +1720,8 @@ function fpLayout(cssWidth) {
   const leftPad = 8;
   const priceAxisWidth = 72;
   const candleW = 7;
-  const cellW = 52;
-  const gap = 8;
+  const cellW = 88;
+  const gap = 6;
   const barWidth = candleW + cellW;
   const stride = barWidth + gap;
   const availW = Math.max(1, cssWidth - priceAxisWidth - leftPad);
@@ -1942,7 +1942,6 @@ async function loadFootprintHistory() {
     if (req !== fpHistoryReq) return;
     if (!data?.enabled) {
       fpHistoryEnabled = false;
-      seedFromKlines();
       return;
     }
     const map = new Map();
@@ -1955,10 +1954,7 @@ async function loadFootprintHistory() {
 }
 
 function seedFootprintKlines() {
-  if (fpHistoryEnabled) {
-    void loadFootprintHistory();
-    return;
-  }
+  if (fpHistoryEnabled) void loadFootprintHistory();
   void seedFromKlines();
 }
 
@@ -1973,7 +1969,7 @@ async function seedFromKlines() {
   const req = ++fpKlineReq;
   try {
     const rows = await fetch(
-      `/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${fpKlineInterval(tf)}&exchange=${encodeURIComponent(exchange)}&market=${encodeURIComponent(footprintMarket())}`,
+      `/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${fpKlineInterval(tf)}&exchange=${encodeURIComponent(exchange)}&market=${encodeURIComponent(footprintMarket())}&limit=400`,
     ).then((r) => r.json());
     if (req !== fpKlineReq || symbol !== selectedSymbol || tf !== chartTfMinutes || klineExchange() !== exchange) return;
     if (!Array.isArray(rows) || !rows.length) {
@@ -1987,13 +1983,16 @@ async function seedFromKlines() {
         high: Number(k[2]),
         low: Number(k[3]),
         close: Number(k[4]),
+        volume: Number(k[5] ?? 0),
+        quote: Number(k[7] ?? k[6] ?? 0),
+        takerBuy: Number(k[10] ?? k[9] ?? NaN),
       }))
       .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.close));
     if (tf === 45) candles = aggregateToMinutes(candles, 45);
     const seed = getFpKlineSeed(symbol, tf, exchange);
     seed.clear();
     for (const c of candles) {
-      seed.set(c.time, {
+      const bar = {
         time: c.time,
         open: c.open,
         high: c.high,
@@ -2002,12 +2001,78 @@ async function seedFromKlines() {
         levels: new Map(),
         totalBuy: 0,
         totalSell: 0,
-      });
+      };
+      fillKlineProxyLevels(bar, c.volume, c.quote, c.takerBuy);
+      seed.set(c.time, bar);
     }
   } catch {
     /* live 1m rollup still works */
   }
   if (req === fpKlineReq) drawFootprint();
+}
+
+function klineQuoteUsd(volume, quote, high, low, close) {
+  const typical = (high + low + close) / 3;
+  if (Number.isFinite(quote) && quote > 0) return quote;
+  if (!Number.isFinite(volume) || volume <= 0 || !Number.isFinite(typical) || typical <= 0) return 0;
+  return volume * typical;
+}
+
+function fillKlineProxyLevels(bar, volume, quote, takerBuy) {
+  const usd = klineQuoteUsd(volume, quote, bar.high, bar.low, bar.close);
+  if (usd <= 0) return bar;
+  const range = Math.max(bar.high - bar.low, tickSize((bar.high + bar.low) / 2));
+  const body = range > 0 ? Math.abs(bar.close - bar.open) / range : 0;
+  let buyFrac = 0.5;
+  if (Number.isFinite(takerBuy) && takerBuy >= 0 && volume > 0) {
+    buyFrac = Math.min(0.9, Math.max(0.1, takerBuy / volume));
+  } else if (bar.close > bar.open) {
+    buyFrac = 0.52 + 0.28 * Math.min(1, body);
+  } else if (bar.close < bar.open) {
+    buyFrac = 0.48 - 0.28 * Math.min(1, body);
+  }
+  const buyUsd = usd * buyFrac;
+  const sellUsd = usd - buyUsd;
+  const tick = tickSize((bar.high + bar.low) / 2);
+  let lo = priceToTick(bar.low, tick);
+  let hi = priceToTick(bar.high, tick);
+  if (hi < lo) {
+    const swap = lo;
+    lo = hi;
+    hi = swap;
+  }
+  const n = Math.max(1, Math.round((hi - lo) / tick) + 1);
+  const step = n <= 14 ? tick : tick * Math.max(1, Math.ceil(n / 14));
+  const prices = [];
+  for (let p = lo; p <= hi + step * 0.001; p += step) {
+    prices.push(priceToTick(p, step));
+  }
+  if (!prices.length) prices.push(priceToTick(bar.close, tick));
+  const peak = priceToTick(bar.close, step);
+  const span = Math.max(hi - lo, step);
+  const weights = prices.map((p) => Math.max(0.12, 1 - Math.abs(p - peak) / span));
+  const wsum = weights.reduce((a, b) => a + b, 0) || 1;
+  bar.levels = new Map();
+  bar.totalBuy = buyUsd;
+  bar.totalSell = sellUsd;
+  prices.forEach((p, i) => {
+    const w = weights[i] / wsum;
+    bar.levels.set(p.toFixed(6), { price: p, buy: buyUsd * w, sell: sellUsd * w });
+  });
+  return bar;
+}
+
+function levelCoverage(bar) {
+  if (!bar.levels?.size) return 0;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const lv of bar.levels.values()) {
+    if ((lv.buy + lv.sell) <= 0) continue;
+    if (lv.price < lo) lo = lv.price;
+    if (lv.price > hi) hi = lv.price;
+  }
+  if (!Number.isFinite(lo)) return 0;
+  return (hi - lo) / Math.max(bar.high - bar.low, 1e-9);
 }
 
 function mergeFootprintBar(target, src) {
@@ -2079,18 +2144,29 @@ function live1mStore(symbol) {
 
 function footprintBars(symbol = selectedSymbol, tf = chartTfMinutes) {
   const live = tf === 1 ? live1mStore(symbol) : aggregateFrom1m(symbol, tf);
-  const seed = fpHistoryEnabled
-    ? getFpHistory(symbol, tf, selectedExchange)
-    : tf >= 15
-      ? getFpKlineSeed(symbol, tf)
-      : new Map();
-  if (seed.size === 0 && live.size === 0) return [];
+  const hist = fpHistoryEnabled ? getFpHistory(symbol, tf, selectedExchange) : new Map();
+  const kline = tf >= 15 ? getFpKlineSeed(symbol, tf) : new Map();
+  if (hist.size === 0 && kline.size === 0 && live.size === 0) return [];
 
   const out = new Map();
-  for (const bar of seed.values()) out.set(bar.time, cloneFpBar(bar));
+  for (const bar of hist.values()) out.set(bar.time, cloneFpBar(bar));
   for (const bar of live.values()) {
     if (!out.has(bar.time)) out.set(bar.time, cloneFpBar(bar));
     else mergeFootprintBar(out.get(bar.time), bar);
+  }
+  for (const k of kline.values()) {
+    const existing = out.get(k.time);
+    if (!existing) {
+      out.set(k.time, cloneFpBar(k));
+    } else if ((k.totalBuy + k.totalSell) > 0 && levelCoverage(existing) < 0.5) {
+      for (const [key, lv] of k.levels) {
+        if (!existing.levels.has(key)) {
+          existing.levels.set(key, { price: lv.price, buy: lv.buy, sell: lv.sell });
+          existing.totalBuy += lv.buy;
+          existing.totalSell += lv.sell;
+        }
+      }
+    }
   }
   return [...out.values()].sort((a, b) => a.time - b.time);
 }
@@ -2184,7 +2260,7 @@ function ingestTradeToChart(trade) {
 function displayBucket(high, low, chartH) {
   const raw = tickSize((high + low) / 2);
   const range = Math.max(high - low, raw);
-  const maxRows = Math.max(8, Math.floor(chartH / 16));
+  const maxRows = Math.max(8, Math.floor(chartH / 20));
   let bucket = raw;
   while (range / bucket > maxRows) bucket *= 2;
   return bucket;
@@ -2344,11 +2420,11 @@ function drawFootprint() {
   }
 
   const bucketed = visible.map((bar) => bucketBarLevels(bar, bucket));
-  let maxVol = 0;
+  let maxSide = 0;
   for (const levels of bucketed) {
     for (const lv of levels) {
-      const v = lv.buy + lv.sell;
-      if (v > maxVol) maxVol = v;
+      if (lv.buy > maxSide) maxSide = lv.buy;
+      if (lv.sell > maxSide) maxSide = lv.sell;
     }
   }
 
@@ -2423,27 +2499,33 @@ function drawFootprint() {
     ctx.stroke();
 
     const rh = Math.max(1, rowH - 1);
+    const sellBox = half - 2;
+    const buyBox = cellW - half - 2;
     for (const lv of levels) {
       const y = yForPrice(lv.price);
       const total = lv.buy + lv.sell;
       if (total <= 0) continue;
-      const alpha = 0.12 + 0.55 * (total / Math.max(maxVol, 1));
-      const buyWins = lv.buy >= lv.sell;
-      ctx.fillStyle = buyWins ? `rgba(34, 197, 94, ${alpha})` : `rgba(239, 68, 68, ${alpha})`;
-      ctx.fillRect(cellX + 1, y - rh / 2, cellW - 2, rh);
+      if (lv.sell > 0) {
+        const a = 0.14 + 0.62 * (lv.sell / Math.max(maxSide, 1));
+        ctx.fillStyle = `rgba(239, 68, 68, ${a})`;
+        ctx.fillRect(cellX + 1, y - rh / 2, sellBox, rh);
+      }
+      if (lv.buy > 0) {
+        const a = 0.14 + 0.62 * (lv.buy / Math.max(maxSide, 1));
+        ctx.fillStyle = `rgba(34, 197, 94, ${a})`;
+        ctx.fillRect(cellX + half + 1, y - rh / 2, buyBox, rh);
+      }
       if (poc.vol > 0 && lv.price === poc.price) {
         ctx.strokeStyle = '#fbbf24';
         ctx.strokeRect(cellX + 1, y - rh / 2 + 0.5, cellW - 2, rh - 1);
       }
-      if (rowH >= 22) {
-        const fs = Math.min(10, Math.max(8, rowH - 6));
-        ctx.font = `${fs}px JetBrains Mono, monospace`;
-        ctx.fillStyle = lv.sell > 0 ? '#fca5a5' : '#4b5563';
-        ctx.textAlign = 'right';
-        ctx.fillText(lv.sell > 0 ? fmtVolShort(lv.sell) : '–', cellX + half - 4, y);
-        ctx.fillStyle = lv.buy > 0 ? '#86efac' : '#4b5563';
-        ctx.textAlign = 'left';
-        ctx.fillText(lv.buy > 0 ? fmtVolShort(lv.buy) : '–', cellX + half + 4, y);
+      if (lv.sell > 0) {
+        ctx.fillStyle = '#fecaca';
+        drawFpCellText(ctx, fmtVolShort(lv.sell), cellX + 1, y, sellBox, rh, 'right');
+      }
+      if (lv.buy > 0) {
+        ctx.fillStyle = '#bbf7d0';
+        drawFpCellText(ctx, fmtVolShort(lv.buy), cellX + half + 1, y, buyBox, rh, 'left');
       }
     }
 
@@ -2465,7 +2547,7 @@ function drawFootprint() {
     if (barUsd > 0) {
       ctx.font = '9px JetBrains Mono, monospace';
       ctx.fillStyle = delta >= 0 ? '#22c55e' : '#ef4444';
-      ctx.fillText(`${delta >= 0 ? '+' : '-'}${fmtVolLabel(Math.abs(delta))}`, x + barWidth / 2, topPad + chartH + 26);
+      ctx.fillText(`${delta >= 0 ? '+' : '-'}${fmtVolShort(Math.abs(delta))}`, x + barWidth / 2, topPad + chartH + 26);
     }
   }
 
@@ -2699,10 +2781,29 @@ function fmtVolLabel(v) {
 }
 
 function fmtVolShort(v) {
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 10_000) return `${Math.round(v / 1_000)}K`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
-  return `${Math.round(v)}`;
+  const n = Math.abs(v);
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(n >= 10_000_000_000 ? 0 : 1)}B`;
+  if (n >= 100_000_000) return `${Math.round(n / 1_000_000)}M`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000) return `${Math.round(n / 1_000)}K`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return `${Math.round(n)}`;
+}
+
+function drawFpCellText(ctx, text, x, y, w, h, align) {
+  if (!text || h < 7 || w < 10) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x + 1, y - h / 2 + 0.5, Math.max(1, w - 2), Math.max(1, h - 1));
+  ctx.clip();
+  const fs = Math.min(8, Math.max(6, h - 6));
+  ctx.font = `${fs}px JetBrains Mono, monospace`;
+  ctx.textAlign = align;
+  ctx.textBaseline = 'middle';
+  const maxW = Math.max(8, w - 6);
+  const tx = align === 'right' ? x + w - 3 : x + 3;
+  ctx.fillText(text, tx, y, maxW);
+  ctx.restore();
 }
 
 function rebuildChart() {
