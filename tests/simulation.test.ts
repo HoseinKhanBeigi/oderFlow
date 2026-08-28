@@ -9,7 +9,8 @@ import { OpenInterestEngine, FundingEngine } from '../src/simulation/oi-funding.
 import { CalibrationStore, defaultCalibration, validateImpact } from '../src/simulation/calibration.js';
 import type { SimulationEvent } from '../src/simulation/events.js';
 import { SimulationClock } from '../src/simulation/clock.js';
-import { candlesFromStates } from '../simulator/sim-candles.js';
+import { candlesFromStates, formingBarSnapshots, closedHistory, nextBarTime, scaleFromHistory, emptyBar } from '../simulator/sim-candles.js';
+import { pathsFromFlow, readFlow } from '../simulator/flow-paths.js';
 
 function btcBook() {
   return {
@@ -401,5 +402,62 @@ describe('scenario ticks become chart candles', () => {
       expect(bars[i]!.open).toBe(bars[i - 1]!.close);
     }
     expect(bars[bars.length - 1]!.close).toBe(states[states.length - 1]!.price);
+  });
+
+  it('forms one next-timeframe candle from previous close', () => {
+    const { states, spec } = new ScenarioEngine().runPreset('STRONG_BUY_BREAKOUT', { durationMs: 1_000 });
+    const nextTime = 1_700_000_000 + 4 * 3600;
+    const { bars, frames } = formingBarSnapshots(states, spec.startPrice, nextTime, 12);
+    expect(bars.length).toBeGreaterThan(2);
+    expect(bars.length).toBe(frames.length);
+    for (const b of bars) {
+      expect(b.time).toBe(nextTime);
+      expect(b.open).toBe(spec.startPrice);
+      expect(b.high).toBeGreaterThanOrEqual(Math.max(b.open, b.close));
+      expect(b.low).toBeLessThanOrEqual(Math.min(b.open, b.close));
+    }
+    expect(bars[bars.length - 1]!.close).toBe(states[states.length - 1]!.price);
+    expect(bars[bars.length - 1]!.high).toBeGreaterThanOrEqual(bars[0]!.high);
+  });
+
+  it('drops the in-progress bar and sizes the next 4h from ATR', () => {
+    const now = 2_000_000_000;
+    const tf = 240;
+    const bars = [
+      emptyBar({ time: now - 3 * tf * 60, open: 100, high: 110, low: 95, close: 108 }),
+      emptyBar({ time: now - 2 * tf * 60, open: 108, high: 120, low: 107, close: 118 }),
+      emptyBar({ time: now - tf * 60, open: 118, high: 121, low: 116, close: 117 }),
+      emptyBar({ time: now - 60, open: 117, high: 119, low: 116, close: 118 }),
+    ];
+    const closed = closedHistory(bars, tf, now);
+    expect(closed).toHaveLength(3);
+    expect(nextBarTime(closed[closed.length - 1]!.time, tf)).toBe(now);
+    const scale = scaleFromHistory(closed);
+    expect(scale.startPrice).toBe(117);
+    expect(scale.tickSize).toBeGreaterThan(0);
+    expect(scale.atr).toBeGreaterThan(0);
+  });
+
+  it('reads footprint and builds four colored next-bar paths', () => {
+    const bars = Array.from({ length: 8 }, (_, i) =>
+      emptyBar({
+        time: 1_700_000_000 + i * 14_400,
+        open: 100,
+        high: 112,
+        low: 99,
+        close: 110,
+        aggressiveBuy: 80,
+        aggressiveSell: 20,
+        hasFootprint: true,
+      }),
+    );
+    const flow = readFlow(bars);
+    expect(flow.buyShare).toBeGreaterThan(0.7);
+    expect(flow.hasFootprint).toBe(true);
+    const paths = pathsFromFlow(bars);
+    expect(paths).toHaveLength(4);
+    expect(new Set(paths.map((p) => p.color)).size).toBe(4);
+    expect(paths[0]!.label).toMatch(/Buy continue/i);
+    expect(paths.map((p) => p.id)).toEqual(['continue', 'absorb', 'vacuum', 'fade']);
   });
 });

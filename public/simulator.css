@@ -338,7 +338,30 @@ tr.selected td { background: #1a2838; }
   overflow: hidden;
 }
 
-.play-side h2.after { margin-top: 0.9rem; }
+.play .lab-chart-wrap { min-height: 0; }
+.play .tv-chart {
+  flex: 1;
+  min-height: 420px;
+  height: 100%;
+}
+
+.play-side .hint em { font-style: italic; color: var(--text); }
+
+.path-legend { display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.7rem; }
+.path-item {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 0.45rem;
+  align-items: center;
+  font-size: 0.75rem;
+}
+.path-item i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: block;
+}
+.path-item strong { font-family: var(--mono); font-size: 0.75rem; }
 .chip-row.wrap { gap: 0.28rem; }
 
 .play-status {

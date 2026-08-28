@@ -77,6 +77,11 @@ export class LabChart {
   private readonly extra: ISeriesApi<'Histogram'>;
   private readonly line: ISeriesApi<'Line'>;
   private readonly tradePath: ISeriesApi<'Line'>;
+  private readonly predSeries: ISeriesApi<'Candlestick'>[];
+  private predLines: Array<{
+    series: ISeriesApi<'Candlestick'>;
+    line: ReturnType<ISeriesApi<'Candlestick'>['createPriceLine']>;
+  }> = [];
   private lines: Array<ReturnType<ISeriesApi<'Candlestick'>['createPriceLine']>> = [];
   private structureLines: Array<ReturnType<ISeriesApi<'Candlestick'>['createPriceLine']>> = [];
   private overlays = new Set<OverlayId>(['volume']);
@@ -134,6 +139,15 @@ export class LabChart {
       priceLineVisible: false,
       crosshairMarkerVisible: false,
     });
+    this.predSeries = [0, 1, 2, 3].map(() =>
+      this.chart.addCandlestickSeries({
+        upColor: '#d4a84b',
+        downColor: '#d4a84b',
+        borderVisible: true,
+        lastValueVisible: false,
+        priceLineVisible: false,
+      }),
+    );
   }
 
   overlayList(): OverlayDef[] {
@@ -160,11 +174,82 @@ export class LabChart {
     return this.overlays.has(id);
   }
 
-  setBars(bars: MarketBar[], opts?: { reveal?: boolean }): void {
+  setBars(bars: MarketBar[], opts?: { reveal?: boolean; fit?: boolean }): void {
     this.bars = bars;
     this.visibleCount = opts?.reveal ? 0 : null;
     this.paintCandles();
-    if (!opts?.reveal) this.chart.timeScale().fitContent();
+    if (opts?.reveal) return;
+    if (opts?.fit === false) {
+      this.chart.timeScale().scrollToRealTime();
+      return;
+    }
+    this.chart.timeScale().fitContent();
+  }
+
+  setVisibleRange(from: number, to: number): void {
+    this.chart.timeScale().setVisibleRange({
+      from: from as UTCTimestamp,
+      to: to as UTCTimestamp,
+    });
+  }
+
+  fit(): void {
+    this.chart.timeScale().fitContent();
+  }
+
+  setPredictedPaths(items: Array<{ bar: MarketBar; color: string; label: string }> | null): void {
+    for (const row of this.predLines) row.series.removePriceLine(row.line);
+    this.predLines = [];
+    for (let i = 0; i < this.predSeries.length; i++) {
+      const series = this.predSeries[i]!;
+      const item = items?.[i];
+      series.setData([]);
+      series.setMarkers([]);
+      if (!item) continue;
+      const { bar, color, label } = item;
+      series.applyOptions({
+        upColor: color,
+        downColor: color,
+        borderUpColor: color,
+        borderDownColor: color,
+        wickUpColor: color,
+        wickDownColor: color,
+      });
+      series.setData([
+        {
+          time: bar.time as UTCTimestamp,
+          open: bar.open,
+          high: bar.high,
+          low: bar.low,
+          close: bar.close,
+        },
+      ]);
+      const up = bar.close >= bar.open;
+      series.setMarkers([
+        {
+          time: bar.time as UTCTimestamp,
+          position: up ? 'aboveBar' : 'belowBar',
+          color,
+          shape: up ? 'arrowUp' : 'arrowDown',
+          text: `${label} ${bar.close.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+        },
+      ]);
+      this.predLines.push({
+        series,
+        line: series.createPriceLine({
+          price: bar.close,
+          color,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          title: `${label} ${bar.close.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+          axisLabelVisible: true,
+        }),
+      });
+    }
+  }
+
+  setPredictedCandle(bar: MarketBar | null): void {
+    this.setPredictedPaths(bar ? [{ bar, color: '#d4a84b', label: 'PRED' }] : null);
   }
 
   revealUpTo(count: number): void {

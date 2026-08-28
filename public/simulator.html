@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Strategy chart</title>
-  <link rel="stylesheet" href="/simulator.css" />
+  <link rel="stylesheet" href="/simulator.css?v=chart3" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -19,15 +19,12 @@
       <label class="field">Symbol
         <input id="play-symbol" value="BTCUSDT" spellcheck="false" />
       </label>
-      <label class="field">Start price
-        <input id="play-price" type="number" value="79100" step="50" />
-      </label>
-      <div class="chip-row" id="play-speed">
-        <button type="button" data-speed="slow">Slow</button>
-        <button type="button" data-speed="normal" class="active">Normal</button>
-        <button type="button" data-speed="fast">Fast</button>
+      <div class="chip-row" id="play-market">
+        <button type="button" data-market="perp" class="active">Futures</button>
+        <button type="button" data-market="spot">Spot</button>
       </div>
-      <button id="btn-play" class="primary" type="button">Play</button>
+      <div class="chip-row" id="play-tf"></div>
+      <button id="btn-play" class="primary" type="button">Draw next</button>
       <a class="back-link lab-link" href="/lab.html">Advanced backtest</a>
     </header>
 
@@ -35,20 +32,23 @@
       <section class="lab-chart-wrap">
         <div id="tv-chart" class="tv-chart"></div>
         <div class="play-status">
-          <strong id="play-status-line">Pick a strategy, set the numbers, press Play.</strong>
+          <strong id="play-status-line">Loading previous candles…</strong>
           <span id="play-status-sub"></span>
         </div>
       </section>
 
       <aside class="lab-side play-side">
-        <h2>Strategy</h2>
-        <div class="chip-row wrap" id="play-presets"></div>
-        <h2 class="after">Parameters</h2>
-        <p class="hint">These are the same intensity knobs as the strategy. Play runs the scenario and draws the candles as price moves.</p>
-        <div id="play-sliders"></div>
+        <h2>Next candle paths</h2>
+        <p class="hint">Uses last footprint (aggressive buy/sell) and liquidity. Draw next paints 4 possible candles in different colors.</p>
+        <div id="path-legend" class="path-legend">
+          <div class="path-item"><i style="background:#22c55e"></i><span>Continue</span></div>
+          <div class="path-item"><i style="background:#d4a84b"></i><span>Absorb</span></div>
+          <div class="path-item"><i style="background:#22d3ee"></i><span>Vacuum</span></div>
+          <div class="path-item"><i style="background:#c084fc"></i><span>Fade / fake</span></div>
+        </div>
       </aside>
     </div>
   </div>
-  <script src="/simulator.bundle.js"></script>
+  <script src="/simulator.bundle.js?v=chart3"></script>
 </body>
 </html>

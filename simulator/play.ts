@@ -1,241 +1,285 @@
 import { LabChart } from './chart.js';
-import { listPresets } from '../src/simulation/presets.js';
-import type { ScenarioIntensity, ScenarioPresetId } from '../src/simulation/types.js';
-import type { PlayChartData, PlayFrame } from './sim-candles.js';
+import type { MarketBar } from '../src/backtest/types.js';
+import {
+  TF_OPTIONS,
+  candlesToBars,
+  closedHistory,
+  nextBarTime,
+  scaleFromHistory,
+} from './sim-candles.js';
+import { pathsFromFlow, readFlow } from './flow-paths.js';
 
 const $ = (id: string) => document.getElementById(id)!;
 
-const SLIDERS: Array<{ key: keyof ScenarioIntensity; label: string; min: number; max: number; kind: 'pct' | 'oi' | 'funding' }> = [
-  { key: 'aggressiveBuy', label: 'Aggressive buy', min: 0, max: 100, kind: 'pct' },
-  { key: 'aggressiveSell', label: 'Aggressive sell', min: 0, max: 100, kind: 'pct' },
-  { key: 'bidDepth', label: 'Bid depth', min: 0, max: 100, kind: 'pct' },
-  { key: 'askDepth', label: 'Ask depth', min: 0, max: 100, kind: 'pct' },
-  { key: 'bidReplenishment', label: 'Bid replenishment', min: 0, max: 100, kind: 'pct' },
-  { key: 'askReplenishment', label: 'Ask replenishment', min: 0, max: 100, kind: 'pct' },
-  { key: 'bidWithdrawal', label: 'Bid withdrawal', min: 0, max: 100, kind: 'pct' },
-  { key: 'askWithdrawal', label: 'Ask withdrawal', min: 0, max: 100, kind: 'pct' },
-  { key: 'volatility', label: 'Volatility', min: 0, max: 100, kind: 'pct' },
-  { key: 'oiChange', label: 'OI change', min: -100, max: 100, kind: 'oi' },
-  { key: 'funding', label: 'Funding (bps)', min: -20, max: 20, kind: 'funding' },
-  { key: 'longLiquidations', label: 'Long liquidations', min: 0, max: 100, kind: 'pct' },
-  { key: 'shortLiquidations', label: 'Short liquidations', min: 0, max: 100, kind: 'pct' },
-];
-
-const SPEED_MS: Record<string, number> = { slow: 140, normal: 70, fast: 28 };
-
-let presetId: ScenarioPresetId = 'SELLER_ABSORPTION';
+let tfMinutes = 240;
+let market: 'spot' | 'perp' = 'perp';
 let chart: LabChart;
 let worker: Worker | null = null;
-let playTimer: number | null = null;
-let frames: PlayFrame[] = [];
-let playing = false;
+let history: MarketBar[] = [];
+let loadSeq = 0;
 
 function boot(): void {
   chart = new LabChart($('tv-chart'));
-  fillPresets();
-  fillSliders();
+  fillTf();
   bind();
-  applyPreset(presetId);
 
   const q = new URLSearchParams(location.search);
   const symbol = q.get('symbol');
   if (symbol) ($('play-symbol') as HTMLInputElement).value = symbol.toUpperCase();
-  const wanted = q.get('preset') as ScenarioPresetId | null;
-  if (wanted && listPresets().some((p) => p.id === wanted)) applyPreset(wanted);
+  if (q.get('market') === 'spot') setMarket('spot');
+  const tfRaw = Number(q.get('tf'));
+  if (TF_OPTIONS.some((t) => t.minutes === tfRaw)) setTf(tfRaw);
+  void loadHistory();
 }
 
-function fillPresets(): void {
-  const root = $('play-presets');
+function fillTf(): void {
+  const root = $('play-tf');
   root.innerHTML = '';
-  for (const spec of listPresets()) {
+  for (const t of TF_OPTIONS) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.dataset.id = String(spec.id);
-    b.textContent = spec.label;
-    if (spec.id === presetId) b.classList.add('active');
+    b.dataset.tf = String(t.minutes);
+    b.textContent = t.label;
+    if (t.minutes === tfMinutes) b.classList.add('active');
     root.appendChild(b);
   }
 }
 
-function fillSliders(): void {
-  const root = $('play-sliders');
-  root.innerHTML = '';
-  for (const s of SLIDERS) {
-    const row = document.createElement('div');
-    row.className = 'slider-row';
-    row.innerHTML = `
-      <label for="p-${s.key}">${s.label}</label>
-      <span class="val" id="v-${s.key}">0</span>
-      <input id="p-${s.key}" type="range" min="${s.min}" max="${s.max}" step="1" value="0" />
-    `;
-    root.appendChild(row);
-    row.querySelector('input')!.addEventListener('input', () => paintSlider(s.key));
+function setMarket(next: 'spot' | 'perp'): void {
+  market = next;
+  for (const b of $('play-market').querySelectorAll('button')) {
+    b.classList.toggle('active', b.getAttribute('data-market') === next);
   }
 }
 
-function sliderEl(key: keyof ScenarioIntensity): HTMLInputElement {
-  return $(`p-${key}`) as HTMLInputElement;
-}
-
-function intensityToSlider(key: keyof ScenarioIntensity, value: number): number {
-  const def = SLIDERS.find((s) => s.key === key)!;
-  if (def.kind === 'funding') return Math.round(value * 10_000);
-  if (def.kind === 'oi') return Math.round(value * 100);
-  return Math.round(value * 100);
-}
-
-function sliderToIntensity(key: keyof ScenarioIntensity, raw: number): number {
-  const def = SLIDERS.find((s) => s.key === key)!;
-  if (def.kind === 'funding') return raw / 10_000;
-  if (def.kind === 'oi') return raw / 100;
-  return raw / 100;
-}
-
-function paintSlider(key: keyof ScenarioIntensity): void {
-  const el = sliderEl(key);
-  const def = SLIDERS.find((s) => s.key === key)!;
-  const n = Number(el.value);
-  $(`v-${key}`).textContent = def.kind === 'funding' ? String(n) : String(n);
-}
-
-function applyPreset(id: ScenarioPresetId): void {
-  presetId = id;
-  const spec = listPresets().find((p) => p.id === id)!;
-  for (const b of $('play-presets').querySelectorAll('button')) {
-    b.classList.toggle('active', b.getAttribute('data-id') === id);
+function setTf(minutes: number): void {
+  tfMinutes = minutes;
+  for (const b of $('play-tf').querySelectorAll('button')) {
+    b.classList.toggle('active', Number(b.getAttribute('data-tf')) === minutes);
   }
-  ($('play-price') as HTMLInputElement).value = String(spec.startPrice);
-  for (const s of SLIDERS) {
-    sliderEl(s.key).value = String(intensityToSlider(s.key, spec.intensity[s.key]));
-    paintSlider(s.key);
-  }
-  setStatus(`Ready · ${spec.label}. Set the numbers, then Play.`);
 }
 
-function readIntensity(): ScenarioIntensity {
-  const out = {} as ScenarioIntensity;
-  for (const s of SLIDERS) {
-    out[s.key] = sliderToIntensity(s.key, Number(sliderEl(s.key).value));
-  }
-  return out;
+function tfMeta() {
+  return TF_OPTIONS.find((t) => t.minutes === tfMinutes) ?? TF_OPTIONS[2]!;
+}
+
+function symbol(): string {
+  return (($('play-symbol') as HTMLInputElement).value || 'BTCUSDT').toUpperCase();
 }
 
 function bind(): void {
-  $('play-presets').addEventListener('click', (ev) => {
+  $('play-tf').addEventListener('click', (ev) => {
     const btn = (ev.target as HTMLElement).closest('button');
-    if (!btn?.dataset.id) return;
-    stopPlay();
-    applyPreset(btn.dataset.id as ScenarioPresetId);
+    if (!btn?.dataset.tf) return;
+    setTf(Number(btn.dataset.tf));
+    void loadHistory();
+  });
+  $('play-market').addEventListener('click', (ev) => {
+    const btn = (ev.target as HTMLElement).closest('button');
+    if (!btn?.dataset.market) return;
+    setMarket(btn.dataset.market as 'spot' | 'perp');
+    void loadHistory();
+  });
+  $('play-symbol').addEventListener('change', () => {
+    void loadHistory();
   });
   $('btn-play').addEventListener('click', () => {
-    if (playing) stopPlay();
-    else void runPlay();
-  });
-  $('play-speed').addEventListener('click', (ev) => {
-    const btn = (ev.target as HTMLElement).closest('button');
-    if (!btn?.dataset.speed) return;
-    for (const b of $('play-speed').querySelectorAll('button')) b.classList.toggle('active', b === btn);
+    void runPlay();
   });
 }
 
-function activeSpeed(): number {
-  const on = $('play-speed').querySelector('button.active') as HTMLButtonElement | null;
-  return SPEED_MS[on?.dataset.speed ?? 'normal'] ?? SPEED_MS.normal;
+type KlineRow = [number, string, string, string, string, string];
+
+function parseKlines(raw: KlineRow[]): MarketBar[] {
+  return closedHistory(
+    candlesToBars(
+      raw.map((r) => ({
+        time: Math.floor(Number(r[0]) / 1000),
+        open: Number(r[1]),
+        high: Number(r[2]),
+        low: Number(r[3]),
+        close: Number(r[4]),
+        volume: Number(r[5] ?? 0),
+      })),
+    ),
+    tfMinutes,
+  );
 }
 
-function stopPlay(): void {
-  playing = false;
-  if (playTimer != null) {
-    window.clearInterval(playTimer);
-    playTimer = null;
+async function fetchHistory(): Promise<MarketBar[]> {
+  const tf = tfMeta();
+  const sym = symbol();
+  const now = Math.floor(Date.now() / 1000);
+  const from = now - 90 * 86_400;
+  const labTf = Math.min(tfMinutes, 240);
+
+  try {
+    const data = (await (await fetch(
+      `/api/lab/dataset?symbol=${encodeURIComponent(sym)}&market=${market}&exchange=binance&tf=${labTf}&from=${from}&to=${now}&window=500`,
+    )).json()) as { bars?: MarketBar[] };
+    if (data.bars && data.bars.length >= 8) return closedHistory(data.bars, labTf);
+  } catch {
+    /* try klines */
   }
-  $('btn-play').textContent = 'Play';
-  ($('btn-play') as HTMLButtonElement).disabled = false;
+
+  try {
+    const raw = (await (await fetch(
+      `/api/klines?symbol=${encodeURIComponent(sym)}&interval=${tf.interval}&limit=150&market=${market}`,
+    )).json()) as KlineRow[] | { error?: string };
+    if (Array.isArray(raw) && raw.length >= 8) return parseKlines(raw);
+  } catch {
+    /* try Binance */
+  }
+
+  const base = market === 'spot' ? 'https://api.binance.com/api/v3/klines' : 'https://fapi.binance.com/fapi/v1/klines';
+  const raw = (await (await fetch(`${base}?symbol=${encodeURIComponent(sym)}&interval=${tf.interval}&limit=150`)).json()) as KlineRow[];
+  if (!Array.isArray(raw) || raw.length < 8) return [];
+  return parseKlines(raw);
+}
+
+function paintChart(bars: MarketBar[], extraTo?: number): void {
+  chart.setBars(bars);
+  const last = bars[bars.length - 1];
+  const from = bars[Math.max(0, bars.length - 80)];
+  requestAnimationFrame(() => {
+    if (last && from) chart.setVisibleRange(from.time, extraTo ?? last.time + tfMinutes * 60);
+    else chart.fit();
+  });
+}
+
+async function loadHistory(): Promise<void> {
+  const seq = ++loadSeq;
+  const tf = tfMeta();
+  const sym = symbol();
+  setStatus(`Loading ${tf.label} chart for ${sym}…`);
+  try {
+    const bars = await fetchHistory();
+    if (seq !== loadSeq) return;
+    history = bars;
+    if (history.length < 8) {
+      chart.setBars([]);
+      chart.setPredictedPaths(null);
+      setStatus('Could not load the chart.', 'No candles came back for this symbol / timeframe.');
+      return;
+    }
+    paintChart(history);
+    chart.setPredictedPaths(null);
+    const last = history[history.length - 1]!;
+    chart.setSimpleMarkers([{ time: last.time, text: 'LAST', position: 'aboveBar', kind: 'CONTEXT' }]);
+    paintHistoryStatus();
+  } catch (err) {
+    if (seq !== loadSeq) return;
+    history = [];
+    setStatus('Could not load the chart.', err instanceof Error ? err.message : String(err));
+  }
+}
+
+function paintHistoryStatus(): void {
+  const last = history[history.length - 1];
+  if (!last) return;
+  const tf = tfMeta();
+  const flow = readFlow(history);
+  const src = flow.hasFootprint ? 'footprint' : 'candle delta';
+  const book = flow.hasBook ? ' + book' : '';
+  setStatus(
+    `${history.length} × ${tf.label} · last $${fmt(last.close)}`,
+    `${src}${book} · buy ${(flow.buyShare * 100).toFixed(0)}% / sell ${(flow.sellShare * 100).toFixed(0)}%. Draw next shows 4 possible candles.`,
+  );
 }
 
 async function runPlay(): Promise<void> {
-  stopPlay();
-  const spec = listPresets().find((p) => p.id === presetId)!;
-  const startPrice = Number(($('play-price') as HTMLInputElement).value) || spec.startPrice;
-  const symbol = (($('play-symbol') as HTMLInputElement).value || spec.symbol).toUpperCase();
-  $('btn-play').textContent = 'Running…';
-  ($('btn-play') as HTMLButtonElement).disabled = true;
-  setStatus('Simulating order flow…');
+  if (!history.length) await loadHistory();
+  if (!history.length) {
+    setStatus('Need previous candles before drawing the next bar.');
+    return;
+  }
 
-  let data: PlayChartData;
+  const last = history[history.length - 1]!;
+  const scale = scaleFromHistory(history);
+  const nextTime = nextBarTime(last.time, tfMinutes);
+  const gapSec = Math.max(60, Math.floor(tfMinutes * 60) / 5);
+  const tf = tfMeta();
+  const paths = pathsFromFlow(history);
+  const btn = $('btn-play') as HTMLButtonElement;
+  btn.textContent = 'Drawing…';
+  btn.disabled = true;
+  setStatus(`Drawing 4 next ${tf.label} paths from $${fmt(last.close)}…`);
+
+  let candles: Array<{ id: string; label: string; color: string; bar: MarketBar }>;
   try {
-    data = await runWorker({
-      type: 'run',
-      presetId,
-      intensity: readIntensity(),
-      startPrice,
-      durationMs: spec.durationMs,
-      symbol,
+    candles = await runWorker({
+      type: 'paths',
+      startPrice: scale.startPrice,
+      durationMs: 8_000,
+      symbol: symbol(),
+      tickSize: scale.tickSize,
+      levelStep: scale.levelStep,
+      nextTime,
+      gapSec,
+      paths,
     });
   } catch (err) {
-    stopPlay();
+    btn.textContent = 'Draw next';
+    btn.disabled = false;
     setStatus(`Could not simulate: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
 
-  frames = data.frames;
-  chart.setBars(data.bars, { reveal: true });
-  chart.setSimpleMarkers(data.markers);
-  chart.revealUpTo(0);
+  btn.textContent = 'Draw next';
+  btn.disabled = false;
+  if (!candles.length) {
+    setStatus('Simulation produced no candles.');
+    return;
+  }
 
-  playing = true;
-  $('btn-play').textContent = 'Stop';
-  ($('btn-play') as HTMLButtonElement).disabled = false;
+  const lastPred = candles[candles.length - 1]!.bar.time;
+  paintChart(history, lastPred + gapSec);
+  chart.setPredictedPaths(candles);
+  chart.setSimpleMarkers([{ time: last.time, text: 'LAST', position: 'aboveBar', kind: 'CONTEXT' }]);
+  paintLegend(candles);
+  setStatus(
+    `Next ${tf.label} · 4 paths from $${fmt(last.close)}`,
+    candles.map((c) => `${c.label} $${fmt(c.bar.close)}`).join('   ·   '),
+  );
+}
 
-  let i = 0;
-  const step = (): void => {
-    if (!playing) return;
-    i += 1;
-    chart.revealUpTo(i);
-    const frame = frames[i - 1];
-    if (frame) {
-      setStatus(
-        `${humanState(frame.marketState)} · $${fmt(frame.price)} · candle ${i}/${data.bars.length}`,
-        frame.whyHeadline,
-      );
-    }
-    if (i >= data.bars.length) {
-      stopPlay();
-      setStatus(
-        `Done · ${spec.label} · $${fmt(frames[frames.length - 1]?.price ?? startPrice)}`,
-        frames[frames.length - 1]?.whyHeadline ?? '',
-      );
-    }
-  };
-  playTimer = window.setInterval(step, activeSpeed());
-  step();
+function paintLegend(candles: Array<{ label: string; color: string; bar: MarketBar }>): void {
+  const root = $('path-legend');
+  if (!root) return;
+  root.innerHTML = candles
+    .map(
+      (c) =>
+        `<div class="path-item"><i style="background:${c.color}"></i><span>${c.label}</span><strong>$${fmt(c.bar.close)}</strong></div>`,
+    )
+    .join('');
 }
 
 function runWorker(msg: {
-  type: 'run';
-  presetId: ScenarioPresetId;
-  intensity: ScenarioIntensity;
+  type: 'paths';
   startPrice: number;
   durationMs: number;
   symbol: string;
-}): Promise<PlayChartData> {
+  tickSize: number;
+  levelStep: number;
+  nextTime: number;
+  gapSec: number;
+  paths: ReturnType<typeof pathsFromFlow>;
+}): Promise<Array<{ id: string; label: string; color: string; bar: MarketBar }>> {
   return new Promise((resolve, reject) => {
     worker?.terminate();
     worker = new Worker('/scenario.worker.js');
-    worker.onmessage = (ev: MessageEvent<PlayChartData & { type: string; message?: string }>) => {
+    worker.onmessage = (
+      ev: MessageEvent<{ type: string; message?: string; candles?: Array<{ id: string; label: string; color: string; bar: MarketBar }> }>,
+    ) => {
       if (ev.data.type === 'error') {
         reject(new Error(ev.data.message ?? 'Simulation failed'));
         return;
       }
-      if (ev.data.type === 'done') resolve(ev.data);
+      if (ev.data.type === 'done') resolve(ev.data.candles ?? []);
     };
     worker.onerror = (err) => reject(err.error ?? new Error(err.message));
     worker.postMessage(msg);
   });
-}
-
-function humanState(state: string): string {
-  return state.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 }
 
 function fmt(n: number): string {
