@@ -50,7 +50,7 @@
       <div class="panel-head">
         <div>
           <h2 id="chart-title">Order flow footprint</h2>
-          <p class="hint" id="chart-hint">Red left = sells, green right = buys. Bar titles include upside/downside vacuum and seller/buyer absorption reversal. Gold = next candle, blue = live price.</p>
+          <p class="hint" id="chart-hint">Upside vacuum: resting asks were pulled, so buying lifted price fast. Downside vacuum: resting bids were pulled, so selling dumped price fast. Gold = next candle, blue = live price.</p>
         </div>
         <div class="chart-toolbar">
           <div class="chart-tf-tabs" id="chart-ex-tabs">
@@ -82,15 +82,15 @@
         </div>
       </div>
       <div id="spot-hud" class="spot-hud hidden"></div>
-      <div id="tv-chart" style="width:100%;height:520px;overflow:hidden;position:relative;"></div>
+      <div id="tv-chart" style="width:100%;height:560px;overflow:hidden;position:relative;"></div>
       <div class="chart-legend">
         <span id="fp-lev-now" class="fp-lev-now">—</span>
         <span class="legend-item fp-abs">next candle</span>
         <span class="legend-item fp-live">live price</span>
-        <span class="legend-item fp-rest-bid">upside vac</span>
-        <span class="legend-item fp-rest-ask">downside vac</span>
-        <span class="legend-item fp-pbuy">seller abs rev</span>
-        <span class="legend-item fp-psell">buyer abs rev</span>
+        <span class="legend-item fp-rest-bid">asks pulled · ran up</span>
+        <span class="legend-item fp-rest-ask">bids pulled · dumped</span>
+        <span class="legend-item fp-pbuy">sellers absorbed · reversed up</span>
+        <span class="legend-item fp-psell">buyers absorbed · reversed down</span>
       </div>
       <div id="daily-signal-banner" class="daily-signal-banner">
         <div class="ds-head">
@@ -389,6 +389,6 @@
   </main>
 
   <script src="/sim-live.bundle.js"></script>
-  <script src="/app.js?v=fp-titles2" type="module"></script>
+  <script src="/app.js?v=fp-titles4" type="module"></script>
 </body>
 </html>

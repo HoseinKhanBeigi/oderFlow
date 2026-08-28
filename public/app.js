@@ -1450,8 +1450,8 @@ function applyDataMode(mode) {
       ? 'Spot vs futures footprint'
       : 'Spot order flow footprint';
   $('chart-hint').textContent = mode === 'perp'
-    ? 'Red left = sells, green right = buys. Bar titles include upside/downside vacuum and seller/buyer absorption reversal. Gold = next candle, blue = live price.'
-    : 'Red left = aggressive spot sells, green right = aggressive spot buys. Bar titles include upside/downside vacuum and seller/buyer absorption reversal. Gold = next candle, blue = live price.';
+    ? 'Upside vacuum: resting asks were pulled, so buying lifted price fast. Downside vacuum: resting bids were pulled, so selling dumped price fast. Gold = next candle, blue = live price.'
+    : 'Upside vacuum: resting asks were pulled, so buying lifted price fast. Downside vacuum: resting bids were pulled, so selling dumped price fast. Gold = next candle, blue = live price.';
   $('imb-cfg')?.classList.toggle('hidden', !spot);
   $('spot-hud')?.classList.toggle('hidden', !spot);
   $('move-panel')?.classList.toggle('hidden', spot);
@@ -1720,7 +1720,7 @@ function fpLayout(cssWidth) {
   const leftPad = 8;
   const priceAxisWidth = 72;
   const candleW = 7;
-  const cellW = 88;
+  const cellW = 100;
   const gap = 6;
   const barWidth = candleW + cellW;
   const stride = barWidth + gap;
@@ -2401,38 +2401,47 @@ function strategyStoryForBar(allBars, idx) {
   else if (location === 'MID_RANGE' && Math.abs(score) >= 28) setup = 'FLOW_CONTINUATION';
 
   const rev = absorptionReversalKind(bar, next);
-  if (rev === 'SELLER') return { badge: 'LONG', event: 'seller abs rev', color: '#60a5fa' };
-  if (rev === 'BUYER') return { badge: 'SHORT', event: 'buyer abs rev', color: '#fbbf24' };
+  if (rev === 'SELLER') return { badge: 'LONG', line1: 'Sellers absorbed', line2: 'then reversed up', color: '#7dd3fc' };
+  if (rev === 'BUYER') return { badge: 'SHORT', line1: 'Buyers absorbed', line2: 'then reversed down', color: '#fbbf24' };
   const vac = barVacuumKind(bar, prior);
-  if (vac === 'UPSIDE') return { badge: 'LONG', event: 'upside vacuum', color: '#22d3ee' };
-  if (vac === 'DOWNSIDE') return { badge: 'SHORT', event: 'downside vac', color: '#fb923c' };
+  if (vac === 'UPSIDE') return { badge: 'LONG', line1: 'Asks pulled', line2: 'price ran up', color: '#22d3ee' };
+  if (vac === 'DOWNSIDE') return { badge: 'SHORT', line1: 'Bids pulled', line2: 'price dumped', color: '#fb923c' };
 
-  if (setup === 'SUPPORT_HOLD') return { badge: 'LONG', event: 'held support', color: '#22c55e' };
-  if (setup === 'RESISTANCE_REJECT') return { badge: 'SHORT', event: 'reject resist', color: '#ef4444' };
-  if (setup === 'BREAKOUT_UP') return { badge: 'LONG', event: 'broke resist', color: '#22c55e' };
-  if (setup === 'BREAKDOWN') return { badge: 'SHORT', event: 'broke support', color: '#ef4444' };
-  if (setup === 'FLOW_CONTINUATION' && bias === 'LONG') return { badge: 'LONG', event: 'buyers pushed', color: '#22c55e' };
-  if (setup === 'FLOW_CONTINUATION' && bias === 'SHORT') return { badge: 'SHORT', event: 'sellers pushed', color: '#ef4444' };
-  if (absorbed === 'SELLERS') return { badge: bias === 'WAIT' ? 'WAIT' : bias, event: 'sells absorbed', color: '#60a5fa' };
-  if (absorbed === 'BUYERS') return { badge: bias === 'WAIT' ? 'WAIT' : bias, event: 'buys absorbed', color: '#fbbf24' };
-  if (win.id === 'AGGRESSIVE_BUYERS') return { badge: 'LONG', event: 'buyers pushed', color: '#22c55e' };
-  if (win.id === 'AGGRESSIVE_SELLERS') return { badge: 'SHORT', event: 'sellers pushed', color: '#ef4444' };
-  if (win.id === 'PASSIVE_SELLERS') return { badge: 'WAIT', event: 'buys absorbed', color: '#fbbf24' };
-  if (win.id === 'PASSIVE_BUYERS') return { badge: 'WAIT', event: 'sells absorbed', color: '#60a5fa' };
-  return { badge: 'WAIT', event: 'no edge', color: '#8b949e' };
+  if (setup === 'SUPPORT_HOLD') return { badge: 'LONG', line1: 'Held support', line2: 'buyers defended', color: '#22c55e' };
+  if (setup === 'RESISTANCE_REJECT') return { badge: 'SHORT', line1: 'Rejected resist', line2: 'sellers capped', color: '#ef4444' };
+  if (setup === 'BREAKOUT_UP') return { badge: 'LONG', line1: 'Broke resistance', line2: 'held above', color: '#22c55e' };
+  if (setup === 'BREAKDOWN') return { badge: 'SHORT', line1: 'Broke support', line2: 'held below', color: '#ef4444' };
+  if (setup === 'FLOW_CONTINUATION' && bias === 'LONG') return { badge: 'LONG', line1: 'Buyers in control', line2: 'price followed', color: '#22c55e' };
+  if (setup === 'FLOW_CONTINUATION' && bias === 'SHORT') return { badge: 'SHORT', line1: 'Sellers in control', line2: 'price followed', color: '#ef4444' };
+  if (absorbed === 'SELLERS') return { badge: bias === 'WAIT' ? 'WAIT' : bias, line1: 'Sellers absorbed', line2: 'price held up', color: '#7dd3fc' };
+  if (absorbed === 'BUYERS') return { badge: bias === 'WAIT' ? 'WAIT' : bias, line1: 'Buyers absorbed', line2: 'price stalled', color: '#fbbf24' };
+  if (win.id === 'AGGRESSIVE_BUYERS') return { badge: 'LONG', line1: 'Buyers in control', line2: 'price followed', color: '#22c55e' };
+  if (win.id === 'AGGRESSIVE_SELLERS') return { badge: 'SHORT', line1: 'Sellers in control', line2: 'price followed', color: '#ef4444' };
+  if (win.id === 'PASSIVE_SELLERS') return { badge: 'WAIT', line1: 'Buyers absorbed', line2: 'price stalled', color: '#fbbf24' };
+  if (win.id === 'PASSIVE_BUYERS') return { badge: 'WAIT', line1: 'Sellers absorbed', line2: 'price held up', color: '#7dd3fc' };
+  return { badge: 'WAIT', line1: 'No clear edge', line2: '', color: '#8b949e' };
 }
 
 function drawBarStrategyTitle(ctx, story, cx, maxW) {
   if (!story) return;
+  const lines = [story.badge, story.line1, story.line2].filter((s) => s);
+  const w = Math.max(86, Math.min(maxW + 8, 128));
+  const lineH = 17;
+  const top = 12;
+  const h = 10 + lines.length * lineH;
   ctx.save();
+  ctx.fillStyle = 'rgba(8, 12, 18, 0.92)';
+  ctx.fillRect(cx - w / 2, top, w, h);
+  ctx.strokeStyle = story.color;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(cx - w / 2 + 0.5, top + 0.5, w - 1, h - 1);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = 'bold 8px JetBrains Mono, monospace';
-  ctx.fillStyle = story.color;
-  ctx.fillText(story.badge, cx, 16, maxW);
-  ctx.font = '7px JetBrains Mono, monospace';
-  ctx.fillStyle = '#c9d1d9';
-  ctx.fillText(story.event, cx, 27, maxW);
+  lines.forEach((line, i) => {
+    ctx.font = i === 0 ? 'bold 13px Inter, JetBrains Mono, sans-serif' : '11px Inter, JetBrains Mono, sans-serif';
+    ctx.fillStyle = i === 0 ? story.color : '#f0f3f6';
+    ctx.fillText(line, cx, top + 12 + i * lineH, w - 10);
+  });
   ctx.restore();
 }
 
@@ -2507,7 +2516,7 @@ function drawFootprint() {
   }
 
   const { leftPad, priceAxisWidth, candleW, cellW, barWidth, stride, visibleBars } = fpLayout(W);
-  const topPad = 54;
+  const topPad = 88;
   const bottomPad = 44;
   const chartH = H - topPad - bottomPad;
   clampFpPan(bars.length, W);
@@ -2591,7 +2600,7 @@ function drawFootprint() {
   if (fpPanBars >= 0.15) {
     ctx.fillText('drag / scroll · Latest jumps to live', leftPad + 2, 8);
   } else {
-    ctx.fillText('Previous bars: vacuum · abs reversal · what that candle did', leftPad + 2, 8);
+    ctx.fillText('Asks pulled = upside vacuum. Bids pulled = downside vacuum.', leftPad + 2, 8);
   }
 
   const predShift = pred ? 1 : 0;
@@ -2606,7 +2615,7 @@ function drawFootprint() {
     if (!isLiveBar) {
       drawBarStrategyTitle(ctx, strategyStoryForBar(bars, startIdx + i), cx, barWidth - 4);
     } else {
-      drawBarStrategyTitle(ctx, { badge: 'NOW', event: 'forming', color: '#60a5fa' }, cx, barWidth - 4);
+      drawBarStrategyTitle(ctx, { badge: 'NOW', line1: 'This candle', line2: 'still forming', color: '#60a5fa' }, cx, barWidth - 4);
     }
     const poc = levels.reduce((best, lv) => (lv.buy + lv.sell > best.vol ? { vol: lv.buy + lv.sell, price: lv.price } : best), { vol: 0, price: 0 });
 
