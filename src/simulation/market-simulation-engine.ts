@@ -60,7 +60,7 @@ interface QueuedAggression {
 }
 
 /**
- * Orchestrates microstructure engines. Phaser must never call these
+ * Orchestrates microstructure engines. The UI must never call these
  * methods — it only reads `snapshot()`.
  *
  * Price is not incremented by a random value. It moves because aggressive

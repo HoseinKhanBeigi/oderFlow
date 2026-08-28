@@ -34,6 +34,14 @@ import {
 import { timeframeFromMinutes, type SignalTimeframe } from '../src/models/daily-signal.js';
 import { SimulationHub } from '../src/simulation/hub.js';
 import { listPresets } from '../src/simulation/presets.js';
+import {
+  mergeDataset,
+  klinesToCandles,
+  tfToInterval,
+  sourceTfMinutes,
+  rollCandles,
+  windowBars,
+} from '../src/backtest/index.js';
 import { TRAIL_WINDOW_MS, type TrailWindowId } from '../src/simulation/types.js';
 import { buildSimulator } from './build-simulator.js';
 
@@ -145,6 +153,17 @@ const server = createServer(async (req, res) => {
       } catch {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end('{}');
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/lab/dataset')) {
+      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+      try {
+        json(res, await getLabDataset(u.searchParams));
+      } catch (err) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'lab dataset failed', bars: [] }));
       }
       return;
     }
@@ -469,7 +488,7 @@ void buildSimulator().catch((err) => {
     const equity = coins.filter((c) => c.venue === 'equity');
     console.log(`\n  Order Flow Dashboard`);
     console.log(`  http://localhost:${PORT}`);
-    console.log(`  Simulator: http://localhost:${PORT}/simulator.html`);
+    console.log(`  Backtest lab: http://localhost:${PORT}/simulator.html`);
     console.log(`  Exchanges (perp): ${EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
     console.log(`  Exchanges (spot): ${SPOT_EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
     console.log(`  Crypto perp + spot footprint: ${crypto.map((c) => c.label).join(' · ')}`);
@@ -671,6 +690,107 @@ async function getFootprintHistory(params: URLSearchParams): Promise<unknown> {
     if (oldest) footprintCache.delete(oldest[0]);
   }
   return payload;
+}
+
+async function getLabDataset(params: URLSearchParams) {
+  const symbol = (params.get('symbol') ?? 'BTCUSDT').toUpperCase();
+  const market = parseMarketParam(params.get('market'));
+  const exchange = parseExchangeParam(params.get('exchange'));
+  const tf = clampInt(params.get('tf'), 15, 1, 240);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const liveFrom = nowSec - (nowSec % 60);
+  const toSec = Math.min(clampInt(params.get('to'), liveFrom, 60, liveFrom), liveFrom);
+  const defaultFrom = toSec - 30 * 86_400;
+  const fromSec = clampInt(params.get('from'), defaultFrom, 1, toSec);
+  const windowRaw = params.get('window') ?? '500';
+  const pctWindow =
+    windowRaw === '100' || windowRaw === '1000' || windowRaw === '1d' || windowRaw === '7d' || windowRaw === '30d'
+      ? windowRaw
+      : '500';
+  const warmupSec = windowBars(pctWindow, tf) * tf * 60;
+  const fetchFrom = Math.max(0, fromSec - warmupSec);
+  const srcTf = sourceTfMinutes(tf);
+  const interval = tfToInterval(tf);
+
+  const rows = await fetchKlinesRange(exchange, symbol, interval, market, fetchFrom * 1000, toSec * 1000);
+  let candles = klinesToCandles(rows);
+  candles = rollCandles(candles, srcTf, tf);
+
+  let footprint: import('../src/footprint/types.js').FootprintBar[] = [];
+  let spotFootprint: import('../src/footprint/types.js').FootprintBar[] = [];
+  if (isStorageEnabled()) {
+    await recorderFor(market).flush();
+    const fpRows = await loadBars({
+      symbol,
+      market,
+      exchanges: parseFootprintExchanges(exchange, market),
+      fromSec: fetchFrom,
+      toSec: liveFrom,
+    });
+    footprint = tf === 1 && parseFootprintExchanges(exchange, market).length === 1 ? fpRows : rollup(fpRows, tf);
+    if (market === 'perp') {
+      try {
+        await recorderFor('spot').flush();
+        const spotRows = await loadBars({
+          symbol,
+          market: 'spot',
+          exchanges: parseFootprintExchanges(exchange, 'spot'),
+          fromSec: fetchFrom,
+          toSec: liveFrom,
+        });
+        spotFootprint = tf === 1 ? spotRows : rollup(spotRows, tf);
+      } catch {
+        spotFootprint = [];
+      }
+    }
+  }
+
+  const merged = mergeDataset({
+    candles,
+    footprint,
+    spotFootprint,
+    tfMinutes: tf,
+    fromSec: fetchFrom,
+    toSec,
+  });
+
+  return {
+    symbol,
+    market,
+    exchange,
+    tf,
+    fromSec,
+    toSec,
+    signalFromSec: fromSec,
+    bars: merged.bars,
+    coverage: merged.coverage,
+  };
+}
+
+async function fetchKlinesRange(
+  exchange: ExchangeId,
+  symbol: string,
+  interval: string,
+  market: 'spot' | 'perp',
+  startMs: number,
+  endMs: number,
+) {
+  const pageSize = 1500;
+  const merged = new Map<number, [number, string, string, string, string, string]>();
+  let cursor = startMs;
+  for (let i = 0; i < 40; i++) {
+    const rows = await fetchVenueKlines(exchange, symbol, interval, market, pageSize, undefined, cursor);
+    if (!rows.length) break;
+    for (const row of rows) {
+      if (row[0] >= startMs && row[0] < endMs) merged.set(row[0], row);
+    }
+    const last = rows[rows.length - 1];
+    if (!last || last[0] >= endMs - 1 || rows.length < pageSize) break;
+    const next = last[0] + 1;
+    if (next <= cursor) break;
+    cursor = next;
+  }
+  return [...merged.values()].sort((a, b) => a[0] - b[0]);
 }
 
 async function fetchKlinesPaged(

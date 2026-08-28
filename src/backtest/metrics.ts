@@ -1,0 +1,131 @@
+import type { MetricId } from './types.js';
+
+export interface MetricDef {
+  id: MetricId;
+  label: string;
+  group: string;
+  unit: 'usd' | 'pct' | 'bool' | 'price' | 'count' | 'ratio' | 'bps';
+  hasPercentile?: boolean;
+}
+
+export const METRICS: MetricDef[] = [
+  { id: 'aggressiveBuy', label: 'Aggressive Buy Volume', group: 'Order flow', unit: 'usd', hasPercentile: true },
+  { id: 'aggressiveSell', label: 'Aggressive Sell Volume', group: 'Order flow', unit: 'usd', hasPercentile: true },
+  { id: 'aggressiveBuyPercentile', label: 'Aggressive Buy Percentile', group: 'Order flow', unit: 'pct' },
+  { id: 'aggressiveSellPercentile', label: 'Aggressive Sell Percentile', group: 'Order flow', unit: 'pct' },
+  { id: 'delta', label: 'Delta', group: 'Order flow', unit: 'usd', hasPercentile: true },
+  { id: 'deltaPercent', label: 'Delta %', group: 'Order flow', unit: 'pct' },
+  { id: 'absDelta', label: 'Absolute Delta', group: 'Order flow', unit: 'usd' },
+  { id: 'deltaPercentile', label: 'Delta Percentile', group: 'Order flow', unit: 'pct' },
+  { id: 'cvd', label: 'CVD', group: 'Order flow', unit: 'usd' },
+  { id: 'cvdSlope', label: 'CVD slope', group: 'Order flow', unit: 'usd' },
+  { id: 'cvdDivergence', label: 'CVD divergence', group: 'Order flow', unit: 'bool' },
+  { id: 'executedVolume', label: 'Executed Volume', group: 'Order flow', unit: 'usd' },
+  { id: 'tradeCount', label: 'Trade Count', group: 'Order flow', unit: 'count' },
+  { id: 'avgTradeSize', label: 'Average Trade Size', group: 'Order flow', unit: 'usd' },
+  { id: 'largeTradeVolume', label: 'Large Trade Volume', group: 'Order flow', unit: 'usd' },
+  { id: 'whaleTradeVolume', label: 'Whale Trade Volume', group: 'Order flow', unit: 'usd' },
+  { id: 'buySellImbalance', label: 'Buy/Sell Imbalance', group: 'Order flow', unit: 'ratio' },
+  { id: 'stackedBuyImbalance', label: 'Stacked Buy Imbalance', group: 'Order flow', unit: 'count' },
+  { id: 'stackedSellImbalance', label: 'Stacked Sell Imbalance', group: 'Order flow', unit: 'count' },
+  { id: 'footprintPoc', label: 'Footprint POC', group: 'Order flow', unit: 'price' },
+
+  { id: 'spotAggressiveBuy', label: 'Spot Aggressive Buy', group: 'Spot', unit: 'usd' },
+  { id: 'spotAggressiveSell', label: 'Spot Aggressive Sell', group: 'Spot', unit: 'usd' },
+  { id: 'spotDelta', label: 'Spot Delta', group: 'Spot', unit: 'usd' },
+  { id: 'spotDeltaPercent', label: 'Spot Delta %', group: 'Spot', unit: 'pct' },
+  { id: 'spotCvd', label: 'Spot CVD', group: 'Spot', unit: 'usd' },
+  { id: 'spotCvdSlope', label: 'Spot CVD slope', group: 'Spot', unit: 'usd' },
+  { id: 'spotVolume', label: 'Spot Volume', group: 'Spot', unit: 'usd' },
+  { id: 'spotBuySellImbalance', label: 'Spot Buy/Sell Imbalance', group: 'Spot', unit: 'ratio' },
+  { id: 'spotPriceEfficiency', label: 'Spot Price Efficiency', group: 'Spot', unit: 'pct' },
+  { id: 'spotAbsorption', label: 'Spot Absorption', group: 'Spot', unit: 'bool' },
+
+  { id: 'futuresAggressiveBuy', label: 'Futures Aggressive Buy', group: 'Futures', unit: 'usd' },
+  { id: 'futuresAggressiveSell', label: 'Futures Aggressive Sell', group: 'Futures', unit: 'usd' },
+  { id: 'futuresDelta', label: 'Futures Delta', group: 'Futures', unit: 'usd' },
+  { id: 'futuresCvd', label: 'Futures CVD', group: 'Futures', unit: 'usd' },
+  { id: 'oi', label: 'Open Interest', group: 'Futures', unit: 'usd' },
+  { id: 'oiChange', label: 'OI Change %', group: 'Futures', unit: 'pct' },
+  { id: 'funding', label: 'Funding Rate', group: 'Futures', unit: 'pct' },
+  { id: 'longLiquidations', label: 'Long Liquidations', group: 'Futures', unit: 'usd' },
+  { id: 'shortLiquidations', label: 'Short Liquidations', group: 'Futures', unit: 'usd' },
+
+  { id: 'bidDepth', label: 'Bid Depth', group: 'Order book', unit: 'usd', hasPercentile: true },
+  { id: 'askDepth', label: 'Ask Depth', group: 'Order book', unit: 'usd', hasPercentile: true },
+  { id: 'bidDepthPercentile', label: 'Bid Depth Percentile', group: 'Order book', unit: 'pct' },
+  { id: 'askDepthPercentile', label: 'Ask Depth Percentile', group: 'Order book', unit: 'pct' },
+  { id: 'depthImbalance', label: 'Depth Imbalance', group: 'Order book', unit: 'ratio' },
+  { id: 'askConsumption', label: 'Ask Consumption', group: 'Order book', unit: 'usd' },
+  { id: 'bidConsumption', label: 'Bid Consumption', group: 'Order book', unit: 'usd' },
+  { id: 'askConsumptionRatio', label: 'Ask Consumption Ratio', group: 'Order book', unit: 'ratio' },
+  { id: 'bidConsumptionRatio', label: 'Bid Consumption Ratio', group: 'Order book', unit: 'ratio' },
+  { id: 'askReplenishment', label: 'Ask Replenishment', group: 'Order book', unit: 'pct' },
+  { id: 'bidReplenishment', label: 'Bid Replenishment', group: 'Order book', unit: 'pct' },
+  { id: 'askWithdrawal', label: 'Ask Withdrawal', group: 'Order book', unit: 'pct' },
+  { id: 'bidWithdrawal', label: 'Bid Withdrawal', group: 'Order book', unit: 'pct' },
+
+  { id: 'buyerAbsorption', label: 'Buyer Absorption', group: 'Absorption', unit: 'bool' },
+  { id: 'sellerAbsorption', label: 'Seller Absorption', group: 'Absorption', unit: 'bool' },
+  { id: 'absorptionStrength', label: 'Absorption Strength', group: 'Absorption', unit: 'pct' },
+  { id: 'absorbedVolume', label: 'Absorbed Volume', group: 'Absorption', unit: 'usd' },
+  { id: 'absorptionDuration', label: 'Absorption Duration', group: 'Absorption', unit: 'count' },
+  { id: 'absorptionPercentile', label: 'Absorption Percentile', group: 'Absorption', unit: 'pct' },
+
+  { id: 'priceMovePct', label: 'Price Move %', group: 'Price response', unit: 'pct' },
+  { id: 'priceDisplacement', label: 'Price displacement', group: 'Price response', unit: 'price' },
+  { id: 'displacementPercentile', label: 'Displacement percentile', group: 'Price response', unit: 'pct' },
+  { id: 'upsideEfficiency', label: 'Upside Price Efficiency', group: 'Price response', unit: 'pct' },
+  { id: 'downsideEfficiency', label: 'Downside Price Efficiency', group: 'Price response', unit: 'pct' },
+  { id: 'priceEfficiency', label: 'Price Efficiency', group: 'Price response', unit: 'pct' },
+  { id: 'atr', label: 'ATR', group: 'Price response', unit: 'price' },
+  { id: 'realizedVol', label: 'Realized Volatility', group: 'Price response', unit: 'pct' },
+
+  { id: 'upsideVacuum', label: 'Upside Liquidity Vacuum', group: 'Vacuum', unit: 'bool' },
+  { id: 'downsideVacuum', label: 'Downside Liquidity Vacuum', group: 'Vacuum', unit: 'bool' },
+  { id: 'vacuumStrength', label: 'Vacuum Strength', group: 'Vacuum', unit: 'pct' },
+
+  { id: 'spotFuturesDeltaDiv', label: 'Spot vs Futures Delta', group: 'Spot vs Futures', unit: 'usd' },
+  { id: 'spotLed', label: 'Spot-led movement', group: 'Spot vs Futures', unit: 'bool' },
+  { id: 'futuresLed', label: 'Futures-led movement', group: 'Spot vs Futures', unit: 'bool' },
+  { id: 'broadBuying', label: 'Broad buying', group: 'Spot vs Futures', unit: 'bool' },
+  { id: 'broadSelling', label: 'Broad selling', group: 'Spot vs Futures', unit: 'bool' },
+  { id: 'leverageDrivenRally', label: 'Leverage-driven rally', group: 'Spot vs Futures', unit: 'bool' },
+  { id: 'leverageDrivenSelloff', label: 'Leverage-driven selloff', group: 'Spot vs Futures', unit: 'bool' },
+
+  { id: 'swingHigh', label: 'Swing High', group: 'Structure', unit: 'price' },
+  { id: 'swingLow', label: 'Swing Low', group: 'Structure', unit: 'price' },
+  { id: 'higherHigh', label: 'Higher High', group: 'Structure', unit: 'bool' },
+  { id: 'higherLow', label: 'Higher Low', group: 'Structure', unit: 'bool' },
+  { id: 'lowerHigh', label: 'Lower High', group: 'Structure', unit: 'bool' },
+  { id: 'lowerLow', label: 'Lower Low', group: 'Structure', unit: 'bool' },
+  { id: 'bosBullish', label: 'BOS bullish', group: 'Structure', unit: 'bool' },
+  { id: 'bosBearish', label: 'BOS bearish', group: 'Structure', unit: 'bool' },
+  { id: 'chochBullish', label: 'CHoCH bullish', group: 'Structure', unit: 'bool' },
+  { id: 'chochBearish', label: 'CHoCH bearish', group: 'Structure', unit: 'bool' },
+  { id: 'distanceFromSupport', label: 'Distance from support', group: 'Structure', unit: 'pct' },
+  { id: 'distanceFromResistance', label: 'Distance from resistance', group: 'Structure', unit: 'pct' },
+  { id: 'failedBreakout', label: 'Failed Breakout', group: 'Structure', unit: 'bool' },
+  { id: 'dataQuality', label: 'Data Quality', group: 'Quality', unit: 'pct' },
+];
+
+export const METRIC_BY_ID = new Map(METRICS.map((m) => [m.id, m]));
+
+export const OPERATORS: Array<{ id: import('./types.js').ConditionOperator; label: string }> = [
+  { id: '>', label: '>' },
+  { id: '>=', label: '>=' },
+  { id: '<', label: '<' },
+  { id: '<=', label: '<=' },
+  { id: '=', label: '=' },
+  { id: '!=', label: '!=' },
+  { id: 'crosses_above', label: 'crosses above' },
+  { id: 'crosses_below', label: 'crosses below' },
+  { id: 'increases', label: 'increases' },
+  { id: 'decreases', label: 'decreases' },
+  { id: 'turns_positive', label: 'turns positive' },
+  { id: 'turns_negative', label: 'turns negative' },
+  { id: 'percentile_above', label: 'percentile above' },
+  { id: 'percentile_below', label: 'percentile below' },
+  { id: 'changes_by_pct', label: 'changes by %' },
+  { id: 'persists_for', label: 'persists for N bars' },
+];

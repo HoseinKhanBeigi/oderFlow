@@ -4,7 +4,7 @@ export type ClockListener = (simTime: number, dtMs: number) => void;
 
 /**
  * Fixed simulation tick. Independent of requestAnimationFrame.
- * Phaser must subscribe to state, not drive these ticks.
+ * The UI must subscribe to state, not drive these ticks.
  */
 export class SimulationClock {
   tickMs: number;

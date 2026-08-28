@@ -136,7 +136,7 @@ export interface VisualFade {
 
 /**
  * Renderer-facing hints. These are observations already computed by the
- * engine — Phaser must not derive market quantities from them.
+ * engine — the UI must not derive market quantities from them.
  */
 export interface VisualHints {
   buyImpulse: number;

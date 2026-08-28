@@ -45,3 +45,4 @@ export type { DailySignal, DailyBias, DailySetup } from './models/daily-signal.j
 
 export * from './models/index.js';
 export * as simulation from './simulation/index.js';
+export * as backtest from './backtest/index.js';

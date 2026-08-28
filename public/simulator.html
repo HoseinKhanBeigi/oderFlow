@@ -3,153 +3,118 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Market Microstructure Simulator</title>
+  <title>Microstructure Backtest Lab</title>
   <link rel="stylesheet" href="/simulator.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
 <body>
-  <header class="header">
-    <div class="brand">
-      <span class="logo">◈</span>
-      <div>
-        <h1>Microstructure simulator</h1>
-        <p class="subtitle">Aggressive flow vs passive liquidity — not Newtonian physics, not a price forecast</p>
+  <div class="lab">
+    <header class="lab-top">
+      <a class="back-link" href="/">← Order flow</a>
+      <div class="brand-mini">
+        <span class="logo">◈</span>
+        <strong>Backtest Lab</strong>
       </div>
-    </div>
-    <div class="header-meta">
-      <a class="back-link" href="/">← Order flow dashboard</a>
-      <input id="sim-symbol" class="sym-input" value="BTCUSDT" spellcheck="false" />
-    </div>
-  </header>
-
-  <p id="disclaimer" class="disclaimer"></p>
-
-  <div class="sim-layout">
-    <aside class="panel controls">
-      <h2>Controls</h2>
-      <div class="btn-row" id="transport">
-        <button id="btn-play" class="active" type="button">Play</button>
-        <button id="btn-pause" type="button">Pause</button>
-        <button id="btn-step" type="button">Step</button>
-        <button id="btn-reset" type="button">Reset</button>
-      </div>
-
-      <span class="label">Speed</span>
-      <div class="chip-row" id="speeds">
-        <button type="button" data-speed="0.25">0.25x</button>
-        <button type="button" data-speed="0.5">0.5x</button>
-        <button type="button" data-speed="1" class="active">1x</button>
-        <button type="button" data-speed="2">2x</button>
-        <button type="button" data-speed="5">5x</button>
-        <button type="button" data-speed="10">10x</button>
-      </div>
-
-      <span class="label">Mode</span>
-      <div class="chip-row" id="modes">
-        <button type="button" data-mode="synthetic" class="active">Synthetic</button>
-        <button type="button" data-mode="realtime">Real-time</button>
-        <button type="button" data-mode="replay">Replay</button>
-      </div>
-
-      <span class="label">Market</span>
-      <div class="chip-row" id="markets">
+      <label class="field">Symbol
+        <input id="lab-symbol" value="BTCUSDT" spellcheck="false" />
+      </label>
+      <div class="chip-row" id="lab-market">
+        <button type="button" data-market="perp" class="active">Futures</button>
         <button type="button" data-market="spot">Spot</button>
-        <button type="button" data-market="futures" class="active">Futures</button>
-        <button type="button" data-market="combined">Combined</button>
       </div>
-
-      <span class="label">Price trail</span>
-      <div class="chip-row" id="trails">
-        <button type="button" data-trail="1s">1s</button>
-        <button type="button" data-trail="5s">5s</button>
-        <button type="button" data-trail="30s" class="active">30s</button>
-        <button type="button" data-trail="1m">1m</button>
-        <button type="button" data-trail="5m">5m</button>
+      <label class="field">Exchange
+        <select id="lab-exchange">
+          <option value="binance">Binance</option>
+          <option value="bybit">Bybit</option>
+          <option value="okx">OKX</option>
+          <option value="bitget">Bitget</option>
+        </select>
+      </label>
+      <div class="chip-row" id="lab-tf"></div>
+      <div class="chip-row" id="lab-mode">
+        <button type="button" data-mode="BACKTEST" class="active">Backtest</button>
+        <button type="button" data-mode="REPLAY">Replay</button>
+        <button type="button" data-mode="FORWARD_TEST">Forward test</button>
+        <button type="button" data-mode="WALK_FORWARD">Walk-forward</button>
       </div>
-
-      <h2 class="section-gap">Presets</h2>
-      <div id="presets" class="preset-list"></div>
-
-      <h2 class="section-gap">Custom scenario</h2>
-      <p class="hint">0 = none, 0.4 = normal, 1 = extreme. Same seed ⇒ same run.</p>
-      <div class="form-grid">
-        <label>Aggressive buy <input id="in-buy" type="number" min="0" max="1" step="0.05" value="1" /></label>
-        <label>Aggressive sell <input id="in-sell" type="number" min="0" max="1" step="0.05" value="0" /></label>
-        <label>Ask depth <input id="in-ask-depth" type="number" min="0" max="1" step="0.05" value="0.12" /></label>
-        <label>Bid depth <input id="in-bid-depth" type="number" min="0" max="1" step="0.05" value="0.72" /></label>
-        <label>Ask replenish <input id="in-ask-repl" type="number" min="0" max="1" step="0.05" value="0.12" /></label>
-        <label>Bid replenish <input id="in-bid-repl" type="number" min="0" max="1" step="0.05" value="0.4" /></label>
-        <label>Ask withdrawal <input id="in-ask-wd" type="number" min="0" max="1" step="0.05" value="0.72" /></label>
-        <label>Bid withdrawal <input id="in-bid-wd" type="number" min="0" max="1" step="0.05" value="0.12" /></label>
-        <label>Volatility <input id="in-vol" type="number" min="0" max="1" step="0.05" value="0.72" /></label>
-        <label>OI change <input id="in-oi" type="number" min="-1" max="1" step="0.05" value="0" /></label>
-        <label>Funding <input id="in-funding" type="number" step="0.0001" value="0" /></label>
-        <label>Long liqs <input id="in-long-liq" type="number" min="0" max="1" step="0.05" value="0" /></label>
-        <label>Short liqs <input id="in-short-liq" type="number" min="0" max="1" step="0.05" value="0" /></label>
-        <label>Seed <input id="in-seed" type="number" value="12345" /></label>
+      <label class="field">From <input id="lab-from" type="date" /></label>
+      <label class="field">To <input id="lab-to" type="date" /></label>
+      <div class="chip-row" id="lab-range">
+        <button type="button" data-range="1">24h</button>
+        <button type="button" data-range="7">7d</button>
+        <button type="button" data-range="30" class="active">30d</button>
+        <button type="button" data-range="90">90d</button>
       </div>
-      <button id="btn-run" class="primary" type="button">Run scenario</button>
-    </aside>
+      <button id="btn-run" class="primary" type="button">Run backtest</button>
+    </header>
 
-    <section class="stage">
-      <div id="sim-canvas" class="sim-canvas"></div>
-      <div class="pressure">
-        <span>Sell pressure</span>
-        <div class="pressure-track">
-          <div id="pressure-needle" class="pressure-needle"></div>
+    <p id="lab-banner" class="lab-banner">If these exact order-flow conditions occurred historically, what happened next? Decisions use only data known at that timestamp.</p>
+
+    <div class="lab-main">
+      <section class="lab-chart-wrap">
+        <div class="chart-overlays">
+          <span>Indicators</span>
+          <div id="overlay-menu" class="overlay-menu"></div>
         </div>
-        <span>Buy pressure</span>
-        <strong id="pressure-label">—</strong>
-      </div>
-      <div id="abs-box" class="abs-box hidden">
-        <strong>Absorption</strong>
-        <div class="abs-grid">
-          <span>Executed</span><span id="abs-exec">—</span>
-          <span>Replenished</span><span id="abs-repl">—</span>
-          <span>Price impact</span><span id="abs-impact">—</span>
-          <span>Efficiency</span><span id="abs-eff">—</span>
+        <div id="tv-chart" class="tv-chart"></div>
+        <div id="hover-tip" class="hover-tip hidden"></div>
+      </section>
+
+      <aside class="lab-side">
+        <h2>Strategy</h2>
+        <label class="field full">Preset
+          <select id="lab-preset"></select>
+        </label>
+        <p id="strat-notes" class="hint"></p>
+        <div class="side-tabs">
+          <button type="button" class="active" data-side="rules">Rules</button>
+          <button type="button" data-side="exec">Entry / exit</button>
+          <button type="button" data-side="risk">Risk</button>
         </div>
-      </div>
-    </section>
+        <div id="side-rules" class="side-pane"></div>
+        <div id="side-exec" class="side-pane hidden"></div>
+        <div id="side-risk" class="side-pane hidden"></div>
+        <div class="side-actions">
+          <button type="button" id="btn-save">Save strategy</button>
+          <input id="save-name" placeholder="BTC Seller Absorption v1" />
+        </div>
+      </aside>
+    </div>
 
-    <aside class="panel state-col">
-      <h2>Market state</h2>
-      <dl class="state-dl">
-        <div><dt>Price</dt><dd id="st-price">—</dd></div>
-        <div><dt>Aggressive buy</dt><dd id="st-buy">—</dd></div>
-        <div><dt>Aggressive sell</dt><dd id="st-sell">—</dd></div>
-        <div><dt>Delta</dt><dd id="st-delta">—</dd></div>
-        <div><dt>Ask depth</dt><dd id="st-ask-depth">—</dd></div>
-        <div><dt>Bid depth</dt><dd id="st-bid-depth">—</dd></div>
-        <div><dt>Ask consumption</dt><dd id="st-ask-cons">—</dd></div>
-        <div><dt>Ask replenishment</dt><dd id="st-ask-repl">—</dd></div>
-        <div><dt>Ask withdrawal</dt><dd id="st-ask-wd">—</dd></div>
-        <div><dt>Price efficiency</dt><dd id="st-eff">—</dd></div>
-        <div><dt>OI</dt><dd id="st-oi">—</dd></div>
-        <div><dt>Funding</dt><dd id="st-funding">—</dd></div>
-        <div><dt>Short liquidations</dt><dd id="st-short-liq">—</dd></div>
-      </dl>
-      <div class="state-block">
-        <span class="label">State</span>
-        <div id="st-state" class="state-pill">—</div>
-      </div>
-      <div class="state-block">
-        <span class="label">Mechanics</span>
-        <div id="st-mechanics">—</div>
-      </div>
-      <div class="state-block">
-        <span class="label">Effort vs result</span>
-        <div id="st-effort">—</div>
-      </div>
+    <div id="run-progress" class="run-progress hidden">
+      <div class="run-progress-bar"><i id="run-bar"></i></div>
+      <span id="run-meta">Starting…</span>
+    </div>
 
-      <h2 class="section-gap">Why</h2>
-      <h3 id="why-headline">WHY?</h3>
-      <ul id="why-list" class="why-list"></ul>
-      <p class="hint">Price does not move simply because there are more buyers than sellers. Every trade has both. Displacement comes from aggression interacting with available passive liquidity.</p>
-    </aside>
+    <div class="lab-kpis" id="lab-kpis">
+      <div><span>Net PnL</span><strong id="k-pnl">—</strong></div>
+      <div><span>Return</span><strong id="k-ret">—</strong></div>
+      <div><span>Profit factor</span><strong id="k-pf">—</strong></div>
+      <div><span>Win rate</span><strong id="k-wr">—</strong></div>
+      <div><span>Max DD</span><strong id="k-dd">—</strong></div>
+      <div><span>Trades</span><strong id="k-n">—</strong></div>
+      <div><span>Expectancy</span><strong id="k-exp">—</strong></div>
+      <div><span>Sharpe</span><strong id="k-sh">—</strong></div>
+    </div>
+
+    <footer class="lab-bottom">
+      <div class="bottom-tabs" id="bottom-tabs">
+        <button type="button" class="active" data-tab="trades">Trades</button>
+        <button type="button" data-tab="equity">Equity</button>
+        <button type="button" data-tab="signals">Signals</button>
+        <button type="button" data-tab="types">By type</button>
+        <button type="button" data-tab="coverage">Data coverage</button>
+        <button type="button" data-tab="explain">Diagnostics</button>
+      </div>
+      <div id="tab-trades" class="bottom-pane"></div>
+      <div id="tab-equity" class="bottom-pane hidden"></div>
+      <div id="tab-signals" class="bottom-pane hidden"></div>
+      <div id="tab-types" class="bottom-pane hidden"></div>
+      <div id="tab-coverage" class="bottom-pane hidden"></div>
+      <div id="tab-explain" class="bottom-pane hidden"></div>
+    </footer>
   </div>
-
   <script src="/simulator.bundle.js"></script>
 </body>
 </html>

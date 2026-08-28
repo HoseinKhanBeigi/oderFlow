@@ -773,15 +773,29 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(220px, 0.7fr);
   gap: 0.75rem;
-  min-height: 360px;
+  min-height: 180px;
 }
 .sim-live-canvas {
-  min-height: 340px;
+  min-height: 160px;
   background: #080a0e;
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
 }
+.live-micro {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem 0.8rem;
+  height: 100%;
+  padding: 0.7rem 0.8rem;
+  font-size: 0.75rem;
+  align-content: center;
+}
+.live-micro .muted { color: var(--muted); font-size: 0.65rem; margin-bottom: 0.2rem; }
+.live-micro .bar-track { height: 8px; background: #1a222c; border-radius: 4px; overflow: hidden; display: flex; }
+.live-micro .bar-track i { display: block; height: 100%; }
+.live-micro .buy { background: #22c55e; }
+.live-micro .sell { background: #ef4444; }
 .sim-live-side { display: flex; flex-direction: column; gap: 0.4rem; }
 .sim-live-dl { margin: 0.2rem 0; }
 .sim-live-dl div { display: flex; justify-content: space-between; gap: 0.5rem; }
