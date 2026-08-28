@@ -64,7 +64,7 @@ export class SimulationHub {
     const k = this.key(symbol, market);
     let replay = this.logs.get(k);
     if (!replay) {
-      replay = new ReplayEngine({ capacity: 80_000 });
+      replay = new ReplayEngine({ capacity: 20_000 });
       this.logs.set(k, replay);
     }
     return replay;

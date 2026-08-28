@@ -171,7 +171,7 @@ export class MarketSimulationEngine {
   ingest(event: SimulationEvent): void {
     const copy = { ...event, seq: event.seq || this.sequencer.next() };
     this.queue.push(copy);
-    this.replay.record(copy);
+    if (this.mode !== 'realtime') this.replay.record(copy);
   }
 
   queueAggression(side: 'BUY' | 'SELL', quoteValue: number, timestamp: number, forced = false): void {
@@ -451,15 +451,17 @@ export class MarketSimulationEngine {
   private recordBookDelta(side: 'bid' | 'ask', dirty: boolean): void {
     if (!dirty) return;
     const levels = this.book.allLevels(side).map((l) => ({ price: l.price, quoteValue: l.restingLiquidity }));
-    this.replay.record({
-      kind: 'book_delta',
-      seq: this.sequencer.next(),
-      timestamp: this.tickNow,
-      symbol: this.symbol,
-      marketType: this.marketType,
-      bids: side === 'bid' ? levels : [],
-      asks: side === 'ask' ? levels : [],
-    });
+    if (this.mode !== 'realtime') {
+      this.replay.record({
+        kind: 'book_delta',
+        seq: this.sequencer.next(),
+        timestamp: this.tickNow,
+        symbol: this.symbol,
+        marketType: this.marketType,
+        bids: side === 'bid' ? levels : [],
+        asks: side === 'ask' ? levels : [],
+      });
+    }
   }
 
   private applyEvent(event: SimulationEvent): void {
@@ -549,7 +551,7 @@ export class MarketSimulationEngine {
       side: agg.side,
       isForced: agg.forced,
     };
-    this.replay.record(trade);
+    if (this.mode !== 'realtime') this.replay.record(trade);
     this.noteImpulse(agg.side, agg.quoteValue, agg.forced, agg.timestamp);
     this.flow.ingestTrade(trade);
     this.walkAggression(agg.side, agg.quoteValue);

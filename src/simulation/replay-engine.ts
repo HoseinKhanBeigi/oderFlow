@@ -11,7 +11,7 @@ export class ReplayEngine {
   readonly capacity: number;
 
   constructor(opts: { capacity?: number } = {}) {
-    this.capacity = opts.capacity ?? 200_000;
+    this.capacity = opts.capacity ?? 50_000;
   }
 
   get length(): number {
