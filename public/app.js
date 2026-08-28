@@ -1450,8 +1450,8 @@ function applyDataMode(mode) {
       ? 'Spot vs futures footprint'
       : 'Spot order flow footprint';
   $('chart-hint').textContent = mode === 'perp'
-    ? 'Red left = sells, green right = buys. Gold candle on the right is the next bar from this footprint. Gold line is predicted close; blue line is live price.'
-    : 'Red left = aggressive spot sells, green right = aggressive spot buys. Gold candle on the right is the next bar from this footprint. Gold line is predicted close; blue line is live price.';
+    ? 'Red left = sells, green right = buys. Bar titles include upside/downside vacuum and seller/buyer absorption reversal. Gold = next candle, blue = live price.'
+    : 'Red left = aggressive spot sells, green right = aggressive spot buys. Bar titles include upside/downside vacuum and seller/buyer absorption reversal. Gold = next candle, blue = live price.';
   $('imb-cfg')?.classList.toggle('hidden', !spot);
   $('spot-hud')?.classList.toggle('hidden', !spot);
   $('move-panel')?.classList.toggle('hidden', spot);
@@ -2299,6 +2299,143 @@ function fpBarWinner(bar) {
   return { id: 'BALANCED', short: '', color: '#8b949e' };
 }
 
+function barAbsorbed(bar) {
+  const vol = (bar.totalBuy ?? 0) + (bar.totalSell ?? 0);
+  const delta = (bar.totalBuy ?? 0) - (bar.totalSell ?? 0);
+  const range = Math.max(bar.high - bar.low, 1e-9);
+  const closePos = (bar.close - bar.low) / range;
+  const dominated = vol > 0 && Math.abs(delta / vol) >= 0.25;
+  if (dominated && delta < 0 && closePos >= 0.55) return 'SELLERS';
+  if (dominated && delta > 0 && closePos <= 0.45) return 'BUYERS';
+  return null;
+}
+
+function priorSwingLevels(prior) {
+  if (!prior.length) return { support: null, resistance: null };
+  const recent = prior.slice(-16);
+  let resistance = -Infinity;
+  let support = Infinity;
+  for (const b of recent) {
+    if (b.high > resistance) resistance = b.high;
+    if (b.low < support) support = b.low;
+  }
+  if (!Number.isFinite(resistance) || !Number.isFinite(support)) return { support: null, resistance: null };
+  return { support, resistance };
+}
+
+function barLocationFromPrior(bar, prior) {
+  const { support, resistance } = priorSwingLevels(prior);
+  if (support == null || resistance == null || resistance <= support) return 'UNKNOWN';
+  const band = Math.max((resistance - support) * 0.12, (bar.close || 1) * 0.0015);
+  if (bar.close > resistance + band * 0.15) return 'ABOVE_RESISTANCE';
+  if (bar.close < support - band * 0.15) return 'BELOW_SUPPORT';
+  if (bar.high >= resistance - band) return 'AT_RESISTANCE';
+  if (bar.low <= support + band) return 'AT_SUPPORT';
+  return 'MID_RANGE';
+}
+
+function recentBarAtr(prior, bar) {
+  const look = prior.slice(-8);
+  if (!look.length) return Math.max(bar.high - bar.low, (bar.close || 1) * 0.002);
+  let s = 0;
+  for (const b of look) s += Math.max(b.high - b.low, 0);
+  return s / look.length || Math.max(bar.high - bar.low, (bar.close || 1) * 0.002);
+}
+
+function barVacuumKind(bar, prior) {
+  const buy = bar.totalBuy ?? 0;
+  const sell = bar.totalSell ?? 0;
+  const vol = buy + sell;
+  const range = bar.high - bar.low;
+  if (range <= 0) return null;
+  const atr = recentBarAtr(prior, bar);
+  const closePos = (bar.close - bar.low) / range;
+  const move = bar.close - bar.open;
+  const expanded = range >= atr * 1.15;
+  const ran = Math.abs(move) >= atr * 0.45;
+  if (!expanded && !ran) return null;
+  const deltaPct = vol > 0 ? (buy - sell) / vol : (move > 0 ? 0.3 : move < 0 ? -0.3 : 0);
+  if (deltaPct >= 0.18 && move > 0 && closePos >= 0.62) return 'UPSIDE';
+  if (deltaPct <= -0.18 && move < 0 && closePos <= 0.38) return 'DOWNSIDE';
+  if (move > 0 && closePos >= 0.72 && range >= atr * 1.35) return 'UPSIDE';
+  if (move < 0 && closePos <= 0.28 && range >= atr * 1.35) return 'DOWNSIDE';
+  return null;
+}
+
+function absorptionReversalKind(bar, next) {
+  const abs = barAbsorbed(bar);
+  if (abs === 'SELLERS') {
+    const reversed = bar.close >= bar.open || (next && next.close > bar.close);
+    if (reversed) return 'SELLER';
+  }
+  if (abs === 'BUYERS') {
+    const reversed = bar.close <= bar.open || (next && next.close < bar.close);
+    if (reversed) return 'BUYER';
+  }
+  return null;
+}
+
+function strategyStoryForBar(allBars, idx) {
+  const bar = allBars[idx];
+  const prior = allBars.slice(Math.max(0, idx - 20), idx);
+  const next = allBars[idx + 1];
+  const win = fpBarWinner(bar);
+  const absorbed = barAbsorbed(bar);
+  const location = barLocationFromPrior(bar, prior);
+  const vol = (bar.totalBuy ?? 0) + (bar.totalSell ?? 0);
+  const deltaPct = vol > 0 ? ((bar.totalBuy ?? 0) - (bar.totalSell ?? 0)) / vol : 0;
+  let score = 0;
+  if (absorbed === 'SELLERS') score += 20;
+  else if (absorbed === 'BUYERS') score -= 20;
+  else score += Math.max(-28, Math.min(28, deltaPct * 40));
+  if (location === 'AT_SUPPORT') score += 18;
+  else if (location === 'AT_RESISTANCE') score -= 18;
+  else if (location === 'ABOVE_RESISTANCE') score += 14;
+  else if (location === 'BELOW_SUPPORT') score -= 14;
+  const bias = Math.abs(score) < 12 ? 'WAIT' : score > 0 ? 'LONG' : 'SHORT';
+  let setup = 'MID_RANGE';
+  if (location === 'AT_SUPPORT' && (absorbed === 'SELLERS' || score > 0)) setup = 'SUPPORT_HOLD';
+  else if (location === 'AT_RESISTANCE' && (absorbed === 'BUYERS' || score < 0)) setup = 'RESISTANCE_REJECT';
+  else if (location === 'ABOVE_RESISTANCE' && score > 0) setup = 'BREAKOUT_UP';
+  else if (location === 'BELOW_SUPPORT' && score < 0) setup = 'BREAKDOWN';
+  else if (location === 'MID_RANGE' && Math.abs(score) >= 28) setup = 'FLOW_CONTINUATION';
+
+  const rev = absorptionReversalKind(bar, next);
+  if (rev === 'SELLER') return { badge: 'LONG', event: 'seller abs rev', color: '#60a5fa' };
+  if (rev === 'BUYER') return { badge: 'SHORT', event: 'buyer abs rev', color: '#fbbf24' };
+  const vac = barVacuumKind(bar, prior);
+  if (vac === 'UPSIDE') return { badge: 'LONG', event: 'upside vacuum', color: '#22d3ee' };
+  if (vac === 'DOWNSIDE') return { badge: 'SHORT', event: 'downside vac', color: '#fb923c' };
+
+  if (setup === 'SUPPORT_HOLD') return { badge: 'LONG', event: 'held support', color: '#22c55e' };
+  if (setup === 'RESISTANCE_REJECT') return { badge: 'SHORT', event: 'reject resist', color: '#ef4444' };
+  if (setup === 'BREAKOUT_UP') return { badge: 'LONG', event: 'broke resist', color: '#22c55e' };
+  if (setup === 'BREAKDOWN') return { badge: 'SHORT', event: 'broke support', color: '#ef4444' };
+  if (setup === 'FLOW_CONTINUATION' && bias === 'LONG') return { badge: 'LONG', event: 'buyers pushed', color: '#22c55e' };
+  if (setup === 'FLOW_CONTINUATION' && bias === 'SHORT') return { badge: 'SHORT', event: 'sellers pushed', color: '#ef4444' };
+  if (absorbed === 'SELLERS') return { badge: bias === 'WAIT' ? 'WAIT' : bias, event: 'sells absorbed', color: '#60a5fa' };
+  if (absorbed === 'BUYERS') return { badge: bias === 'WAIT' ? 'WAIT' : bias, event: 'buys absorbed', color: '#fbbf24' };
+  if (win.id === 'AGGRESSIVE_BUYERS') return { badge: 'LONG', event: 'buyers pushed', color: '#22c55e' };
+  if (win.id === 'AGGRESSIVE_SELLERS') return { badge: 'SHORT', event: 'sellers pushed', color: '#ef4444' };
+  if (win.id === 'PASSIVE_SELLERS') return { badge: 'WAIT', event: 'buys absorbed', color: '#fbbf24' };
+  if (win.id === 'PASSIVE_BUYERS') return { badge: 'WAIT', event: 'sells absorbed', color: '#60a5fa' };
+  return { badge: 'WAIT', event: 'no edge', color: '#8b949e' };
+}
+
+function drawBarStrategyTitle(ctx, story, cx, maxW) {
+  if (!story) return;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 8px JetBrains Mono, monospace';
+  ctx.fillStyle = story.color;
+  ctx.fillText(story.badge, cx, 16, maxW);
+  ctx.font = '7px JetBrains Mono, monospace';
+  ctx.fillStyle = '#c9d1d9';
+  ctx.fillText(story.event, cx, 27, maxW);
+  ctx.restore();
+}
+
 function drawBattleHud(ctx, leftPad, plotRight) {
   ctx.font = 'bold 11px JetBrains Mono, monospace';
   ctx.textAlign = 'left';
@@ -2370,7 +2507,7 @@ function drawFootprint() {
   }
 
   const { leftPad, priceAxisWidth, candleW, cellW, barWidth, stride, visibleBars } = fpLayout(W);
-  const topPad = 38;
+  const topPad = 54;
   const bottomPad = 44;
   const chartH = H - topPad - bottomPad;
   clampFpPan(bars.length, W);
@@ -2448,19 +2585,13 @@ function drawFootprint() {
     ctx.fillText(fmtPriceAxis(p), W - 4, y);
   }
 
-  ctx.font = '9px Inter, sans-serif';
+  ctx.font = '8px Inter, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#ef5350';
-  ctx.fillText('SELL', leftPad + 2, 10);
-  ctx.fillStyle = '#22c55e';
-  ctx.fillText('BUY', leftPad + 46, 10);
+  ctx.fillStyle = '#8b949e';
   if (fpPanBars >= 0.15) {
-    ctx.fillStyle = '#8b949e';
-    ctx.fillText('drag / scroll · Latest jumps to live', leftPad + 86, 10);
-  }
-  if (pred) {
-    ctx.fillStyle = '#d4a84b';
-    ctx.fillText(`NEXT ${fmtPriceAxis(pred.close)}`, leftPad + 86, 10);
+    ctx.fillText('drag / scroll · Latest jumps to live', leftPad + 2, 8);
+  } else {
+    ctx.fillText('Previous bars: vacuum · abs reversal · what that candle did', leftPad + 2, 8);
   }
 
   const predShift = pred ? 1 : 0;
@@ -2470,6 +2601,13 @@ function drawFootprint() {
     const x = plotRight - (visible.length - i + predShift) * stride;
     const cellX = x + candleW + 2;
     const half = cellW / 2;
+    const cx = x + barWidth / 2;
+    const isLiveBar = lastIsLive && i === visible.length - 1;
+    if (!isLiveBar) {
+      drawBarStrategyTitle(ctx, strategyStoryForBar(bars, startIdx + i), cx, barWidth - 4);
+    } else {
+      drawBarStrategyTitle(ctx, { badge: 'NOW', event: 'forming', color: '#60a5fa' }, cx, barWidth - 4);
+    }
     const poc = levels.reduce((best, lv) => (lv.buy + lv.sell > best.vol ? { vol: lv.buy + lv.sell, price: lv.price } : best), { vol: 0, price: 0 });
 
     ctx.fillStyle = '#12171f';
@@ -2533,7 +2671,6 @@ function drawFootprint() {
     ctx.textAlign = 'center';
     ctx.fillStyle = '#8b949e';
     const d = new Date(bar.time * 1000);
-    const cx = x + barWidth / 2;
     let timeLabel;
     if (chartTfMinutes >= 1440) {
       timeLabel = `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
