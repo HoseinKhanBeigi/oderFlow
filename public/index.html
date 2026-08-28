@@ -50,7 +50,7 @@
       <div class="panel-head">
         <div>
           <h2 id="chart-title">Order flow footprint</h2>
-          <p class="hint" id="chart-hint">Red left = sells, green right = buys. Lines are liquidation levels — remaining % until hit, then LIQUIDATED. Gold = absorption. All combines CEX + Hyperliquid + dYdX + Bitstamp.</p>
+          <p class="hint" id="chart-hint">Red left = sells, green right = buys. Gold candle on the right is the next bar. Gold line = predicted close, blue line = live price.</p>
         </div>
         <div class="chart-toolbar">
           <div class="chart-tf-tabs" id="chart-ex-tabs">
@@ -85,21 +85,8 @@
       <div id="tv-chart" style="width:100%;height:520px;overflow:hidden;position:relative;"></div>
       <div class="chart-legend">
         <span id="fp-lev-now" class="fp-lev-now">—</span>
-        <span class="legend-item fp-liq-ask liq-only">short liq ↑</span>
-        <span class="legend-item fp-liq-bid liq-only">long liq ↓</span>
-        <span class="legend-item fp-abs">absorption</span>
-        <span class="legend-item fp-sr">S/R</span>
-        <span class="legend-item fp-psell">passive sell</span>
-        <span class="legend-item fp-pbuy">passive buy</span>
-        <span class="legend-item fp-rest-bid">resting bid</span>
-        <span class="legend-item fp-rest-ask">resting ask</span>
-        <span class="legend-item fp-replenish">replenishment</span>
-        <span class="legend-item fp-withdraw">withdrawal</span>
-        <span class="legend-item lev-high liq-only">75x+ small</span>
-        <span class="legend-item lev-50 liq-only">≤50x</span>
-        <span class="legend-item lev-25 liq-only">≤25x</span>
-        <span class="legend-item lev-10 liq-only">≤10x</span>
-        <span class="legend-item lev-whale liq-only">≤5x whale</span>
+        <span class="legend-item fp-abs">next candle</span>
+        <span class="legend-item fp-live">live price</span>
       </div>
       <div id="daily-signal-banner" class="daily-signal-banner">
         <div class="ds-head">
@@ -398,6 +385,6 @@
   </main>
 
   <script src="/sim-live.bundle.js"></script>
-  <script src="/app.js" type="module"></script>
+  <script src="/app.js?v=fp-pred2" type="module"></script>
 </body>
 </html>

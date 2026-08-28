@@ -523,7 +523,8 @@ body {
 .legend-item.lev-high { color: #8b949e; }
 .legend-item.fp-liq-ask { color: #f87171; }
 .legend-item.fp-liq-bid { color: #4ade80; }
-.legend-item.fp-abs { color: #fbbf24; }
+.legend-item.fp-abs { color: #d4a84b; }
+.legend-item.fp-live { color: #60a5fa; }
 .legend-item.fp-sr { color: #86efac; }
 .legend-item.fp-psell { color: #fbbf24; }
 .legend-item.fp-pbuy { color: #60a5fa; }

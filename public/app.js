@@ -779,6 +779,8 @@ function openTab(symbol, label) {
     openTabs.push({ symbol, label });
   }
   selectedSymbol = symbol;
+  liveLastPrice = 0;
+  liveLastPriceAt = 0;
   renderOpenTabs();
   applySymbolFilter();
 }
@@ -1448,8 +1450,8 @@ function applyDataMode(mode) {
       ? 'Spot vs futures footprint'
       : 'Spot order flow footprint';
   $('chart-hint').textContent = mode === 'perp'
-    ? 'Red left = sells, green right = buys. Lines are liquidation levels — remaining % until hit, then LIQUIDATED. Gold = absorption. All combines CEX + Hyperliquid + dYdX + Bitstamp.'
-    : 'Red left = aggressive spot sells, green right = aggressive spot buys. Executed volume only — resting book is hatched, not counted as volume. All = Binance + Bybit + OKX + Bitstamp.';
+    ? 'Red left = sells, green right = buys. Gold candle on the right is the next bar from this footprint. Gold line is predicted close; blue line is live price.'
+    : 'Red left = aggressive spot sells, green right = aggressive spot buys. Gold candle on the right is the next bar from this footprint. Gold line is predicted close; blue line is live price.';
   $('imb-cfg')?.classList.toggle('hidden', !spot);
   $('spot-hud')?.classList.toggle('hidden', !spot);
   $('move-panel')?.classList.toggle('hidden', spot);
@@ -1699,13 +1701,27 @@ let fpCtx = null;
 let fpPanBars = 0;
 let fpDragging = false;
 let fpDragLastX = 0;
+let liveLastPrice = 0;
+let liveLastPriceAt = 0;
+
+function noteLivePrice(symbol, price) {
+  if (symbol !== selectedSymbol) return;
+  if (!Number.isFinite(price) || price <= 0) return;
+  liveLastPrice = price;
+  liveLastPriceAt = Date.now();
+}
+
+function latestLivePrice(fallback) {
+  if (liveLastPrice > 0 && Date.now() - liveLastPriceAt < 90_000) return liveLastPrice;
+  return fallback;
+}
 
 function fpLayout(cssWidth) {
   const leftPad = 8;
   const priceAxisWidth = 72;
   const candleW = 7;
-  const cellW = 108;
-  const gap = 6;
+  const cellW = 52;
+  const gap = 8;
   const barWidth = candleW + cellW;
   const stride = barWidth + gap;
   const availW = Math.max(1, cssWidth - priceAxisWidth - leftPad);
@@ -1862,6 +1878,7 @@ function cloneFpBar(bar) {
     high: bar.high,
     low: bar.low,
     close: bar.close,
+    closeTime: bar.closeTime ?? bar.time,
     totalBuy: bar.totalBuy,
     totalSell: bar.totalSell,
     buyTrades: bar.buyTrades ?? 0,
@@ -1996,7 +2013,12 @@ async function seedFromKlines() {
 function mergeFootprintBar(target, src) {
   target.high = Math.max(target.high, src.high);
   target.low = Math.min(target.low, src.low);
-  target.close = src.close;
+  const srcT = src.closeTime ?? src.time ?? 0;
+  const tgtT = target.closeTime ?? target.time ?? 0;
+  if (srcT >= tgtT) {
+    target.close = src.close;
+    target.closeTime = srcT;
+  }
   target.totalBuy += src.totalBuy;
   target.totalSell += src.totalSell;
   target.buyTrades = (target.buyTrades ?? 0) + (src.buyTrades ?? 0);
@@ -2073,6 +2095,41 @@ function footprintBars(symbol = selectedSymbol, tf = chartTfMinutes) {
   return [...out.values()].sort((a, b) => a.time - b.time);
 }
 
+function predictNextFromFootprint(bars) {
+  if (!bars.length) return null;
+  const last = bars[bars.length - 1];
+  const open = latestLivePrice(last.close);
+  let atr = 0;
+  let n = 0;
+  for (let i = Math.max(1, bars.length - 8); i < bars.length; i++) {
+    const b = bars[i];
+    const prev = bars[i - 1];
+    atr += Math.max(b.high - b.low, Math.abs(b.high - prev.close), Math.abs(b.low - prev.close));
+    n += 1;
+  }
+  atr = n ? atr / n : Math.max(last.high - last.low, open * 0.002);
+  const look = bars.slice(-3);
+  let buy = 0;
+  let sell = 0;
+  for (const b of look) {
+    buy += b.totalBuy || 0;
+    sell += b.totalSell || 0;
+  }
+  let bias = 0;
+  if (buy + sell > 0) bias = (buy - sell) / (buy + sell);
+  else if (last.close !== last.open) bias = last.close >= last.open ? 0.35 : -0.35;
+  const close = open + atr * 0.55 * bias;
+  const wick = Math.max(atr * 0.15, Math.abs(close - open) * 0.25);
+  return {
+    open,
+    close,
+    high: Math.max(open, close) + wick,
+    low: Math.min(open, close) - wick,
+    buy,
+    sell,
+  };
+}
+
 function fpCandleTime(ts, tf = chartTfMinutes) {
   const s = Math.floor(ts / 1000);
   return s - (s % (tf * 60));
@@ -2113,6 +2170,8 @@ function ingestTradeToChart(trade) {
   bar.high = Math.max(bar.high, trade.price);
   bar.low = Math.min(bar.low, trade.price);
   bar.close = trade.price;
+  bar.closeTime = t;
+  noteLivePrice(trade.symbol, trade.price);
   if (!bar.levels.has(lk)) bar.levels.set(lk, { price: level, buy: 0, sell: 0 });
   const lv = bar.levels.get(lk);
   if (trade.side === 'BUY') { lv.buy += trade.quoteValue; bar.totalBuy += trade.quoteValue; }
@@ -2236,14 +2295,16 @@ function drawFootprint() {
 
   const { leftPad, priceAxisWidth, candleW, cellW, barWidth, stride, visibleBars } = fpLayout(W);
   const topPad = 38;
-  const bottomPad = isSpotView() ? 72 : 44;
+  const bottomPad = 44;
   const chartH = H - topPad - bottomPad;
   clampFpPan(bars.length, W);
   liveBtn?.classList.toggle('hidden', fpPanBars < 0.15);
 
   const pan = Math.round(fpPanBars);
+  const pred = pan < 0.15 ? predictNextFromFootprint(bars) : null;
+  const histSlots = Math.max(1, visibleBars - (pred ? 1 : 0));
   const endIdx = bars.length - pan;
-  const startIdx = Math.max(0, endIdx - visibleBars);
+  const startIdx = Math.max(0, endIdx - histSlots);
   const visible = bars.slice(startIdx, endIdx);
 
   if (visible.length === 0) {
@@ -2259,14 +2320,17 @@ function drawFootprint() {
     if (bar.high > globalHigh) globalHigh = bar.high;
     if (bar.low < globalLow) globalLow = bar.low;
   }
-  const liqOverlay = isSpotView() ? { asks: [], bids: [], now: 0 } : taggedLiqBands();
-  const lastPx = visible[visible.length - 1]?.close || liqOverlay.now;
-  if (lastPx > 0) {
-    for (const r of [...liqOverlay.asks, ...liqOverlay.bids]) {
-      if (Math.abs(r.price - lastPx) / lastPx > 0.03) continue;
-      if (r.price > globalHigh) globalHigh = r.price;
-      if (r.price < globalLow) globalLow = r.price;
-    }
+  if (pred) {
+    globalHigh = Math.max(globalHigh, pred.high);
+    globalLow = Math.min(globalLow, pred.low);
+  }
+  const lastBar = visible[visible.length - 1];
+  const livePx = latestLivePrice(lastBar?.close ?? 0);
+  const nowBucket = fpCandleTime(Date.now(), chartTfMinutes);
+  const lastIsLive = pan < 0.15 && lastBar?.time === nowBucket;
+  if (livePx) {
+    globalHigh = Math.max(globalHigh, livePx);
+    globalLow = Math.min(globalLow, livePx);
   }
   const bucket = displayBucket(globalHigh, globalLow, chartH);
   globalHigh = priceToTick(globalHigh, bucket) + bucket * 2;
@@ -2318,12 +2382,16 @@ function drawFootprint() {
     ctx.fillStyle = '#8b949e';
     ctx.fillText('drag / scroll · Latest jumps to live', leftPad + 86, 10);
   }
-  drawBattleHud(ctx, leftPad, plotRight);
+  if (pred) {
+    ctx.fillStyle = '#d4a84b';
+    ctx.fillText(`NEXT ${fmtPriceAxis(pred.close)}`, leftPad + 86, 10);
+  }
 
+  const predShift = pred ? 1 : 0;
   for (let i = 0; i < visible.length; i++) {
     const bar = visible[i];
     const levels = bucketed[i];
-    const x = plotRight - (visible.length - i) * stride;
+    const x = plotRight - (visible.length - i + predShift) * stride;
     const cellX = x + candleW + 2;
     const half = cellW / 2;
     const poc = levels.reduce((best, lv) => (lv.buy + lv.sell > best.vol ? { vol: lv.buy + lv.sell, price: lv.price } : best), { vol: 0, price: 0 });
@@ -2331,16 +2399,20 @@ function drawFootprint() {
     ctx.fillStyle = '#12171f';
     ctx.fillRect(cellX, topPad, cellW, chartH);
 
-    const up = bar.close >= bar.open;
+    const liveEdge = lastIsLive && i === visible.length - 1 && livePx;
+    const up = (liveEdge ? livePx : bar.close) >= bar.open;
     const wickX = x + candleW / 2;
+    const barHigh = liveEdge ? Math.max(bar.high, livePx) : bar.high;
+    const barLow = liveEdge ? Math.min(bar.low, livePx) : bar.low;
+    const barClose = liveEdge ? livePx : bar.close;
     ctx.strokeStyle = up ? '#22c55e' : '#ef4444';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(wickX, yForPrice(bar.high));
-    ctx.lineTo(wickX, yForPrice(bar.low));
+    ctx.moveTo(wickX, yForPrice(barHigh));
+    ctx.lineTo(wickX, yForPrice(barLow));
     ctx.stroke();
-    const bodyTop = yForPrice(Math.max(bar.open, bar.close));
-    const bodyBot = yForPrice(Math.min(bar.open, bar.close));
+    const bodyTop = yForPrice(Math.max(bar.open, barClose));
+    const bodyBot = yForPrice(Math.min(bar.open, barClose));
     ctx.fillStyle = up ? '#22c55e' : '#ef4444';
     ctx.fillRect(x + 1, bodyTop, candleW - 2, Math.max(2, bodyBot - bodyTop));
 
@@ -2351,13 +2423,6 @@ function drawFootprint() {
     ctx.stroke();
 
     const rh = Math.max(1, rowH - 1);
-    const barWin = fpBarWinner(bar);
-    if (barWin.short) {
-      ctx.fillStyle = barWin.color;
-      ctx.fillRect(x, topPad, 2, chartH);
-    }
-    const engineAbs = lastSummary?.windows?.[selectedTf]?.absorption?.type
-      ?? lastSummary?.windows?.['10s']?.absorption?.type;
     for (const lv of levels) {
       const y = yForPrice(lv.price);
       const total = lv.buy + lv.sell;
@@ -2366,43 +2431,11 @@ function drawFootprint() {
       const buyWins = lv.buy >= lv.sell;
       ctx.fillStyle = buyWins ? `rgba(34, 197, 94, ${alpha})` : `rgba(239, 68, 68, ${alpha})`;
       ctx.fillRect(cellX + 1, y - rh / 2, cellW - 2, rh);
-      const lev = leverageForUsd(selectedSymbol, total);
-      if (lev && lev.maxLev <= 50) {
-        ctx.fillStyle = levColor(lev.maxLev);
-        ctx.fillRect(cellX + 1, y - rh / 2, 3, rh);
-      }
-
-      const pasSell = (barWin.id === 'PASSIVE_SELLERS' || engineAbs === 'BUYER_ABSORPTION')
-        && lv.buy >= lv.sell * 1.4 && lv.buy > maxVol * 0.12;
-      const pasBuy = (barWin.id === 'PASSIVE_BUYERS' || engineAbs === 'SELLER_ABSORPTION')
-        && lv.sell >= lv.buy * 1.4 && lv.sell > maxVol * 0.12;
-      if (pasSell) {
-        ctx.fillStyle = 'rgba(251, 191, 36, 0.28)';
-        ctx.fillRect(cellX + half, y - rh / 2, half - 1, rh);
-        ctx.strokeStyle = '#fbbf24';
-        ctx.strokeRect(cellX + half, y - rh / 2 + 0.5, half - 1, rh - 1);
-      } else if (pasBuy) {
-        ctx.fillStyle = 'rgba(96, 165, 250, 0.28)';
-        ctx.fillRect(cellX + 1, y - rh / 2, half - 1, rh);
-        ctx.strokeStyle = '#60a5fa';
-        ctx.strokeRect(cellX + 1, y - rh / 2 + 0.5, half - 1, rh - 1);
-      }
-
-      const imbBuy = lv.buy >= lv.sell * imbalanceRatio && lv.buy > maxVol * 0.15;
-      const imbSell = lv.sell >= lv.buy * imbalanceRatio && lv.sell > maxVol * 0.15;
-      if (imbBuy && !pasSell) {
-        ctx.strokeStyle = '#22c55e';
-        ctx.strokeRect(cellX + half, y - rh / 2 + 0.5, half - 1, rh - 1);
-      } else if (imbSell && !pasBuy) {
-        ctx.strokeStyle = '#ef4444';
-        ctx.strokeRect(cellX + 1, y - rh / 2 + 0.5, half - 1, rh - 1);
-      }
       if (poc.vol > 0 && lv.price === poc.price) {
         ctx.strokeStyle = '#fbbf24';
         ctx.strokeRect(cellX + 1, y - rh / 2 + 0.5, cellW - 2, rh - 1);
       }
-
-      if (rowH >= 13) {
+      if (rowH >= 22) {
         const fs = Math.min(10, Math.max(8, rowH - 6));
         ctx.font = `${fs}px JetBrains Mono, monospace`;
         ctx.fillStyle = lv.sell > 0 ? '#fca5a5' : '#4b5563';
@@ -2412,10 +2445,6 @@ function drawFootprint() {
         ctx.textAlign = 'left';
         ctx.fillText(lv.buy > 0 ? fmtVolShort(lv.buy) : '–', cellX + half + 4, y);
       }
-    }
-
-    if (i === visible.length - 1 && pan < 0.15) {
-      drawLiveLiquidityMarks(ctx, { cellX, half, cellW, yForPrice, rh, topPad, chartH });
     }
 
     ctx.font = '10px JetBrains Mono, monospace';
@@ -2434,51 +2463,76 @@ function drawFootprint() {
     const delta = bar.totalBuy - bar.totalSell;
     const barUsd = bar.totalBuy + bar.totalSell;
     if (barUsd > 0) {
-      const cx = x + barWidth / 2;
-      if (isSpotView()) {
-        ctx.font = 'bold 9px JetBrains Mono, monospace';
-        ctx.fillStyle = '#86efac';
-        ctx.fillText(`+${fmtVolLabel(bar.totalBuy)} A.BUY`, cx, topPad + chartH + 24);
-        ctx.fillStyle = '#fca5a5';
-        ctx.fillText(`-${fmtVolLabel(bar.totalSell)} A.SELL`, cx, topPad + chartH + 36);
-        ctx.fillStyle = delta >= 0 ? '#22c55e' : '#ef4444';
-        ctx.fillText(`Δ ${delta >= 0 ? '+' : '-'}${fmtVolLabel(Math.abs(delta))}  VOL ${fmtVolLabel(barUsd)}`, cx, topPad + chartH + 48);
-      } else {
-        const barLev = leverageForUsd(selectedSymbol, barUsd);
-        const win = fpBarWinner(bar);
-        ctx.fillStyle = win.short ? win.color : (delta >= 0 ? '#22c55e' : '#ef4444');
-        ctx.font = 'bold 10px JetBrains Mono, monospace';
-        const deltaLabel = `${delta >= 0 ? '+' : '-'}${fmtVolLabel(Math.abs(delta))}${win.short ? ` ${win.short}` : ''}${barLev ? ` ${levLabel(barLev)}` : ''}`;
-        ctx.fillText(deltaLabel, cx, topPad + chartH + 27);
-      }
+      ctx.font = '9px JetBrains Mono, monospace';
+      ctx.fillStyle = delta >= 0 ? '#22c55e' : '#ef4444';
+      ctx.fillText(`${delta >= 0 ? '+' : '-'}${fmtVolLabel(Math.abs(delta))}`, x + barWidth / 2, topPad + chartH + 26);
     }
   }
 
-  const liveBar = visible[visible.length - 1];
-  updateFpLevNow((liveBar?.totalBuy ?? 0) + (liveBar?.totalSell ?? 0), liveBar);
-  if (!isSpotView()) {
-    drawLiqOverlay(ctx, {
-      leftPad,
-      plotRight,
+  if (pred) {
+    drawPredictedFootprintBar(ctx, {
+      pred,
+      x: plotRight - stride,
+      candleW,
       yForPrice,
       topPad,
       chartH,
-      globalHigh,
-      globalLow,
-      overlay: liqOverlay,
     });
+    drawChartPriceLine(ctx, yForPrice(pred.close), '#d4a84b', `NEXT ${fmtPriceAxis(pred.close)}`, leftPad, plotRight);
   }
-  drawDailySrOverlay(ctx, {
-    leftPad,
-    plotRight,
-    yForPrice,
-    topPad,
-    chartH,
-    globalHigh,
-    globalLow,
-  });
+  if (livePx) {
+    drawChartPriceLine(ctx, yForPrice(livePx), '#60a5fa', `LIVE ${fmtPriceAxis(livePx)}`, leftPad, plotRight, pred ? 16 : 0);
+  }
 
+  updateFpLevNow(livePx, pred);
   ctx.lineWidth = 1;
+}
+
+function drawChartPriceLine(ctx, y, color, label, leftPad, plotRight, labelOffset = 0) {
+  ctx.save();
+  ctx.setLineDash([5, 4]);
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.9;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(leftPad, y);
+  ctx.lineTo(plotRight, y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = color;
+  ctx.font = 'bold 10px JetBrains Mono, monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(label, leftPad + 4, y - 3 - labelOffset);
+  ctx.restore();
+}
+
+function drawPredictedFootprintBar(ctx, { pred, x, candleW, yForPrice, topPad, chartH }) {
+  const up = pred.close >= pred.open;
+  const color = '#d4a84b';
+  const wickX = x + candleW / 2;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([3, 2]);
+  ctx.beginPath();
+  ctx.moveTo(wickX, yForPrice(pred.high));
+  ctx.lineTo(wickX, yForPrice(pred.low));
+  ctx.stroke();
+  ctx.setLineDash([]);
+  const bodyTop = yForPrice(Math.max(pred.open, pred.close));
+  const bodyBot = yForPrice(Math.min(pred.open, pred.close));
+  ctx.fillStyle = up ? 'rgba(212, 168, 75, 0.35)' : 'rgba(212, 168, 75, 0.18)';
+  ctx.fillRect(x + 1, bodyTop, candleW - 2, Math.max(3, bodyBot - bodyTop));
+  ctx.strokeStyle = color;
+  ctx.strokeRect(x + 1, bodyTop, candleW - 2, Math.max(3, bodyBot - bodyTop));
+  ctx.font = 'bold 10px JetBrains Mono, monospace';
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText('NEXT', x + candleW / 2, topPad + chartH + 4);
+  ctx.restore();
 }
 
 function drawLiveLiquidityMarks(ctx, { cellX, half, cellW, yForPrice, rh, topPad, chartH }) {
@@ -2628,33 +2682,14 @@ function drawDailySrOverlay(ctx, { leftPad, plotRight, yForPrice, topPad, chartH
   ctx.restore();
 }
 
-function updateFpLevNow(flowUsd, liveBar) {
+function updateFpLevNow(livePx, pred) {
   const el = document.getElementById('fp-lev-now');
   if (!el) return;
-  const tf = tfShort(chartTfMinutes);
-  if (isSpotView()) {
-    const buy = liveBar?.totalBuy ?? 0;
-    const sell = liveBar?.totalSell ?? 0;
-    const delta = buy - sell;
-    el.textContent = `${tf} spot · buy ${fmtUsd(buy)} · sell ${fmtUsd(sell)} · Δ ${fmtUsd(delta)}`;
-    el.className = `fp-lev-now ${delta >= 0 ? 'lev-10' : 'lev-high'}`;
-    el.title = 'Executed aggressive spot volume in the visible live candle';
-    return;
-  }
-  const spec = levBrackets[selectedSymbol];
-  const info = leverageForUsd(selectedSymbol, flowUsd);
-  if (info) {
-    el.textContent = `${tf} flow ${fmtUsd(flowUsd)} · ${levLabel(info)} · margin ≈ ${fmtUsd(info.margin)} at that max`;
-    el.className = `fp-lev-now lev-${levBand(info.maxLev)}`;
-    el.title = levTitle(flowUsd, info);
-  } else if (spec?.max) {
-    el.textContent = `${tf} · symbol max ${spec.max}x · waiting for dollar flow`;
-    el.className = 'fp-lev-now';
-    el.title = '';
-  } else {
-    el.textContent = 'Leverage brackets loading…';
-    el.className = 'fp-lev-now';
-  }
+  const live = livePx ? `live ${fmtPriceAxis(livePx)}` : 'live —';
+  const next = pred ? `next ${fmtPriceAxis(pred.close)}` : '';
+  el.textContent = next ? `${live} · ${next}` : live;
+  el.className = 'fp-lev-now';
+  el.title = 'Live last price and predicted next-bar close from recent footprint delta';
 }
 
 function fmtVolLabel(v) {
@@ -2784,6 +2819,7 @@ function applyLiveFootprint(ev) {
     const store = getFootprintStore(ev.symbol, 1, exchange);
     store.clear();
     store.set(bar.t, wireBarToFp(bar));
+    noteLivePrice(ev.symbol, bar.c);
   }
   drawFootprint();
 }
@@ -2848,7 +2884,9 @@ async function init() {
       case 'trade':
         if (ev.trade && ev.market) ev.trade.market = ev.market;
         addTapeRow(ev.trade);
+        if (ev.trade) noteLivePrice(ev.trade.symbol, ev.trade.price);
         ingestTradeToChart(ev.trade);
+        if (ev.trade?.symbol === selectedSymbol) scheduleFpLiqDraw();
         break;
       case 'footprint_live':
         applyLiveFootprint(ev);
