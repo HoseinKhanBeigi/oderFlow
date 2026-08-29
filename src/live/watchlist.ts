@@ -37,6 +37,7 @@ export const EQUITY_PERP_WATCHLIST: WatchCoin[] = [
   { symbol: 'TSLAUSDT', label: 'TSLA', minUsd: 500, venue: 'equity' },
   { symbol: 'AMDUSDT', label: 'AMD', minUsd: 500, venue: 'equity' },
   { symbol: 'NVDAUSDT', label: 'NVDA', minUsd: 500, venue: 'equity' },
+  { symbol: 'SOXLUSDT', label: 'SOXL', minUsd: 500, venue: 'equity' },
   { symbol: 'CLUSDT', label: 'CL', minUsd: 500, venue: 'equity' },
   { symbol: 'XAGUSDT', label: 'XAG', minUsd: 500, venue: 'equity' },
 ];
