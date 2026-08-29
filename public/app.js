@@ -1023,7 +1023,7 @@ function renderDailyAsSignal(price, summary) {
   const venue = isSpotView()
     ? (selectedExchange === 'all' ? 'multi-exchange spot' : `${selectedExchange} spot`)
     : coin?.venue === 'equity'
-      ? 'Binance equity perp'
+      ? 'Binance TradFi perp'
       : selectedExchange === 'all'
         ? 'multi-exchange'
         : selectedExchange;
@@ -1103,7 +1103,7 @@ function updateUi() {
   const coin = config?.coins?.find((c) => c.symbol === lastSummary.symbol);
   const venue =
     coin?.venue === 'equity'
-      ? 'Binance equity perp'
+      ? 'Binance TradFi perp'
       : selectedExchange === 'all'
         ? 'multi-exchange'
         : selectedExchange;

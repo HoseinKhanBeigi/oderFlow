@@ -497,7 +497,7 @@ void buildSimulator().catch((err) => {
     console.log(`  Exchanges (perp): ${EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
     console.log(`  Exchanges (spot): ${SPOT_EXCHANGES.map((id) => EXCHANGE_LABELS[id]).join(' · ')}`);
     console.log(`  Crypto perp + spot footprint: ${crypto.map((c) => c.label).join(' · ')}`);
-    console.log(`  Equity perp (Binance): ${equity.map((c) => c.label).join(' · ')}`);
+    console.log(`  TradFi perp (Binance): ${equity.map((c) => c.label).join(' · ')}`);
     console.log(
       `  Footprint history: ${isStorageEnabled() ? `Postgres · ${RETENTION_DAYS}d retention` : 'disabled (set DATABASE_URL)'}`,
     );

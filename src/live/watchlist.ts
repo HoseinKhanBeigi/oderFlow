@@ -20,10 +20,11 @@ export const DEFAULT_WATCHLIST: WatchCoin[] = [
   { symbol: 'SHIBUSDT', label: 'SHIB', minUsd: 500, venue: 'crypto' },
   { symbol: 'SUIUSDT', label: 'SUI', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'FARTCOINUSDT', label: 'FARTCOIN', minUsd: 500, venue: 'crypto' },
+  { symbol: 'PAXGUSDT', label: 'PAXG', minUsd: 1_000, venue: 'crypto' },
 ];
 
 /**
- * Binance USD-M TradFi / equity perpetuals (same futures WS as crypto).
+ * Binance USD-M TradFi perpetuals (equity + commodities; same futures WS as crypto).
  * Example: https://www.binance.com/en/futures/AMZNUSDT
  * SpaceX is not listed.
  */
@@ -36,6 +37,8 @@ export const EQUITY_PERP_WATCHLIST: WatchCoin[] = [
   { symbol: 'TSLAUSDT', label: 'TSLA', minUsd: 500, venue: 'equity' },
   { symbol: 'AMDUSDT', label: 'AMD', minUsd: 500, venue: 'equity' },
   { symbol: 'NVDAUSDT', label: 'NVDA', minUsd: 500, venue: 'equity' },
+  { symbol: 'CLUSDT', label: 'CL', minUsd: 500, venue: 'equity' },
+  { symbol: 'XAGUSDT', label: 'XAG', minUsd: 500, venue: 'equity' },
 ];
 
 /** @deprecated use EQUITY_PERP_WATCHLIST */
