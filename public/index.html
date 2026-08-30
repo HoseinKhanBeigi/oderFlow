@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Order Flow — Footprint</title>
-  <link rel="stylesheet" href="/styles.css?v=fp-alerts1" />
+  <link rel="stylesheet" href="/styles.css?v=fp-grid1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -14,7 +14,7 @@
       <span class="logo">◉</span>
       <div>
         <h1>Order Flow</h1>
-        <p class="subtitle">Live footprint chart</p>
+        <p class="subtitle">Live footprint grid</p>
       </div>
     </div>
     <div class="header-meta">
@@ -41,28 +41,13 @@
   </div>
   <div class="alert-toasts" id="alert-toasts" aria-live="assertive"></div>
 
-  <div class="open-tabs-bar">
-    <div class="open-tabs" id="open-tabs"></div>
-  </div>
-
-  <div class="app-shell">
-    <nav class="asset-nav" aria-label="Markets">
-      <div class="asset-row" id="crypto-row">
-        <span class="asset-group">Crypto</span>
-        <div class="coin-bar" id="crypto-bar"></div>
-      </div>
-      <div class="asset-row" id="equity-row">
-        <span class="asset-group">TradFi</span>
-        <div class="coin-bar" id="stock-bar"></div>
-      </div>
-    </nav>
-
-    <main class="layout layout-chart-only">
-      <section class="panel chart-panel">
+  <div class="app-shell app-shell-grid">
+    <main class="layout layout-chart-grid">
+      <section class="panel chart-panel chart-panel-grid">
         <div class="panel-head">
           <div>
             <h2 id="chart-title">Order flow footprint</h2>
-            <p class="hint" id="chart-hint">Upside vacuum: resting asks were pulled, so buying lifted price fast. Downside vacuum: resting bids were pulled, so selling dumped price fast. Blue = live price.</p>
+            <p class="hint" id="chart-hint">Stop hunt: sweep high/low then reverse. Distribution at highs: liquidity grabbed then reverse. Vacuum: asks/bids pulled and price ran. Blue = live price.</p>
           </div>
           <div class="chart-toolbar">
             <div class="chart-tf-tabs" id="chart-ex-tabs">
@@ -93,7 +78,6 @@
             </label>
           </div>
         </div>
-        <div id="tv-chart" style="width:100%;height:calc(100vh - 220px);min-height:520px;overflow:hidden;position:relative;"></div>
         <div class="chart-legend">
           <span id="fp-lev-now" class="fp-lev-now">—</span>
           <span class="legend-item fp-live">Live price</span>
@@ -101,11 +85,14 @@
           <span class="legend-item fp-rest-ask">Bids pulled · price dumped</span>
           <span class="legend-item fp-pbuy">Sellers absorbed · reversed up</span>
           <span class="legend-item fp-psell">Buyers absorbed · reversed down</span>
+          <span class="legend-item fp-dist">Distribution at highs · liq grabbed · reverse</span>
+          <span class="legend-item fp-hunt">Stop hunt · sweep high/low · reverse</span>
         </div>
+        <div id="fp-grid" class="fp-grid" aria-label="Footprint charts"></div>
       </section>
     </main>
   </div>
 
-  <script src="/app.js?v=fp-alerts-ctrl1" type="module"></script>
+  <script src="/app.js?v=fp-grid1" type="module"></script>
 </body>
 </html>

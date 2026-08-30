@@ -814,16 +814,12 @@ function setupDataMode() {
   $('imb-ratio')?.addEventListener('change', () => {
     const n = Number($('imb-ratio').value);
     if (Number.isFinite(n) && n >= 1.2) imbalanceRatio = n;
-    drawFootprint();
+    scheduleDraw();
   });
 }
 
 function applyDataMode(mode) {
   if (mode !== 'perp' && mode !== 'spot') return;
-  if (mode !== 'perp' && coinIsEquity()) {
-    const first = config?.crypto?.[0] ?? config?.coins?.find((c) => c.venue !== 'equity');
-    if (first) openTab(first.symbol, first.label);
-  }
   dataMode = mode;
   document.querySelectorAll('#data-mode-tabs [data-mode]').forEach((b) => {
     b.classList.toggle('active', b.dataset.mode === mode);
@@ -831,14 +827,15 @@ function applyDataMode(mode) {
   const spot = isSpotView();
   $('chart-title').textContent = mode === 'perp' ? 'Order flow footprint' : 'Spot order flow footprint';
   $('chart-hint').textContent =
-    'Upside vacuum: resting asks were pulled, so buying lifted price fast. Downside vacuum: resting bids were pulled, so selling dumped price fast. Blue = live price.';
+    'Stop hunt: sweep high/low then reverse. Distribution at highs: liquidity grabbed then reverse. Vacuum: asks/bids pulled and price ran. Blue = live price.';
   $('imb-cfg').classList.toggle('hidden', !spot);
-  document.getElementById('equity-row')?.classList.toggle('hidden', spot);
-  const coin = config?.coins?.find((c) => c.symbol === selectedSymbol);
-  const venue = selectedExchange === 'all' ? (spot ? 'multi-exchange spot' : 'multi-exchange') : selectedExchange;
-  $('symbol-label').textContent = `${coin?.label ?? selectedSymbol.replace('USDT', '')} · ${venue}`;
   refreshStatus();
-  applySymbolFilter();
+  initChart();
+  const coins = visibleCoins();
+  if (coins.length) selectedSymbol = coins[0].symbol;
+  $('symbol-label').textContent = `${coins.length} charts · ${mode}`;
+  seedFootprintKlines();
+  scheduleDraw();
 }
 
 function spotWindow(snap, tfMinutes = chartTfMinutes) {
@@ -1061,34 +1058,41 @@ let fpHistoryReq = 0;
 let fpHistoryEnabled = false;
 let fpRetentionDays = 30;
 let fpLiveSocket = null;
-let fpLastLiveMinute = 0;
-let fpCanvas = null;
-let fpCtx = null;
-/** Bars back from the live (right) edge. 0 = latest candle pinned right. */
-let fpPanBars = 0;
-let fpDragging = false;
-let fpDragLastX = 0;
-let liveLastPrice = 0;
-let liveLastPriceAt = 0;
+let fpLastLiveMinuteBySymbol = {};
+/** @type {Map<string, { canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, panBars: number, livePrice: number, liveAt: number, dragging: boolean, dragX: number, card: HTMLElement }>} */
+const fpViews = new Map();
+let fpDrawRaf = 0;
+const fpDirty = new Set();
+let fpDirtyAll = false;
+let fpGridBound = false;
 
-function noteLivePrice(symbol, price) {
-  if (symbol !== selectedSymbol) return;
-  if (!Number.isFinite(price) || price <= 0) return;
-  liveLastPrice = price;
-  liveLastPriceAt = Date.now();
+function visibleCoins() {
+  const coins = config?.coins ?? [];
+  if (isSpotView()) return coins.filter((c) => c.venue !== 'equity');
+  return coins;
 }
 
-function latestLivePrice(fallback) {
-  if (liveLastPrice > 0 && Date.now() - liveLastPriceAt < 90_000) return liveLastPrice;
+function noteLivePrice(symbol, price) {
+  if (!Number.isFinite(price) || price <= 0) return;
+  const view = fpViews.get(symbol);
+  if (view) {
+    view.livePrice = price;
+    view.liveAt = Date.now();
+  }
+}
+
+function latestLivePrice(symbol, fallback) {
+  const view = fpViews.get(symbol);
+  if (view?.livePrice > 0 && Date.now() - view.liveAt < 90_000) return view.livePrice;
   return fallback;
 }
 
 function fpLayout(cssWidth) {
   const leftPad = 8;
-  const priceAxisWidth = 78;
-  const candleW = 8;
-  const cellW = 118;
-  const gap = 8;
+  const priceAxisWidth = 70;
+  const candleW = 6;
+  const cellW = 88;
+  const gap = 6;
   const barWidth = candleW + cellW;
   const stride = barWidth + gap;
   const availW = Math.max(1, cssWidth - priceAxisWidth - leftPad);
@@ -1096,104 +1100,162 @@ function fpLayout(cssWidth) {
   return { leftPad, priceAxisWidth, candleW, cellW, barWidth, gap, stride, visibleBars };
 }
 
-function clampFpPan(storeSize, cssWidth) {
+function clampFpPan(view, storeSize, cssWidth) {
   const { visibleBars } = fpLayout(cssWidth);
   const maxPan = Math.max(0, storeSize - visibleBars);
-  fpPanBars = Math.max(0, Math.min(fpPanBars, maxPan));
+  view.panBars = Math.max(0, Math.min(view.panBars, maxPan));
   return maxPan;
 }
 
-function cssChartWidth() {
-  if (!fpCanvas) return 0;
-  return fpCanvas.width / devicePixelRatio;
+function cssChartWidth(view) {
+  if (!view?.canvas) return 0;
+  return view.canvas.width / devicePixelRatio;
+}
+
+function scheduleDraw(symbol) {
+  if (symbol) fpDirty.add(symbol);
+  else fpDirtyAll = true;
+  if (fpDrawRaf) return;
+  fpDrawRaf = requestAnimationFrame(() => {
+    fpDrawRaf = 0;
+    if (fpDirtyAll) {
+      for (const sym of fpViews.keys()) drawFootprint(sym);
+      fpDirty.clear();
+      fpDirtyAll = false;
+      return;
+    }
+    for (const sym of fpDirty) drawFootprint(sym);
+    fpDirty.clear();
+  });
 }
 
 function snapChartToLive() {
-  fpPanBars = 0;
-  drawFootprint();
+  for (const view of fpViews.values()) view.panBars = 0;
+  scheduleDraw();
+}
+
+function resizeFpView(symbol) {
+  const view = fpViews.get(symbol);
+  if (!view?.canvas?.parentElement) return;
+  const rect = view.canvas.parentElement.getBoundingClientRect();
+  const w = Math.max(1, Math.floor(rect.width));
+  const h = Math.max(1, Math.floor(rect.height));
+  view.canvas.width = w * devicePixelRatio;
+  view.canvas.height = h * devicePixelRatio;
+  view.ctx = view.canvas.getContext('2d');
+  view.ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+
+function resizeAllFpViews() {
+  for (const symbol of fpViews.keys()) resizeFpView(symbol);
+  scheduleDraw();
+}
+
+function bindFpCanvas(symbol, canvas) {
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const view = fpViews.get(symbol);
+    if (!view) return;
+    const W = cssChartWidth(view);
+    const bars = footprintBars(symbol);
+    const { stride } = fpLayout(W);
+    view.panBars += (e.deltaX + e.deltaY) / stride;
+    clampFpPan(view, bars.length, W);
+    scheduleDraw(symbol);
+  }, { passive: false });
+
+  canvas.addEventListener('pointerdown', (e) => {
+    const view = fpViews.get(symbol);
+    if (!view) return;
+    view.dragging = true;
+    view.dragX = e.clientX;
+    canvas.setPointerCapture(e.pointerId);
+    canvas.style.cursor = 'grabbing';
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const view = fpViews.get(symbol);
+    if (!view?.dragging) return;
+    const W = cssChartWidth(view);
+    const bars = footprintBars(symbol);
+    const { stride } = fpLayout(W);
+    view.panBars += (e.clientX - view.dragX) / stride;
+    view.dragX = e.clientX;
+    clampFpPan(view, bars.length, W);
+    scheduleDraw(symbol);
+  });
+  const endDrag = () => {
+    const view = fpViews.get(symbol);
+    if (!view) return;
+    view.dragging = false;
+    canvas.style.cursor = 'grab';
+  };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+}
+
+function buildFpGrid() {
+  const grid = document.getElementById('fp-grid');
+  if (!grid) return;
+  const coins = visibleCoins();
+  fpViews.clear();
+  grid.innerHTML = '';
+  for (const coin of coins) {
+    const card = document.createElement('section');
+    card.className = 'fp-card';
+    card.dataset.symbol = coin.symbol;
+    card.id = `fp-card-${coin.symbol}`;
+    card.innerHTML = `
+      <header class="fp-card-head">
+        <span class="fp-card-title">${coin.label}</span>
+        <span class="fp-card-meta" data-fp-meta>—</span>
+      </header>
+      <div class="fp-card-canvas"></div>
+    `;
+    const host = card.querySelector('.fp-card-canvas');
+    const canvas = document.createElement('canvas');
+    host.appendChild(canvas);
+    grid.appendChild(card);
+    fpViews.set(coin.symbol, {
+      canvas,
+      ctx: canvas.getContext('2d'),
+      panBars: 0,
+      livePrice: 0,
+      liveAt: 0,
+      dragging: false,
+      dragX: 0,
+      card,
+    });
+    bindFpCanvas(coin.symbol, canvas);
+  }
+  $('symbol-label').textContent = `${coins.length} charts · ${footprintMarket()}`;
+  resizeAllFpViews();
 }
 
 function initChart() {
-  const container = document.getElementById('tv-chart');
-  if (!container) return;
-  container.innerHTML = '';
-  fpCanvas = document.createElement('canvas');
-  fpCanvas.style.width = '100%';
-  fpCanvas.style.height = '100%';
-  fpCanvas.style.display = 'block';
-  fpCanvas.style.position = 'absolute';
-  fpCanvas.style.top = '0';
-  fpCanvas.style.left = '0';
-  fpCanvas.style.touchAction = 'none';
-  fpCanvas.style.cursor = 'grab';
-  container.appendChild(fpCanvas);
-  resizeFpCanvas();
-  window.addEventListener('resize', resizeFpCanvas);
-
-  fpCanvas.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const W = cssChartWidth();
-    const bars = footprintBars(selectedSymbol);
-    const { stride } = fpLayout(W);
-    fpPanBars += (e.deltaX + e.deltaY) / stride;
-    clampFpPan(bars.length, W);
-    drawFootprint();
-  }, { passive: false });
-
-  fpCanvas.addEventListener('pointerdown', (e) => {
-    fpDragging = true;
-    fpDragLastX = e.clientX;
-    fpCanvas.setPointerCapture(e.pointerId);
-    fpCanvas.style.cursor = 'grabbing';
-  });
-  fpCanvas.addEventListener('pointermove', (e) => {
-    if (!fpDragging) return;
-    const W = cssChartWidth();
-    const bars = footprintBars(selectedSymbol);
-    const { stride } = fpLayout(W);
-    fpPanBars += (e.clientX - fpDragLastX) / stride;
-    fpDragLastX = e.clientX;
-    clampFpPan(bars.length, W);
-    drawFootprint();
-  });
-  const endDrag = () => {
-    fpDragging = false;
-    if (fpCanvas) fpCanvas.style.cursor = 'grab';
-  };
-  fpCanvas.addEventListener('pointerup', endDrag);
-  fpCanvas.addEventListener('pointercancel', endDrag);
-
-  document.getElementById('chart-tf-tabs')?.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-ctf]');
-    if (!btn) return;
-    chartTfMinutes = Number(btn.dataset.ctf);
-    document.querySelectorAll('#chart-tf-tabs .chart-tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
-    snapChartToLive();
-    seedFootprintKlines();
-    renderLiquidityResponse();
-  });
-  document.getElementById('chart-ex-tabs')?.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-ex]');
-    if (!btn || btn.disabled) return;
-    selectedExchange = btn.dataset.ex;
-    syncExchangeTabs();
-    snapChartToLive();
-    seedFootprintKlines();
-    subscribeFootprint();
-    renderTape();
-  });
-  document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
-}
-
-function resizeFpCanvas() {
-  if (!fpCanvas) return;
-  const rect = fpCanvas.parentElement.getBoundingClientRect();
-  fpCanvas.width = rect.width * devicePixelRatio;
-  fpCanvas.height = rect.height * devicePixelRatio;
-  fpCtx = fpCanvas.getContext('2d');
-  fpCtx.scale(devicePixelRatio, devicePixelRatio);
-  drawFootprint();
+  if (!fpGridBound) {
+    fpGridBound = true;
+    window.addEventListener('resize', resizeAllFpViews);
+    document.getElementById('chart-tf-tabs')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-ctf]');
+      if (!btn) return;
+      chartTfMinutes = Number(btn.dataset.ctf);
+      document.querySelectorAll('#chart-tf-tabs .chart-tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
+      snapChartToLive();
+      seedFootprintKlines();
+    });
+    document.getElementById('chart-ex-tabs')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-ex]');
+      if (!btn || btn.disabled) return;
+      selectedExchange = btn.dataset.ex;
+      syncExchangeTabs();
+      snapChartToLive();
+      seedFootprintKlines();
+      subscribeFootprint();
+    });
+    document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
+  }
+  buildFpGrid();
 }
 
 function getFootprintStore(symbol, tf = chartTfMinutes, exchange = 'binance') {
@@ -1269,37 +1331,38 @@ function wireBarToFp(w) {
 }
 
 /**
- * Loads stored footprint history for the active symbol/timeframe.
- * The server rolls bars up and stops at the current minute, which the live
- * WS bar then completes — so the two sources never double-count.
+ * Loads stored footprint history for every visible symbol/timeframe.
  */
 async function loadFootprintHistory() {
   const tf = chartTfMinutes;
-  const symbol = selectedSymbol;
   const exchange = selectedExchange;
+  const market = footprintMarket();
   const req = ++fpHistoryReq;
-  try {
-    const params = new URLSearchParams({
-      symbol,
-      exchange,
-      tf: String(tf),
-      limit: '1500',
-      days: String(fpRetentionDays),
-      market: footprintMarket(),
-    });
-    const data = await fetch(`/api/footprint?${params}`).then((r) => r.json());
-    if (req !== fpHistoryReq) return;
-    if (!data?.enabled) {
-      fpHistoryEnabled = false;
-      return;
+  const coins = visibleCoins();
+  await Promise.all(coins.map(async (coin) => {
+    try {
+      const params = new URLSearchParams({
+        symbol: coin.symbol,
+        exchange,
+        tf: String(tf),
+        limit: '800',
+        days: String(Math.min(fpRetentionDays, 14)),
+        market,
+      });
+      const data = await fetch(`/api/footprint?${params}`).then((r) => r.json());
+      if (req !== fpHistoryReq) return;
+      if (!data?.enabled) {
+        fpHistoryEnabled = false;
+        return;
+      }
+      const map = new Map();
+      for (const w of data.bars ?? []) map.set(w.t, wireBarToFp(w));
+      fpHistoryStore[historyKey(coin.symbol, tf, exchange)] = map;
+    } catch {
+      /* keep whatever history we already had */
     }
-    const map = new Map();
-    for (const w of data.bars ?? []) map.set(w.t, wireBarToFp(w));
-    fpHistoryStore[historyKey(symbol, tf, exchange)] = map;
-  } catch {
-    /* keep whatever history we already had */
-  }
-  if (req === fpHistoryReq) drawFootprint();
+  }));
+  if (req === fpHistoryReq) scheduleDraw();
 }
 
 function seedFootprintKlines() {
@@ -1309,55 +1372,55 @@ function seedFootprintKlines() {
 
 async function seedFromKlines() {
   const tf = chartTfMinutes;
-  const symbol = selectedSymbol;
   const exchange = klineExchange();
+  const market = footprintMarket();
   if (tf < 15) {
-    drawFootprint();
+    scheduleDraw();
     return;
   }
   const req = ++fpKlineReq;
-  try {
-    const rows = await fetch(
-      `/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${fpKlineInterval(tf)}&exchange=${encodeURIComponent(exchange)}&market=${encodeURIComponent(footprintMarket())}&limit=400`,
-    ).then((r) => r.json());
-    if (req !== fpKlineReq || symbol !== selectedSymbol || tf !== chartTfMinutes || klineExchange() !== exchange) return;
-    if (!Array.isArray(rows) || !rows.length) {
-      drawFootprint();
-      return;
+  const coins = visibleCoins();
+  await Promise.all(coins.map(async (coin) => {
+    try {
+      const rows = await fetch(
+        `/api/klines?symbol=${encodeURIComponent(coin.symbol)}&interval=${fpKlineInterval(tf)}&exchange=${encodeURIComponent(exchange)}&market=${encodeURIComponent(market)}&limit=300`,
+      ).then((r) => r.json());
+      if (req !== fpKlineReq || tf !== chartTfMinutes || klineExchange() !== exchange) return;
+      if (!Array.isArray(rows) || !rows.length) return;
+      let candles = rows
+        .map((k) => ({
+          time: Math.floor(Number(k[0]) / 1000),
+          open: Number(k[1]),
+          high: Number(k[2]),
+          low: Number(k[3]),
+          close: Number(k[4]),
+          volume: Number(k[5] ?? 0),
+          quote: Number(k[7] ?? k[6] ?? 0),
+          takerBuy: Number(k[10] ?? k[9] ?? NaN),
+        }))
+        .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.close));
+      if (tf === 45) candles = aggregateToMinutes(candles, 45);
+      const seed = getFpKlineSeed(coin.symbol, tf, exchange);
+      seed.clear();
+      for (const c of candles) {
+        const bar = {
+          time: c.time,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          levels: new Map(),
+          totalBuy: 0,
+          totalSell: 0,
+        };
+        fillKlineProxyLevels(bar, c.volume, c.quote, c.takerBuy);
+        seed.set(c.time, bar);
+      }
+    } catch {
+      /* live 1m rollup still works */
     }
-    let candles = rows
-      .map((k) => ({
-        time: Math.floor(Number(k[0]) / 1000),
-        open: Number(k[1]),
-        high: Number(k[2]),
-        low: Number(k[3]),
-        close: Number(k[4]),
-        volume: Number(k[5] ?? 0),
-        quote: Number(k[7] ?? k[6] ?? 0),
-        takerBuy: Number(k[10] ?? k[9] ?? NaN),
-      }))
-      .filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.close));
-    if (tf === 45) candles = aggregateToMinutes(candles, 45);
-    const seed = getFpKlineSeed(symbol, tf, exchange);
-    seed.clear();
-    for (const c of candles) {
-      const bar = {
-        time: c.time,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-        levels: new Map(),
-        totalBuy: 0,
-        totalSell: 0,
-      };
-      fillKlineProxyLevels(bar, c.volume, c.quote, c.takerBuy);
-      seed.set(c.time, bar);
-    }
-  } catch {
-    /* live 1m rollup still works */
-  }
-  if (req === fpKlineReq) drawFootprint();
+  }));
+  if (req === fpKlineReq) scheduleDraw();
 }
 
 function klineQuoteUsd(volume, quote, high, low, close) {
@@ -1564,8 +1627,8 @@ function ingestTradeToChart(trade) {
   const lv = bar.levels.get(lk);
   if (trade.side === 'BUY') { lv.buy += trade.quoteValue; bar.totalBuy += trade.quoteValue; }
   else { lv.sell += trade.quoteValue; bar.totalSell += trade.quoteValue; }
-  if (trade.symbol === selectedSymbol && tradeMatchesExchange(trade)) {
-    drawFootprint();
+  if (trade.symbol && tradeMatchesExchange(trade)) {
+    scheduleDraw(trade.symbol);
   }
 }
 
@@ -1591,9 +1654,10 @@ function bucketBarLevels(bar, bucket) {
   return [...map.values()];
 }
 
-function liveFlowBattle() {
-  return lastSummary?.windows?.[selectedTf]?.flowBattle
-    ?? lastSummary?.windows?.['10s']?.flowBattle
+function liveFlowBattle(symbol = selectedSymbol) {
+  const snap = summaries[symbol];
+  return snap?.windows?.[selectedTf]?.flowBattle
+    ?? snap?.windows?.['10s']?.flowBattle
     ?? null;
 }
 
@@ -1687,6 +1751,40 @@ function absorptionReversalKind(bar, next) {
   return null;
 }
 
+/** Sweep of prior swing high/low (stop liquidity), then close back through the level. */
+function stopHuntKind(bar, prior) {
+  const { support, resistance } = priorSwingLevels(prior);
+  if (support == null || resistance == null || resistance <= support) return null;
+  const atr = recentBarAtr(prior, bar);
+  const range = bar.high - bar.low;
+  if (range <= 0) return null;
+  const closePos = (bar.close - bar.low) / range;
+  const band = Math.max((resistance - support) * 0.08, atr * 0.35);
+  // Sweep highs → reverse down
+  if (bar.high >= resistance + band * 0.2 && bar.close < resistance && closePos <= 0.42) return 'HIGH';
+  // Sweep lows → reverse up
+  if (bar.low <= support - band * 0.2 && bar.close > support && closePos >= 0.58) return 'LOW';
+  return null;
+}
+
+/** Distribution near highs: liquidity taken above resistance, buyers fade, reverse down. */
+function distributionAtHighsKind(bar, next, prior) {
+  const location = barLocationFromPrior(bar, prior);
+  if (location !== 'AT_RESISTANCE' && location !== 'ABOVE_RESISTANCE') return null;
+  const { resistance } = priorSwingLevels(prior);
+  const range = bar.high - bar.low;
+  if (resistance == null || range <= 0) return null;
+  const closePos = (bar.close - bar.low) / range;
+  const absorbed = barAbsorbed(bar);
+  const grabbed = bar.high >= resistance && closePos <= 0.48;
+  const buyersFaded =
+    absorbed === 'BUYERS'
+    || ((bar.totalBuy ?? 0) >= (bar.totalSell ?? 0) * 0.9 && bar.close <= bar.open);
+  const reversed = bar.close < bar.open || (next && next.close < bar.close);
+  if (grabbed && buyersFaded && reversed) return 'DISTRIBUTION';
+  return null;
+}
+
 function strategyStoryForBar(allBars, idx) {
   const bar = allBars[idx];
   const prior = allBars.slice(Math.max(0, idx - 20), idx);
@@ -1711,6 +1809,13 @@ function strategyStoryForBar(allBars, idx) {
   else if (location === 'ABOVE_RESISTANCE' && score > 0) setup = 'BREAKOUT_UP';
   else if (location === 'BELOW_SUPPORT' && score < 0) setup = 'BREAKDOWN';
   else if (location === 'MID_RANGE' && Math.abs(score) >= 28) setup = 'FLOW_CONTINUATION';
+
+  const hunt = stopHuntKind(bar, prior);
+  if (hunt === 'HIGH') return { badge: 'SHORT', line1: 'Stop hunt', line2: 'swept high · reverse', color: '#e879f9' };
+  if (hunt === 'LOW') return { badge: 'LONG', line1: 'Stop hunt', line2: 'swept low · reverse', color: '#e879f9' };
+
+  const dist = distributionAtHighsKind(bar, next, prior);
+  if (dist) return { badge: 'SHORT', line1: 'Distribution at highs', line2: 'liq grabbed · reverse', color: '#c084fc' };
 
   const rev = absorptionReversalKind(bar, next);
   if (rev === 'SELLER') return { badge: 'LONG', line1: 'Sellers absorbed', line2: 'then reversed up', color: '#7dd3fc' };
@@ -1759,23 +1864,23 @@ function drawBarStrategyTitle(ctx, story, cx, maxW) {
   ctx.restore();
 }
 
-function drawBattleHud(ctx, leftPad, plotRight) {
-  ctx.font = 'bold 11px JetBrains Mono, monospace';
+function drawBattleHud(ctx, leftPad, plotRight, symbol = selectedSymbol) {
+  ctx.font = 'bold 10px JetBrains Mono, monospace';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   let text;
   let color = '#8b949e';
   if (isSpotView()) {
-    const w = lastSpotFlow ? spotWindow(lastSpotFlow) : null;
+    const snap = spotFlowBySymbol[symbol];
+    const w = snap ? spotWindow(snap) : null;
     if (w) {
       color = w.flow?.includes('BUY') ? '#22c55e' : w.flow?.includes('SELL') ? '#ef4444' : '#8b949e';
-      const flags = (w.flags ?? []).slice(0, 2).map((f) => f.replace(/_/g, ' ')).join(' · ');
-      text = `${(w.flow ?? 'BALANCED').replace(/_/g, ' ')}  ·  Δ ${fmtUsd(w.delta)}  ·  ${w.efficiency?.rank ?? ''}${w.efficiency?.effortVsResult ? ' · ' + w.efficiency.effortVsResult.replace(/_/g, ' ') : ''}${flags ? '  ·  ' + flags : ''}`;
+      text = `${(w.flow ?? 'BALANCED').replace(/_/g, ' ')}  ·  Δ ${fmtUsd(w.delta)}`;
     } else {
       text = 'Spot flow waiting…';
     }
   } else {
-    const b = liveFlowBattle();
+    const b = liveFlowBattle(symbol);
     if (b?.winner?.winner) {
       const w = b.winner.winner;
       color = w.includes('PASSIVE_SELL') ? '#fbbf24'
@@ -1783,19 +1888,15 @@ function drawBattleHud(ctx, leftPad, plotRight) {
         : w.includes('AGGRESSIVE_BUY') ? '#22c55e'
         : w.includes('AGGRESSIVE_SELL') ? '#ef4444'
         : '#8b949e';
-      const ab = Math.round(b.battle?.aggressiveBuyerStrength ?? 0);
-      const ps = Math.round(b.battle?.passiveSellerStrength ?? 0);
-      const as = Math.round(b.battle?.aggressiveSellerStrength ?? 0);
-      const pb = Math.round(b.battle?.passiveBuyerStrength ?? 0);
-      text = `${battleLabel(w)}  ·  agg buy ${ab} vs pas sell ${ps}   agg sell ${as} vs pas buy ${pb}`;
+      text = battleLabel(w);
     } else {
       text = 'Flow battle waiting…';
     }
   }
   ctx.fillStyle = 'rgba(13, 17, 23, 0.88)';
-  ctx.fillRect(leftPad, 18, Math.min(plotRight - leftPad, 720), 16);
+  ctx.fillRect(leftPad, 18, Math.min(plotRight - leftPad, 420), 14);
   ctx.fillStyle = color;
-  ctx.fillText(text, leftPad + 4, 26);
+  ctx.fillText(text, leftPad + 4, 25);
 }
 
 function fmtPriceAxis(p) {
@@ -1804,46 +1905,44 @@ function fmtPriceAxis(p) {
   return p.toFixed(5);
 }
 
-function drawFootprint() {
-  if (!fpCtx || !fpCanvas) return;
-  const W = fpCanvas.width / devicePixelRatio;
-  const H = fpCanvas.height / devicePixelRatio;
-  const ctx = fpCtx;
+function drawFootprint(symbol = selectedSymbol) {
+  const view = fpViews.get(symbol);
+  if (!view?.ctx || !view.canvas) return;
+  const W = view.canvas.width / devicePixelRatio;
+  const H = view.canvas.height / devicePixelRatio;
+  const ctx = view.ctx;
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#0d1117';
   ctx.fillRect(0, 0, W, H);
 
   const liveBtn = document.getElementById('chart-live-btn');
-  const bars = footprintBars(selectedSymbol);
+  const bars = footprintBars(symbol);
   if (bars.length === 0) {
     liveBtn?.classList.add('hidden');
     ctx.fillStyle = '#8b949e';
-    ctx.font = '13px Inter, sans-serif';
+    ctx.font = '12px Inter, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Waiting for trades to build footprint…', W / 2, H / 2);
-    if (chartTfMinutes >= 15) {
-      ctx.font = '12px Inter, sans-serif';
-      ctx.fillText('Loading candle history for this timeframe…', W / 2, H / 2 + 22);
-    }
-    updateFpLevNow(0);
+    ctx.fillText('Waiting for footprint…', W / 2, H / 2);
+    const meta = view.card?.querySelector('[data-fp-meta]');
+    if (meta) meta.textContent = 'loading';
     return;
   }
 
   const { leftPad, priceAxisWidth, candleW, cellW, barWidth, stride, visibleBars } = fpLayout(W);
-  const topPad = 88;
-  const bottomPad = 44;
+  const topPad = 72;
+  const bottomPad = 36;
   const chartH = H - topPad - bottomPad;
-  clampFpPan(bars.length, W);
-  liveBtn?.classList.toggle('hidden', fpPanBars < 0.15);
+  clampFpPan(view, bars.length, W);
+  liveBtn?.classList.toggle('hidden', [...fpViews.values()].every((v) => v.panBars < 0.15));
 
-  const pan = Math.round(fpPanBars);
+  const pan = Math.round(view.panBars);
   const endIdx = bars.length - pan;
   const startIdx = Math.max(0, endIdx - visibleBars);
   const visible = bars.slice(startIdx, endIdx);
 
   if (visible.length === 0) {
     ctx.fillStyle = '#8b949e';
-    ctx.font = '13px Inter, sans-serif';
+    ctx.font = '12px Inter, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('No footprint bars yet', W / 2, H / 2);
     return;
@@ -1855,7 +1954,7 @@ function drawFootprint() {
     if (bar.low < globalLow) globalLow = bar.low;
   }
   const lastBar = visible[visible.length - 1];
-  const livePx = latestLivePrice(lastBar?.close ?? 0);
+  const livePx = latestLivePrice(symbol, lastBar?.close ?? 0);
   const nowBucket = fpCandleTime(Date.now(), chartTfMinutes);
   const lastIsLive = pan < 0.15 && lastBar?.time === nowBucket;
   if (livePx) {
@@ -1905,10 +2004,10 @@ function drawFootprint() {
   ctx.font = '8px Inter, sans-serif';
   ctx.textAlign = 'left';
   ctx.fillStyle = '#8b949e';
-  if (fpPanBars >= 0.15) {
+  if (view.panBars >= 0.15) {
     ctx.fillText('drag / scroll · Latest jumps to live', leftPad + 2, 8);
   } else {
-    ctx.fillText('Asks pulled = upside vacuum. Bids pulled = downside vacuum.', leftPad + 2, 8);
+    ctx.fillText('Stop hunt · distribution · vacuum', leftPad + 2, 8);
   }
 
   for (let i = 0; i < visible.length; i++) {
@@ -2006,7 +2105,15 @@ function drawFootprint() {
     drawChartPriceLine(ctx, yForPrice(livePx), '#60a5fa', `LIVE ${fmtPriceAxis(livePx)}`, leftPad, plotRight);
   }
 
-  updateFpLevNow(livePx);
+  const storyIdx = Math.max(0, bars.length - (lastIsLive && bars.length > 1 ? 2 : 1));
+  const story = bars.length ? strategyStoryForBar(bars, storyIdx) : null;
+  const meta = view.card?.querySelector('[data-fp-meta]');
+  if (meta) {
+    const px = livePx || lastBar?.close || 0;
+    meta.textContent = story?.line1
+      ? `${fmtPriceAxis(px)} · ${story.line1}`
+      : fmtPriceAxis(px);
+  }
   ctx.lineWidth = 1;
 }
 
@@ -2143,10 +2250,14 @@ function rebuildChart() {
 }
 
 function subscribeFootprint() {
+  // Live 1m bars for every coin arrive via footprint_tick broadcast.
+  // Keep a single sub so the server still pushes focused live updates for the first chart.
   if (fpLiveSocket?.readyState !== WebSocket.OPEN) return;
+  const first = visibleCoins()[0];
+  if (!first) return;
   fpLiveSocket.send(JSON.stringify({
     type: 'sub_footprint',
-    symbol: selectedSymbol,
+    symbol: first.symbol,
     exchange: selectedExchange,
     market: footprintMarket(),
   }));
@@ -2167,19 +2278,18 @@ function escapeHtml(s) {
  * holding it locally and counting it twice.
  */
 function applyLiveFootprint(ev) {
-  if (ev.symbol !== selectedSymbol) return;
+  if (!ev?.symbol || !fpViews.has(ev.symbol)) return;
   if (ev.market && ev.market !== footprintMarket()) return;
   const bars = ev.bars ?? [];
   if (!bars.length) return;
 
   const minute = bars[0].bar.t;
-  if (minute !== fpLastLiveMinute) {
-    fpLastLiveMinute = minute;
+  if (minute !== fpLastLiveMinuteBySymbol[ev.symbol]) {
+    fpLastLiveMinuteBySymbol[ev.symbol] = minute;
     const prefix = `${footprintMarket()}_${ev.symbol}_`;
     for (const key of Object.keys(footprintStore)) {
       if (key.startsWith(prefix) && key.endsWith('_1')) delete footprintStore[key];
     }
-    if (fpHistoryEnabled) void loadFootprintHistory();
   }
 
   for (const { exchange, bar } of bars) {
@@ -2190,7 +2300,33 @@ function applyLiveFootprint(ev) {
     noteLivePrice(ev.symbol, bar.c);
   }
   evaluateSymbolAlerts(ev.symbol);
-  drawFootprint();
+  scheduleDraw(ev.symbol);
+}
+
+function applyFootprintTick(ev) {
+  if (ev.market && ev.market !== footprintMarket()) return;
+  const rows = ev.bars ?? [];
+  if (!rows.length) return;
+  const touched = new Set();
+  for (const row of rows) {
+    if (!row?.symbol || !row?.bar || !row?.exchange) continue;
+    const store = getFootprintStore(row.symbol, 1, row.exchange);
+    const t = row.bar.t;
+    // Keep only the live minute in the in-progress store.
+    if (!store.has(t) || store.size > 1) {
+      for (const key of [...store.keys()]) {
+        if (key !== t) store.delete(key);
+      }
+    }
+    store.set(t, wireBarToFp(row.bar));
+    ingestAlertBar(row.symbol, row.exchange, row.bar);
+    noteLivePrice(row.symbol, row.bar.c);
+    touched.add(row.symbol);
+  }
+  for (const symbol of touched) {
+    evaluateSymbolAlerts(symbol);
+    scheduleDraw(symbol);
+  }
 }
 
 // ═══════ Footprint Alerts (session toasts, all coins) ═══════
@@ -2311,40 +2447,28 @@ function evaluateSymbolAlerts(symbol) {
   const idx = bars.length - 1;
   const story = strategyStoryForBar(bars, idx);
   if (!story) return;
-  const control =
-    story.line1 === 'Buyers in control' ? 'buy'
-      : story.line1 === 'Sellers in control' ? 'sell'
-        : null;
-  if (!control) return;
+  const kind =
+    story.line1 === 'Buyers in control' ? { key: 'buyers', side: 'buy' }
+      : story.line1 === 'Sellers in control' ? { key: 'sellers', side: 'sell' }
+        : story.line1 === 'Stop hunt' ? { key: story.line2.includes('low') ? 'hunt-low' : 'hunt-high', side: story.badge === 'LONG' ? 'buy' : 'sell' }
+          : story.line1 === 'Distribution at highs' ? { key: 'distribution', side: 'sell' }
+            : null;
+  if (!kind) return;
 
   const label = alertLabel(symbol);
   const tf = tfShort(ALERT_TF_MINUTES);
   const barKey = bars[idx].time;
-  const kindKey = control === 'buy' ? 'buyers' : 'sellers';
-  if (!canFireAlert(`${symbol}:ctrl:${kindKey}:${barKey}`, 120_000)) return;
+  if (!canFireAlert(`${symbol}:story:${kind.key}:${barKey}`, 120_000)) return;
 
   pushFpAlert({
-    id: `${symbol}-ctrl-${kindKey}-${barKey}`,
+    id: `${symbol}-${kind.key}-${barKey}`,
     symbol,
-    kind: 'control',
-    side: control,
+    kind: kind.key,
+    side: kind.side,
     title: `${label} · ${story.line1}`,
-    detail: `${story.line2 || 'price followed'} · ${tf}`,
+    detail: `${story.line2 || 'setup'} · ${tf}`,
     at: Date.now(),
   });
-}
-
-function applyFootprintTick(ev) {
-  if (ev.market && ev.market !== footprintMarket()) return;
-  const rows = ev.bars ?? [];
-  if (!rows.length) return;
-  const touched = new Set();
-  for (const row of rows) {
-    if (!row?.symbol || !row?.bar || !row?.exchange) continue;
-    ingestAlertBar(row.symbol, row.exchange, row.bar);
-    touched.add(row.symbol);
-  }
-  for (const symbol of touched) evaluateSymbolAlerts(symbol);
 }
 
 function setupAlertUi() {
@@ -2382,8 +2506,13 @@ function setupAlertUi() {
 
 function openAlertSymbol(symbol) {
   if (!symbol) return;
-  const coin = config?.coins?.find((c) => c.symbol === symbol);
-  openTab(symbol, coin?.label ?? symbol.replace('USDT', ''));
+  selectedSymbol = symbol;
+  const card = document.getElementById(`fp-card-${symbol}`);
+  if (card) {
+    document.querySelectorAll('.fp-card.focus').forEach((el) => el.classList.remove('focus'));
+    card.classList.add('focus');
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
   document.getElementById('alert-panel')?.classList.add('hidden');
 }
 
@@ -2432,29 +2561,17 @@ async function init() {
   setupTabs();
   setupDataMode();
   setupAlertUi();
-  initChart();
   try {
     config = await fetch('/api/config').then((r) => r.json());
     fpHistoryEnabled = Boolean(config.history?.enabled);
     fpRetentionDays = Number(config.history?.retentionDays) || 30;
     imbalanceRatio = Number(config.imbalanceRatio) || 3;
     if ($('imb-ratio') !== _noopEl) $('imb-ratio').value = String(imbalanceRatio);
-    if (config.coins?.length) {
-      selectedSymbol = config.coins[0].symbol;
-      renderCoinBar(config.coins);
-      for (const coin of config.coins) {
-        if (!openTabs.find((t) => t.symbol === coin.symbol)) {
-          openTabs.push({ symbol: coin.symbol, label: coin.label });
-        }
-      }
-      renderOpenTabs();
-      applySymbolFilter();
-    }
+    if (config.coins?.length) selectedSymbol = config.coins[0].symbol;
     applyDataMode(config.market === 'spot' ? 'spot' : 'perp');
-    $('symbol-label').textContent = `${selectedSymbol.replace('USDT', '')} · ${config.market}`;
-  } catch { /* ignore */ }
-  seedFootprintKlines();
-  drawFootprint();
+  } catch {
+    initChart();
+  }
   renderAlertList();
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -2487,7 +2604,7 @@ async function init() {
         if (ev.trade && ev.market) ev.trade.market = ev.market;
         if (ev.trade) noteLivePrice(ev.trade.symbol, ev.trade.price);
         ingestTradeToChart(ev.trade);
-        if (ev.trade?.symbol === selectedSymbol) drawFootprint();
+        if (ev.trade?.symbol) scheduleDraw(ev.trade.symbol);
         break;
       case 'footprint_live':
         applyLiveFootprint(ev);
@@ -2501,6 +2618,7 @@ async function init() {
       case 'summary':
         if (ev.summary && ev.market) ev.summary.market = ev.market;
         updateSummary(ev.summary);
+        if (ev.summary?.symbol) scheduleDraw(ev.summary.symbol);
         break;
       case 'overview':
         updateOverview(ev.coins, ev.market === 'spot' ? 'spot' : 'perp');
