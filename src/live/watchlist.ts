@@ -26,6 +26,8 @@ export const DEFAULT_WATCHLIST: WatchCoin[] = [
   { symbol: 'PENGUUSDT', label: 'PENGU', minUsd: 500, venue: 'crypto' },
   { symbol: 'OPUSDT', label: 'OP', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'XLMUSDT', label: 'XLM', minUsd: 1_000, venue: 'crypto' },
+  { symbol: 'PYTHUSDT', label: 'PYTH', minUsd: 1_000, venue: 'crypto' },
+  { symbol: 'TRUMPUSDT', label: 'TRUMP', minUsd: 500, venue: 'crypto' },
 ];
 
 /**
