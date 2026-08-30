@@ -367,19 +367,24 @@ function chipHtml(c) {
     </button>`;
 }
 
+let coinNavBound = false;
 function renderCoinBar(assets) {
   const crypto = assets.filter((c) => c.venue !== 'equity');
   const stocks = assets.filter((c) => c.venue === 'equity');
   $('crypto-bar').innerHTML = crypto.map(chipHtml).join('');
   $('stock-bar').innerHTML = stocks.map(chipHtml).join('');
 
-  document.querySelector('.asset-nav')?.addEventListener('click', (e) => {
-    const chip = e.target.closest('.coin-chip');
-    if (!chip) return;
-    const sym = chip.dataset.symbol;
-    const coin = config?.coins?.find((c) => c.symbol === sym);
-    openTab(sym, coin?.label ?? sym.replace('USDT', ''));
-  });
+  if (!coinNavBound) {
+    coinNavBound = true;
+    document.querySelector('.asset-nav')?.addEventListener('click', (e) => {
+      const chip = e.target.closest('.coin-chip');
+      if (!chip) return;
+      const sym = chip.dataset.symbol;
+      const coin = config?.coins?.find((c) => c.symbol === sym);
+      openTab(sym, coin?.label ?? sym.replace('USDT', ''));
+      chip.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
 }
 
 function openTab(symbol, label) {
@@ -829,7 +834,7 @@ function applyDataMode(mode) {
   $('chart-hint').textContent =
     'Upside vacuum: resting asks were pulled, so buying lifted price fast. Downside vacuum: resting bids were pulled, so selling dumped price fast. Blue = live price.';
   $('imb-cfg').classList.toggle('hidden', !spot);
-  document.querySelector('.asset-nav .asset-row:nth-child(2)')?.classList.toggle('hidden', spot);
+  document.getElementById('equity-row')?.classList.toggle('hidden', spot);
   const coin = config?.coins?.find((c) => c.symbol === selectedSymbol);
   const venue = selectedExchange === 'all' ? (spot ? 'multi-exchange spot' : 'multi-exchange') : selectedExchange;
   $('symbol-label').textContent = `${coin?.label ?? selectedSymbol.replace('USDT', '')} · ${venue}`;

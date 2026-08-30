@@ -21,17 +21,21 @@ body {
   font-family: var(--font);
   background: var(--bg);
   color: var(--text);
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   line-height: 1.45;
+  display: flex;
+  flex-direction: column;
 }
 
 .header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.85rem 1.25rem;
+  padding: 0.75rem 1.25rem;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
+  flex-shrink: 0;
 }
 
 .brand { display: flex; align-items: center; gap: 0.75rem; }
@@ -45,78 +49,95 @@ body {
 
 .coin-bar {
   display: flex;
-  gap: 0.35rem;
-  overflow-x: auto;
+  flex-direction: column;
+  gap: 0.28rem;
   flex: 1;
-  padding-bottom: 2px;
-  scrollbar-width: thin;
+  min-height: 0;
+}
+
+.app-shell {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .asset-nav {
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
-  padding: 0.55rem 1.1rem 0.7rem;
-  border-bottom: 1px solid var(--border);
+  gap: 0.85rem;
+  padding: 0.7rem 0.55rem 0.85rem;
+  border-right: 1px solid var(--border);
   background: linear-gradient(180deg, #0f131a 0%, #0b0e14 100%);
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  scrollbar-width: thin;
 }
 
 .asset-row {
   display: flex;
-  align-items: center;
-  gap: 0.7rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
 }
 
 .asset-group {
-  font-size: 0.6rem;
+  font-size: 0.58rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: #6b7585;
-  min-width: 118px;
+  min-width: 0;
   flex-shrink: 0;
-  font-weight: 600;
+  font-weight: 700;
+  padding: 0 0.35rem;
 }
 
 .coin-chip {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.12rem;
-  min-width: 68px;
-  padding: 0.42rem 0.7rem 0.38rem;
-  border-radius: 10px;
-  border: 1px solid #232a38;
-  background: #12161e;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.42rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--text);
   cursor: pointer;
   font-family: var(--font);
-  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
 }
 .coin-chip:hover {
-  border-color: #3a4558;
-  background: #161b25;
-  transform: translateY(-1px);
+  border-color: #2a3342;
+  background: #151a23;
+  transform: none;
 }
 .coin-chip.active {
-  border-color: rgba(96, 165, 250, 0.85);
-  background: linear-gradient(180deg, rgba(96, 165, 250, 0.18) 0%, rgba(96, 165, 250, 0.08) 100%);
-  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.2), 0 4px 14px rgba(0, 0, 0, 0.35);
+  border-color: rgba(96, 165, 250, 0.75);
+  background: linear-gradient(90deg, rgba(96, 165, 250, 0.18) 0%, rgba(96, 165, 250, 0.06) 100%);
+  box-shadow: inset 3px 0 0 #60a5fa;
 }
 .coin-chip.hot { box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.4); }
 .coin-label {
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: #f3f5f8;
+  color: #dce2ea;
   line-height: 1.1;
 }
 .coin-chip.active .coin-label { color: #fff; }
 .coin-delta {
   font-family: var(--mono);
-  font-size: 0.66rem;
+  font-size: 0.62rem;
   font-weight: 600;
   color: #7d8796;
   line-height: 1.1;
+  text-align: right;
+  flex-shrink: 0;
 }
 .coin-delta.pos { color: #4ade80; }
 .coin-delta.neg { color: #f87171; }
@@ -156,13 +177,15 @@ body {
 .layout.layout-chart-only {
   display: block;
   max-width: none;
-  padding: 0.75rem 1rem 1rem;
+  padding: 0.65rem 0.85rem 0.75rem;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .layout.layout-chart-only .chart-panel {
-  height: calc(100vh - 200px);
-  min-height: 520px;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -679,6 +702,7 @@ body {
   padding: 0.35rem 1rem 0.45rem;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .open-tabs {
   display: flex;

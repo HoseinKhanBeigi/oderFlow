@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Order Flow — Footprint</title>
-  <link rel="stylesheet" href="/styles.css?v=fp-style3" />
+  <link rel="stylesheet" href="/styles.css?v=fp-sidebar1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -27,69 +27,71 @@
     </div>
   </header>
 
-  <nav class="asset-nav">
-    <div class="asset-row">
-      <span class="asset-group">Crypto · multi-exchange</span>
-      <div class="coin-bar" id="crypto-bar"></div>
-    </div>
-    <div class="asset-row">
-      <span class="asset-group">TradFi perps · Binance</span>
-      <div class="coin-bar" id="stock-bar"></div>
-    </div>
-  </nav>
-
   <div class="open-tabs-bar">
     <div class="open-tabs" id="open-tabs"></div>
   </div>
 
-  <main class="layout layout-chart-only">
-    <section class="panel chart-panel">
-      <div class="panel-head">
-        <div>
-          <h2 id="chart-title">Order flow footprint</h2>
-          <p class="hint" id="chart-hint">Upside vacuum: resting asks were pulled, so buying lifted price fast. Downside vacuum: resting bids were pulled, so selling dumped price fast. Blue = live price.</p>
-        </div>
-        <div class="chart-toolbar">
-          <div class="chart-tf-tabs" id="chart-ex-tabs">
-            <button class="chart-tf-tab active" data-ex="all" type="button">All</button>
-            <button class="chart-tf-tab" data-ex="binance" type="button">Binance</button>
-            <button class="chart-tf-tab" data-ex="bybit" type="button">Bybit</button>
-            <button class="chart-tf-tab" data-ex="okx" type="button">OKX</button>
-            <button class="chart-tf-tab" data-ex="bitget" type="button">Bitget</button>
-            <button class="chart-tf-tab" data-ex="hyperliquid" type="button">Hyperliquid</button>
-            <button class="chart-tf-tab" data-ex="dydx" type="button">dYdX</button>
-            <button class="chart-tf-tab" data-ex="bitstamp" type="button">Bitstamp</button>
-          </div>
-          <div class="chart-tf-tabs" id="chart-tf-tabs">
-            <button class="chart-live-btn hidden" id="chart-live-btn" type="button">Latest</button>
-            <button class="chart-tf-tab" data-ctf="1">1m</button>
-            <button class="chart-tf-tab" data-ctf="5">5m</button>
-            <button class="chart-tf-tab active" data-ctf="15">15m</button>
-            <button class="chart-tf-tab" data-ctf="30">30m</button>
-            <button class="chart-tf-tab" data-ctf="45">45m</button>
-            <button class="chart-tf-tab" data-ctf="60">1h</button>
-            <button class="chart-tf-tab" data-ctf="120">2h</button>
-            <button class="chart-tf-tab" data-ctf="240">4h</button>
-            <button class="chart-tf-tab" data-ctf="1440">1D</button>
-          </div>
-          <label id="imb-cfg" class="imb-cfg hidden" title="Highlight a price level when buy/sell ≥ this ratio">
-            Imbalance
-            <input id="imb-ratio" type="number" min="1.5" max="10" step="0.5" value="3" />
-          </label>
-        </div>
+  <div class="app-shell">
+    <nav class="asset-nav" aria-label="Markets">
+      <div class="asset-row" id="crypto-row">
+        <span class="asset-group">Crypto</span>
+        <div class="coin-bar" id="crypto-bar"></div>
       </div>
-      <div id="tv-chart" style="width:100%;height:calc(100vh - 220px);min-height:520px;overflow:hidden;position:relative;"></div>
-      <div class="chart-legend">
-        <span id="fp-lev-now" class="fp-lev-now">—</span>
-        <span class="legend-item fp-live">Live price</span>
-        <span class="legend-item fp-rest-bid">Asks pulled · price ran up</span>
-        <span class="legend-item fp-rest-ask">Bids pulled · price dumped</span>
-        <span class="legend-item fp-pbuy">Sellers absorbed · reversed up</span>
-        <span class="legend-item fp-psell">Buyers absorbed · reversed down</span>
+      <div class="asset-row" id="equity-row">
+        <span class="asset-group">TradFi</span>
+        <div class="coin-bar" id="stock-bar"></div>
       </div>
-    </section>
-  </main>
+    </nav>
 
-  <script src="/app.js?v=fp-nonext1" type="module"></script>
+    <main class="layout layout-chart-only">
+      <section class="panel chart-panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="chart-title">Order flow footprint</h2>
+            <p class="hint" id="chart-hint">Upside vacuum: resting asks were pulled, so buying lifted price fast. Downside vacuum: resting bids were pulled, so selling dumped price fast. Blue = live price.</p>
+          </div>
+          <div class="chart-toolbar">
+            <div class="chart-tf-tabs" id="chart-ex-tabs">
+              <button class="chart-tf-tab active" data-ex="all" type="button">All</button>
+              <button class="chart-tf-tab" data-ex="binance" type="button">Binance</button>
+              <button class="chart-tf-tab" data-ex="bybit" type="button">Bybit</button>
+              <button class="chart-tf-tab" data-ex="okx" type="button">OKX</button>
+              <button class="chart-tf-tab" data-ex="bitget" type="button">Bitget</button>
+              <button class="chart-tf-tab" data-ex="hyperliquid" type="button">Hyperliquid</button>
+              <button class="chart-tf-tab" data-ex="dydx" type="button">dYdX</button>
+              <button class="chart-tf-tab" data-ex="bitstamp" type="button">Bitstamp</button>
+            </div>
+            <div class="chart-tf-tabs" id="chart-tf-tabs">
+              <button class="chart-live-btn hidden" id="chart-live-btn" type="button">Latest</button>
+              <button class="chart-tf-tab" data-ctf="1">1m</button>
+              <button class="chart-tf-tab" data-ctf="5">5m</button>
+              <button class="chart-tf-tab active" data-ctf="15">15m</button>
+              <button class="chart-tf-tab" data-ctf="30">30m</button>
+              <button class="chart-tf-tab" data-ctf="45">45m</button>
+              <button class="chart-tf-tab" data-ctf="60">1h</button>
+              <button class="chart-tf-tab" data-ctf="120">2h</button>
+              <button class="chart-tf-tab" data-ctf="240">4h</button>
+              <button class="chart-tf-tab" data-ctf="1440">1D</button>
+            </div>
+            <label id="imb-cfg" class="imb-cfg hidden" title="Highlight a price level when buy/sell ≥ this ratio">
+              Imbalance
+              <input id="imb-ratio" type="number" min="1.5" max="10" step="0.5" value="3" />
+            </label>
+          </div>
+        </div>
+        <div id="tv-chart" style="width:100%;height:calc(100vh - 220px);min-height:520px;overflow:hidden;position:relative;"></div>
+        <div class="chart-legend">
+          <span id="fp-lev-now" class="fp-lev-now">—</span>
+          <span class="legend-item fp-live">Live price</span>
+          <span class="legend-item fp-rest-bid">Asks pulled · price ran up</span>
+          <span class="legend-item fp-rest-ask">Bids pulled · price dumped</span>
+          <span class="legend-item fp-pbuy">Sellers absorbed · reversed up</span>
+          <span class="legend-item fp-psell">Buyers absorbed · reversed down</span>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js?v=fp-sidebar1" type="module"></script>
 </body>
 </html>
