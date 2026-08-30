@@ -1740,44 +1740,24 @@ function drawBarStrategyTitle(ctx, story, cx, maxW) {
   if (!story) return;
   const title = story.line1 || '';
   const sub = story.line2 || '';
-  const w = Math.max(108, Math.min(maxW + 16, 140));
-  const x0 = Math.round(cx - w / 2);
-  const top = 8;
-  const badgeH = 18;
-  const bodyH = sub ? 36 : 22;
-  const h = badgeH + bodyH;
-  const r = 8;
+  const maxTextW = Math.max(72, Math.min(maxW, 132));
+  const top = 14;
   ctx.save();
-  // card
-  ctx.beginPath();
-  ctx.moveTo(x0 + r, top);
-  ctx.arcTo(x0 + w, top, x0 + w, top + h, r);
-  ctx.arcTo(x0 + w, top + h, x0, top + h, r);
-  ctx.arcTo(x0, top + h, x0, top, r);
-  ctx.arcTo(x0, top, x0 + w, top, r);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(8, 11, 16, 0.96)';
-  ctx.fill();
-  ctx.strokeStyle = `${story.color}99`;
-  ctx.lineWidth = 1.25;
-  ctx.stroke();
-  // colored badge header
-  ctx.fillStyle = `${story.color}28`;
-  ctx.fillRect(x0 + 1, top + 1, w - 2, badgeH);
-  ctx.fillStyle = story.color;
-  ctx.font = 'bold 11px Inter, system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(story.badge, cx, top + 1 + badgeH / 2, w - 12);
-  // body copy
-  ctx.fillStyle = '#f4f6f9';
-  ctx.font = '600 11px Inter, system-ui, sans-serif';
-  ctx.fillText(title, cx, top + badgeH + (sub ? 13 : bodyH / 2), w - 12);
-  if (sub) {
-    ctx.fillStyle = '#b7c0cc';
-    ctx.font = '500 10px Inter, system-ui, sans-serif';
-    ctx.fillText(sub, cx, top + badgeH + 27, w - 12);
-  }
+  const drawLine = (text, y, font, color) => {
+    if (!text) return;
+    ctx.font = font;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.75)';
+    ctx.lineJoin = 'round';
+    ctx.strokeText(text, cx, y, maxTextW);
+    ctx.fillStyle = color;
+    ctx.fillText(text, cx, y, maxTextW);
+  };
+  drawLine(story.badge, top, 'bold 11px Inter, system-ui, sans-serif', story.color);
+  drawLine(title, top + 15, '600 11px Inter, system-ui, sans-serif', '#f4f6f9');
+  if (sub) drawLine(sub, top + 29, '500 10px Inter, system-ui, sans-serif', '#c5ccd6');
   ctx.restore();
 }
 
