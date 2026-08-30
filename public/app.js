@@ -1395,7 +1395,7 @@ function setupTabs() {
 // ═══════ Footprint / Order Flow Chart (canvas-based) ═══════
 
 const CHART_TFS = [1, 5, 15, 30, 45, 60, 120, 240, 1440];
-let chartTfMinutes = 1;
+let chartTfMinutes = 15;
 /** Current in-progress 1m bar per `symbol_exchange_1`, pushed by the server. */
 const footprintStore = {};
 /** Persisted bars from /api/footprint, already rolled up to the active timeframe. */
@@ -2740,7 +2740,13 @@ async function init() {
     if (config.coins?.length) {
       selectedSymbol = config.coins[0].symbol;
       renderCoinBar(config.coins);
-      openTab(config.coins[0].symbol, config.coins[0].label);
+      for (const coin of config.coins) {
+        if (!openTabs.find((t) => t.symbol === coin.symbol)) {
+          openTabs.push({ symbol: coin.symbol, label: coin.label });
+        }
+      }
+      renderOpenTabs();
+      applySymbolFilter();
     }
     renderTierLegend();
     applyDataMode(config.market === 'spot' ? 'spot' : 'perp');
