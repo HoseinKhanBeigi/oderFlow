@@ -21,6 +21,10 @@ export const DEFAULT_WATCHLIST: WatchCoin[] = [
   { symbol: 'SUIUSDT', label: 'SUI', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'FARTCOINUSDT', label: 'FARTCOIN', minUsd: 500, venue: 'crypto' },
   { symbol: 'PAXGUSDT', label: 'PAXG', minUsd: 1_000, venue: 'crypto' },
+  { symbol: 'HYPEUSDT', label: 'HYPE', minUsd: 1_000, venue: 'crypto' },
+  { symbol: 'PUMPUSDT', label: 'PUMP', minUsd: 500, venue: 'crypto' },
+  { symbol: 'PENGUUSDT', label: 'PENGU', minUsd: 500, venue: 'crypto' },
+  { symbol: 'OPUSDT', label: 'OP', minUsd: 1_000, venue: 'crypto' },
 ];
 
 /**
