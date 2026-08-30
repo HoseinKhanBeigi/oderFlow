@@ -2259,7 +2259,8 @@ function applyLiveFootprint(ev) {
 
 // ═══════ Footprint Alerts (session toasts, all coins) ═══════
 
-const ALERT_KEEP_1M = 180;
+const ALERT_TF_MINUTES = 60; // alerts always evaluate on 1h bars
+const ALERT_KEEP_1M = 720; // ~12h of 1m bars → enough prior for 1h vacuum context
 const ALERT_IMB_LEVELS = 2;
 const ALERT_MAX_SESSION = 80;
 const ALERT_TOAST_MS = 7000;
@@ -2371,13 +2372,13 @@ function pushFpAlert(alert) {
 }
 
 function evaluateSymbolAlerts(symbol) {
-  const bars = alertBarsForSymbol(symbol, chartTfMinutes);
+  const bars = alertBarsForSymbol(symbol, ALERT_TF_MINUTES);
   if (!bars.length) return;
   const idx = bars.length - 1;
   const bar = bars[idx];
   const prior = bars.slice(Math.max(0, idx - 20), idx);
   const label = alertLabel(symbol);
-  const tf = tfShort(chartTfMinutes);
+  const tf = tfShort(ALERT_TF_MINUTES);
   const barKey = bar.time;
 
   if (prior.length) {
@@ -2535,7 +2536,7 @@ function renderAlertList() {
   if (count) count.textContent = String(sessionAlerts.length);
   if (!list) return;
   if (!sessionAlerts.length) {
-    list.innerHTML = '<div class="alert-empty">No alerts yet — watching all coins</div>';
+    list.innerHTML = '<div class="alert-empty">No alerts yet — watching all coins on 1h</div>';
     return;
   }
   list.innerHTML = sessionAlerts.map((a) => `
