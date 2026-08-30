@@ -25,8 +25,6 @@ import {
   SpotFlowEngine,
 } from '../src/spot/index.js';
 import type { WindowSnapshot } from '../src/models/signals.js';
-import { SimulationHub } from '../src/simulation/hub.js';
-import { listPresets } from '../src/simulation/presets.js';
 import {
   mergeDataset,
   klinesToCandles,
@@ -35,7 +33,6 @@ import {
   rollCandles,
   windowBars,
 } from '../src/backtest/index.js';
-import { TRAIL_WINDOW_MS, type TrailWindowId } from '../src/simulation/types.js';
 import { buildSimulator } from './build-simulator.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -100,18 +97,14 @@ const spotRecorder = new FootprintRecorder({
   flushMs: Number(process.env.FOOTPRINT_FLUSH_MS ?? 15_000),
 });
 const spotHub = new SpotFlowEngine(IMBALANCE_RATIO);
-const simHub = new SimulationHub();
 
 perpFeed.onAnyTrade((trade, exchange) => {
   perpRecorder.ingest(trade, exchange);
-  simHub.ingestTrade(trade, exchange);
 });
 spotFeed.onAnyTrade((trade, exchange) => {
   if (!spotHub.ingestTrade(trade, exchange)) return;
   spotRecorder.ingest(trade, exchange);
-  simHub.ingestTrade(trade, exchange);
 });
-perpFeed.onAnyLiquidation((liq) => simHub.ingestLiquidation(liq));
 
 const server = createServer(async (req, res) => {
     if (req.url?.startsWith('/api/depth')) {
@@ -183,25 +176,6 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (req.url?.startsWith('/api/simulation/replay')) {
-      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
-      const symbol = (u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase();
-      const market = parseMarketParam(u.searchParams.get('market'));
-      const minutes = clampInt(u.searchParams.get('minutes'), 60, 1, 240);
-      const now = Date.now();
-      json(res, {
-        symbol,
-        market,
-        events: simHub.log(symbol, market).slice(now - minutes * 60_000, now),
-      });
-      return;
-    }
-
-    if (req.url === '/api/simulation/presets') {
-      json(res, { presets: listPresets() });
-      return;
-    }
-
     if (req.url === '/api/health') {
       json(res, {
         ok: true,
@@ -238,11 +212,6 @@ const server = createServer(async (req, res) => {
   }
 
   const requested = req.url?.split('?')[0] || '/';
-  if (requested === '/simulator.html' || requested === '/simulator.bundle.js' || requested === '/simulator.bundle.js.map') {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not found');
-    return;
-  }
   const path = requested === '/' ? '/index.html' : requested;
   if (!path.startsWith('/') || path.includes('..')) {
     res.writeHead(400);
@@ -281,36 +250,13 @@ interface FootprintSub {
   market: 'spot' | 'perp';
 }
 const footprintSubs = new Map<WebSocket, FootprintSub>();
-interface SimSub {
-  symbol: string;
-  market: 'spot' | 'perp' | 'combined';
-  trail: TrailWindowId;
-}
-const simSubs = new Map<WebSocket, SimSub>();
 
 wss.on('connection', (socket) => {
   socket.on('message', (raw) => {
-    let msg: { type?: string; symbol?: unknown; exchange?: unknown; market?: unknown; trail?: unknown };
+    let msg: { type?: string; symbol?: unknown; exchange?: unknown; market?: unknown };
     try {
       msg = JSON.parse(String(raw)) as typeof msg;
     } catch {
-      return;
-    }
-    if (msg.type === 'sub_sim') {
-      const symbol = String(msg.symbol ?? 'BTCUSDT').toUpperCase();
-      const rawMarket = String(msg.market ?? 'futures').toLowerCase();
-      const market: SimSub['market'] =
-        rawMarket === 'spot' ? 'spot' : rawMarket === 'combined' ? 'combined' : 'perp';
-      const trailRaw = String(msg.trail ?? '30s');
-      const trail: TrailWindowId = trailRaw in TRAIL_WINDOW_MS ? (trailRaw as TrailWindowId) : '30s';
-      simSubs.set(socket, { symbol, market, trail });
-      if (market === 'combined') {
-        simHub.engine(symbol, 'spot').setTrailWindow(trail);
-        simHub.engine(symbol, 'perp').setTrailWindow(trail);
-      } else {
-        simHub.engine(symbol, market).setTrailWindow(trail);
-      }
-      sendSimState(socket);
       return;
     }
     if (msg.type !== 'sub_footprint') return;
@@ -326,7 +272,6 @@ wss.on('connection', (socket) => {
   });
   socket.on('close', () => {
     footprintSubs.delete(socket);
-    simSubs.delete(socket);
   });
 });
 
@@ -341,17 +286,6 @@ function sendLiveFootprint(socket: WebSocket): void {
   }
   if (!bars.length) return;
   socket.send(JSON.stringify({ type: 'footprint_live', symbol: sub.symbol, market: sub.market, bars }));
-}
-
-function sendSimState(socket: WebSocket): void {
-  const sub = simSubs.get(socket);
-  if (!sub || socket.readyState !== WebSocket.OPEN) return;
-  if (sub.market === 'combined') {
-    const cross = simHub.cross(sub.symbol).snapshot();
-    socket.send(JSON.stringify({ type: 'sim_state', state: cross.futures ?? cross.spot, cross }));
-    return;
-  }
-  socket.send(JSON.stringify({ type: 'sim_state', state: simHub.engine(sub.symbol, sub.market).snapshot() }));
 }
 
 const liveFootprintTimer = setInterval(() => {
@@ -381,41 +315,15 @@ const footprintTickTimer = setInterval(() => {
 }, Number(process.env.FOOTPRINT_TICK_MS ?? 1000));
 footprintTickTimer.unref?.();
 
-const simTimer = setInterval(() => {
-  const now = Date.now();
-  for (const coin of coins) {
-    simHub.tick(coin.symbol, 'perp', now);
-    if (coin.venue === 'crypto') simHub.tick(coin.symbol, 'spot', now);
-  }
-  for (const socket of simSubs.keys()) sendSimState(socket);
-}, 80);
-simTimer.unref?.();
-
 perpFeed.on((ev) => {
   if (ev.type === 'summary') {
     spotHub.setFuturesWindow(ev.summary.symbol, ev.summary.windows['1m'] as WindowSnapshot);
-  }
-  if (ev.type === 'book') {
-    simHub.ingestBook({
-      symbol: ev.symbol,
-      marketType: 'perp',
-      timestamp: Date.now(),
-      bids: ev.bids,
-      asks: ev.asks,
-    });
   }
   broadcast({ ...ev, market: 'perp' });
 });
 spotFeed.on((ev) => {
   if (ev.type === 'book') {
     spotHub.ingestBook({
-      symbol: ev.symbol,
-      marketType: 'spot',
-      timestamp: Date.now(),
-      bids: ev.bids,
-      asks: ev.asks,
-    });
-    simHub.ingestBook({
       symbol: ev.symbol,
       marketType: 'spot',
       timestamp: Date.now(),
@@ -450,9 +358,7 @@ const oiTimer = setInterval(() => {
         if (ctx.oiUsd > 0) {
           spotHub.setOi(coin.symbol, ctx.oiUsd);
           perpFeed.engine.getSymbol(coin.symbol, 'perp').liquidityResponse.noteOi(ctx.oiUsd);
-          simHub.ingestOi(coin.symbol, ctx.oiUsd);
         }
-        if (ctx.fundingRate != null) simHub.ingestFunding(coin.symbol, ctx.fundingRate);
       } catch {
         /* OI is optional context */
       }
@@ -741,7 +647,6 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   console.log(`\n  ${signal} — flushing footprint buffer…`);
   clearInterval(liveFootprintTimer);
-  clearInterval(simTimer);
   perpFeed.stop();
   spotFeed.stop();
   // Railway sends SIGTERM on redeploy; without this the last bars are lost.

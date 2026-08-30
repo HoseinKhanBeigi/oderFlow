@@ -7,8 +7,8 @@ import type { EngineConfig } from './types.js';
 export const DEFAULT_CONFIG: EngineConfig = {
   windows: ['1s', '5s', '10s', '30s', '1m', '5m', '15m'],
   bucketMs: 100,
-  maxBuckets: 12_000,
-  tradeRingCapacity: 50_000,
+  /** 100ms × 9_000 = 15m coverage for the longest configured window. */
+  maxBuckets: 9_000,
   tapeCapacity: 2_000,
 
   largeTradeThresholds: {

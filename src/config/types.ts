@@ -216,7 +216,6 @@ export interface EngineConfig {
   windows: WindowId[];
   bucketMs: number;
   maxBuckets: number;
-  tradeRingCapacity: number;
   tapeCapacity: number;
   largeTradeThresholds: LargeTradeThresholds;
   relative: RelativeSizeConfig;

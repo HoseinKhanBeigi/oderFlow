@@ -64,7 +64,8 @@ export class SimulationHub {
     const k = this.key(symbol, market);
     let replay = this.logs.get(k);
     if (!replay) {
-      replay = new ReplayEngine({ capacity: 20_000 });
+      // Keep a short live window for /api/simulation/replay — not a full day.
+      replay = new ReplayEngine({ capacity: 4_000 });
       this.logs.set(k, replay);
     }
     return replay;
@@ -166,7 +167,11 @@ export class SimulationHub {
   }
 
   private push(event: SimulationEvent): void {
-    this.log(event.symbol, event.marketType).record(event);
+    // Book snapshots are large and high-frequency; engines still ingest them,
+    // but cloning every depth update into the replay log dominated live heap.
+    if (event.kind !== 'book_snapshot' && event.kind !== 'book_delta') {
+      this.log(event.symbol, event.marketType).record(event);
+    }
     this.engine(event.symbol, event.marketType).ingest(event);
   }
 }

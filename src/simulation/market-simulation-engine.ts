@@ -102,6 +102,9 @@ export class MarketSimulationEngine {
   private pendingWithdraw: Array<{ side: 'bid' | 'ask'; quote: number }> = [];
   private pendingReplenish: Array<{ side: 'bid' | 'ask'; quote: number; aroundPrice?: number }> = [];
 
+  /** Soft cap so a stalled tick cannot retain unbounded live trades. */
+  private static readonly MAX_QUEUE = 8_000;
+
   constructor(opts: MarketSimulationOptions = {}) {
     this.symbol = opts.symbol ?? 'BTCUSDT';
     this.marketType = opts.marketType ?? 'perp';
@@ -171,6 +174,9 @@ export class MarketSimulationEngine {
   ingest(event: SimulationEvent): void {
     const copy = { ...event, seq: event.seq || this.sequencer.next() };
     this.queue.push(copy);
+    if (this.queue.length > MarketSimulationEngine.MAX_QUEUE) {
+      this.queue.splice(0, this.queue.length - MarketSimulationEngine.MAX_QUEUE);
+    }
     if (this.mode !== 'realtime') this.replay.record(copy);
   }
 

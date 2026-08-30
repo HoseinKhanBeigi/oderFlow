@@ -355,7 +355,6 @@ function applySymbolFilter() {
   rebuildChart();
   seedFootprintKlines();
   subscribeFootprint();
-  subscribeSimulator();
   renderSpotCompare();
 }
 
@@ -1173,7 +1172,6 @@ function initChart() {
     snapChartToLive();
     seedFootprintKlines();
     renderLiquidityResponse();
-    subscribeSimulator();
   });
   document.getElementById('chart-ex-tabs')?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-ex]');
@@ -2152,68 +2150,6 @@ function subscribeFootprint() {
     exchange: selectedExchange,
     market: footprintMarket(),
   }));
-}
-
-function simMarket() {
-  if (dataMode === 'compare') return 'combined';
-  return footprintMarket();
-}
-
-function simTrailWindow() {
-  if (chartTfMinutes >= 5) return '5m';
-  if (chartTfMinutes >= 1) return '1m';
-  return '30s';
-}
-
-function subscribeSimulator() {
-  if (fpLiveSocket?.readyState !== WebSocket.OPEN) return;
-  const trail = simTrailWindow();
-  fpLiveSocket.send(JSON.stringify({
-    type: 'sub_sim',
-    symbol: selectedSymbol,
-    market: simMarket(),
-    trail,
-  }));
-  const win = $('sim-live-window');
-  if (win) win.textContent = `${trail} window · matches footprint`;
-}
-
-let simLive = null;
-function mountFootprintSimulator() {
-  const el = $('sim-live-canvas');
-  if (!el || simLive) return;
-  if (typeof window.mountLiveSimulator !== 'function') return;
-  simLive = window.mountLiveSimulator(el);
-}
-
-function applySimState(ev) {
-  const state = ev?.state;
-  if (!state || state.symbol !== selectedSymbol) return;
-  const want = simMarket();
-  if (want === 'spot' && state.marketType !== 'spot') return;
-  if (want === 'perp' && state.marketType !== 'perp' && want !== 'combined') return;
-  simLive?.setState(state);
-  const badge = $('sim-live-badge');
-  if (badge) badge.textContent = `${state.symbol.replace('USDT', '')} · ${fmtPrice(state.price)}`;
-  const st = $('sim-live-state');
-  if (st) st.textContent = (state.marketState || '—').replace(/_/g, ' ');
-  const mech = $('sim-live-mechanics');
-  if (mech) mech.textContent = state.mechanics || '—';
-  setText('sim-live-buy', fmtUsd(state.aggressiveBuy));
-  setText('sim-live-sell', fmtUsd(state.aggressiveSell));
-  setText('sim-live-delta', fmtUsd(state.delta));
-  setText('sim-live-ask', fmtUsd(state.askDepth));
-  setText('sim-live-bid', fmtUsd(state.bidDepth));
-  setText('sim-live-effort', (state.effortVsResult || '—').replace(/_/g, ' '));
-  const needle = $('sim-live-needle');
-  if (needle && state.pressure) needle.style.left = `${((state.pressure.net + 1) / 2) * 100}%`;
-  const whyH = $('sim-live-why-h');
-  if (whyH) whyH.textContent = state.whyHeadline || 'WHY?';
-  const why = $('sim-live-why');
-  if (why) {
-    const facts = Array.isArray(state.why) ? state.why : [];
-    why.innerHTML = facts.slice(0, 6).map((f) => `<li>${escapeHtml(f.text || f)}</li>`).join('');
-  }
 }
 
 function setText(id, value) {

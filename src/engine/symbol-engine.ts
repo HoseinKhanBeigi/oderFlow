@@ -1,6 +1,5 @@
 import type { EngineConfig } from '../config/types.js';
 import { IntegrityMonitor } from '../core/integrity.js';
-import { RingBuffer } from '../core/ring-buffer.js';
 import { AbsorptionEngine } from '../analysis/absorption-engine.js';
 import { buildAlerts } from '../analysis/alerts.js';
 import { ConfidenceEngine } from '../analysis/confidence-engine.js';
@@ -98,7 +97,6 @@ export class SymbolEngine {
   private lastNow = 0;
   private lastLargeBuyCount = 0;
   private lastLargeSellCount = 0;
-  private readonly recentTrades: RingBuffer<MarketTrade>;
 
   constructor(
     readonly symbol: string,
@@ -129,7 +127,6 @@ export class SymbolEngine {
     this.defense = new DefenseEngine(config.flowBattle);
     this.flowWinner = new FlowWinnerEngine(config.flowBattle, this.defense);
     this.liquidityResponse = new LiquidityResponseEngine(config.liquidityResponse);
-    this.recentTrades = new RingBuffer(config.tradeRingCapacity);
   }
 
   on(listener: EngineListener): () => void {
@@ -143,7 +140,6 @@ export class SymbolEngine {
     if (!this.integrity.acceptTradeId(trade.tradeId, trade.timestamp)) return;
 
     this.lastNow = trade.timestamp;
-    this.recentTrades.push(trade);
 
     const relative = this.largeTrades.relativeSize(trade.quoteValue);
     this.largeTrades.observe(trade);
