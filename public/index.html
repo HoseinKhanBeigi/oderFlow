@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Order Flow — Footprint</title>
-  <link rel="stylesheet" href="/styles.css?v=fp-sidebar1" />
+  <link rel="stylesheet" href="/styles.css?v=fp-alerts1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -24,8 +24,22 @@
       </div>
       <div id="status" class="status connecting">Connecting…</div>
       <div id="symbol-label" class="symbol-label">—</div>
+      <button type="button" class="alert-bell" id="alert-bell" title="Footprint alerts">
+        Alerts <span class="alert-bell-count" id="alert-count">0</span>
+      </button>
     </div>
   </header>
+
+  <div class="alert-panel hidden" id="alert-panel" aria-live="polite">
+    <div class="alert-panel-head">
+      <strong>Session alerts</strong>
+      <button type="button" class="alert-panel-clear" id="alert-clear">Clear</button>
+    </div>
+    <div class="alert-panel-list" id="alert-list">
+      <div class="alert-empty">No alerts yet — watching all coins</div>
+    </div>
+  </div>
+  <div class="alert-toasts" id="alert-toasts" aria-live="assertive"></div>
 
   <div class="open-tabs-bar">
     <div class="open-tabs" id="open-tabs"></div>
@@ -92,6 +106,6 @@
     </main>
   </div>
 
-  <script src="/app.js?v=fp-textlabels1" type="module"></script>
+  <script src="/app.js?v=fp-alerts2" type="module"></script>
 </body>
 </html>

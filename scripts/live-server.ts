@@ -359,6 +359,28 @@ const liveFootprintTimer = setInterval(() => {
 }, Number(process.env.FOOTPRINT_PUSH_MS ?? 250));
 liveFootprintTimer.unref?.();
 
+/** Compact live bars for every coin so the client can run chart-style alerts. */
+function broadcastFootprintTicks(market: 'spot' | 'perp'): void {
+  const rec = recorderFor(market);
+  const exchanges = market === 'spot' ? SPOT_EXCHANGES : EXCHANGES;
+  const bars: Array<{ symbol: string; exchange: ExchangeId; bar: ReturnType<typeof toWire> }> = [];
+  for (const coin of coins) {
+    if (market === 'spot' && coin.venue === 'equity') continue;
+    for (const exchange of exchanges) {
+      const bar = rec.aggregator.currentBar(coin.symbol, exchange);
+      if (bar) bars.push({ symbol: coin.symbol, exchange, bar: toWire(bar) });
+    }
+  }
+  if (!bars.length) return;
+  broadcast({ type: 'footprint_tick', market, bars });
+}
+
+const footprintTickTimer = setInterval(() => {
+  broadcastFootprintTicks('perp');
+  broadcastFootprintTicks('spot');
+}, Number(process.env.FOOTPRINT_TICK_MS ?? 1000));
+footprintTickTimer.unref?.();
+
 const simTimer = setInterval(() => {
   const now = Date.now();
   for (const coin of coins) {

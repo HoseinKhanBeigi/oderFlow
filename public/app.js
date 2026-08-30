@@ -2239,7 +2239,10 @@ function applyLiveFootprint(ev) {
   const minute = bars[0].bar.t;
   if (minute !== fpLastLiveMinute) {
     fpLastLiveMinute = minute;
-    for (const key of Object.keys(footprintStore)) delete footprintStore[key];
+    const prefix = `${footprintMarket()}_${ev.symbol}_`;
+    for (const key of Object.keys(footprintStore)) {
+      if (key.startsWith(prefix) && key.endsWith('_1')) delete footprintStore[key];
+    }
     if (fpHistoryEnabled) void loadFootprintHistory();
   }
 
@@ -2247,9 +2250,322 @@ function applyLiveFootprint(ev) {
     const store = getFootprintStore(ev.symbol, 1, exchange);
     store.clear();
     store.set(bar.t, wireBarToFp(bar));
+    ingestAlertBar(ev.symbol, exchange, bar);
     noteLivePrice(ev.symbol, bar.c);
   }
+  evaluateSymbolAlerts(ev.symbol);
   drawFootprint();
+}
+
+// ═══════ Footprint Alerts (session toasts, all coins) ═══════
+
+const ALERT_KEEP_1M = 180;
+const ALERT_IMB_LEVELS = 2;
+const ALERT_MAX_SESSION = 80;
+const ALERT_TOAST_MS = 7000;
+const alertFpStore = {};
+const alertSeen = new Map();
+const alertDeltaPrev = {};
+const sessionAlerts = [];
+let alertUiBound = false;
+
+function alertStoreKey(symbol, exchange) {
+  return `${footprintMarket()}_${symbol}_${exchange}_1`;
+}
+
+function getAlertStore(symbol, exchange) {
+  const key = alertStoreKey(symbol, exchange);
+  if (!alertFpStore[key]) alertFpStore[key] = new Map();
+  return alertFpStore[key];
+}
+
+function trimAlertStore(store) {
+  if (store.size <= ALERT_KEEP_1M) return;
+  const times = [...store.keys()].sort((a, b) => a - b);
+  const drop = times.length - ALERT_KEEP_1M;
+  for (let i = 0; i < drop; i++) store.delete(times[i]);
+}
+
+function ingestAlertBar(symbol, exchange, wire) {
+  const store = getAlertStore(symbol, exchange);
+  const bar = wireBarToFp(wire);
+  store.set(bar.time, bar);
+  trimAlertStore(store);
+  noteLivePrice(symbol, bar.close);
+}
+
+function alertBarsForSymbol(symbol, tf = chartTfMinutes) {
+  const exchanges = selectedExchange === 'all' ? activeExchanges() : [selectedExchange];
+  if (tf === 1) {
+    const out = new Map();
+    for (const ex of exchanges) {
+      for (const bar of getAlertStore(symbol, ex).values()) {
+        if (!out.has(bar.time)) out.set(bar.time, cloneFpBar(bar));
+        else mergeFootprintBar(out.get(bar.time), bar);
+      }
+    }
+    return [...out.values()].sort((a, b) => a.time - b.time);
+  }
+  const bucket = tf * 60;
+  const out = new Map();
+  for (const ex of exchanges) {
+    for (const bar of getAlertStore(symbol, ex).values()) {
+      const t = bar.time - (bar.time % bucket);
+      if (!out.has(t)) {
+        const c = cloneFpBar(bar);
+        c.time = t;
+        out.set(t, c);
+      } else {
+        mergeFootprintBar(out.get(t), bar);
+      }
+    }
+  }
+  return [...out.values()].sort((a, b) => a.time - b.time);
+}
+
+function countImbalanceLevels(bar, ratio = imbalanceRatio) {
+  let buyDom = 0;
+  let sellDom = 0;
+  if (!bar?.levels) return { buyDom, sellDom };
+  for (const lv of bar.levels.values()) {
+    const buy = lv.buy ?? 0;
+    const sell = lv.sell ?? 0;
+    const hi = Math.max(buy, sell);
+    const lo = Math.min(buy, sell);
+    if (hi < 800) continue;
+    if (lo <= 0) {
+      if (buy > sell) buyDom += 1;
+      else if (sell > buy) sellDom += 1;
+      continue;
+    }
+    if (hi / lo < ratio) continue;
+    if (buy > sell) buyDom += 1;
+    else sellDom += 1;
+  }
+  return { buyDom, sellDom };
+}
+
+function alertLabel(symbol) {
+  return config?.coins?.find((c) => c.symbol === symbol)?.label ?? symbol.replace('USDT', '');
+}
+
+function canFireAlert(key, cooldownMs = 90_000) {
+  const now = Date.now();
+  const last = alertSeen.get(key) ?? 0;
+  if (now - last < cooldownMs) return false;
+  alertSeen.set(key, now);
+  if (alertSeen.size > 400) {
+    const cutoff = now - 10 * 60_000;
+    for (const [k, t] of alertSeen) {
+      if (t < cutoff) alertSeen.delete(k);
+    }
+  }
+  return true;
+}
+
+function pushFpAlert(alert) {
+  sessionAlerts.unshift(alert);
+  if (sessionAlerts.length > ALERT_MAX_SESSION) sessionAlerts.length = ALERT_MAX_SESSION;
+  renderAlertList();
+  showAlertToast(alert);
+}
+
+function evaluateSymbolAlerts(symbol) {
+  const bars = alertBarsForSymbol(symbol, chartTfMinutes);
+  if (!bars.length) return;
+  const idx = bars.length - 1;
+  const bar = bars[idx];
+  const prior = bars.slice(Math.max(0, idx - 20), idx);
+  const label = alertLabel(symbol);
+  const tf = tfShort(chartTfMinutes);
+  const barKey = bar.time;
+
+  if (prior.length) {
+    const vac = barVacuumKind(bar, prior);
+    if (vac === 'UPSIDE' && canFireAlert(`${symbol}:vac:up:${barKey}`)) {
+      pushFpAlert({
+        id: `${symbol}-vac-up-${barKey}`,
+        symbol,
+        kind: 'vacuum',
+        side: 'buy',
+        title: `${label} · Asks pulled`,
+        detail: `Upside vacuum on ${tf} — price ran up`,
+        at: Date.now(),
+      });
+    }
+    if (vac === 'DOWNSIDE' && canFireAlert(`${symbol}:vac:dn:${barKey}`)) {
+      pushFpAlert({
+        id: `${symbol}-vac-dn-${barKey}`,
+        symbol,
+        kind: 'vacuum',
+        side: 'sell',
+        title: `${label} · Bids pulled`,
+        detail: `Downside vacuum on ${tf} — price dumped`,
+        at: Date.now(),
+      });
+    }
+  }
+
+  const rev = absorptionReversalKind(bar, null);
+  if (rev === 'SELLER' && canFireAlert(`${symbol}:abs:sell:${barKey}`)) {
+    pushFpAlert({
+      id: `${symbol}-abs-sell-${barKey}`,
+      symbol,
+      kind: 'absorption',
+      side: 'buy',
+      title: `${label} · Sellers absorbed`,
+      detail: `Absorption + reverse up on ${tf}`,
+      at: Date.now(),
+    });
+  }
+  if (rev === 'BUYER' && canFireAlert(`${symbol}:abs:buy:${barKey}`)) {
+    pushFpAlert({
+      id: `${symbol}-abs-buy-${barKey}`,
+      symbol,
+      kind: 'absorption',
+      side: 'sell',
+      title: `${label} · Buyers absorbed`,
+      detail: `Absorption + reverse down on ${tf}`,
+      at: Date.now(),
+    });
+  }
+
+  const imb = countImbalanceLevels(bar, imbalanceRatio);
+  if (imb.buyDom >= ALERT_IMB_LEVELS && canFireAlert(`${symbol}:imb:buy:${barKey}`, 60_000)) {
+    pushFpAlert({
+      id: `${symbol}-imb-buy-${barKey}`,
+      symbol,
+      kind: 'imbalance',
+      side: 'buy',
+      title: `${label} · Buy imbalance`,
+      detail: `${imb.buyDom} levels ≥ ${imbalanceRatio}× on ${tf}`,
+      at: Date.now(),
+    });
+  }
+  if (imb.sellDom >= ALERT_IMB_LEVELS && canFireAlert(`${symbol}:imb:sell:${barKey}`, 60_000)) {
+    pushFpAlert({
+      id: `${symbol}-imb-sell-${barKey}`,
+      symbol,
+      kind: 'imbalance',
+      side: 'sell',
+      title: `${label} · Sell imbalance`,
+      detail: `${imb.sellDom} levels ≥ ${imbalanceRatio}× on ${tf}`,
+      at: Date.now(),
+    });
+  }
+
+  const delta = (bar.totalBuy ?? 0) - (bar.totalSell ?? 0);
+  const vol = (bar.totalBuy ?? 0) + (bar.totalSell ?? 0);
+  const prev = alertDeltaPrev[symbol];
+  if (prev && prev.time === barKey && prev.delta !== 0 && delta !== 0) {
+    const flipped = (prev.delta > 0 && delta < 0) || (prev.delta < 0 && delta > 0);
+    const jump = Math.abs(delta - prev.delta);
+    const bigEnough = jump >= Math.max(vol * 0.12, 8_000);
+    if (flipped && bigEnough && canFireAlert(`${symbol}:delta:${barKey}:${delta > 0 ? 'up' : 'dn'}`, 45_000)) {
+      pushFpAlert({
+        id: `${symbol}-delta-${barKey}-${Date.now()}`,
+        symbol,
+        kind: 'delta',
+        side: delta > 0 ? 'buy' : 'sell',
+        title: `${label} · Delta flip`,
+        detail: `${tf} delta ${fmtUsd(prev.delta)} → ${fmtUsd(delta)}`,
+        at: Date.now(),
+      });
+    }
+  }
+  alertDeltaPrev[symbol] = { time: barKey, delta };
+}
+
+function applyFootprintTick(ev) {
+  if (ev.market && ev.market !== footprintMarket()) return;
+  const rows = ev.bars ?? [];
+  if (!rows.length) return;
+  const touched = new Set();
+  for (const row of rows) {
+    if (!row?.symbol || !row?.bar || !row?.exchange) continue;
+    ingestAlertBar(row.symbol, row.exchange, row.bar);
+    touched.add(row.symbol);
+  }
+  for (const symbol of touched) evaluateSymbolAlerts(symbol);
+}
+
+function setupAlertUi() {
+  if (alertUiBound) return;
+  alertUiBound = true;
+  const bell = document.getElementById('alert-bell');
+  const panel = document.getElementById('alert-panel');
+  const clearBtn = document.getElementById('alert-clear');
+  const list = document.getElementById('alert-list');
+  const toasts = document.getElementById('alert-toasts');
+  bell?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    panel?.classList.toggle('hidden');
+  });
+  clearBtn?.addEventListener('click', () => {
+    sessionAlerts.length = 0;
+    renderAlertList();
+  });
+  list?.addEventListener('click', (e) => {
+    const row = e.target.closest('[data-alert-symbol]');
+    if (!row) return;
+    openAlertSymbol(row.dataset.alertSymbol);
+  });
+  toasts?.addEventListener('click', (e) => {
+    const toast = e.target.closest('[data-alert-symbol]');
+    if (!toast) return;
+    openAlertSymbol(toast.dataset.alertSymbol);
+  });
+  document.addEventListener('click', (e) => {
+    if (!panel || panel.classList.contains('hidden')) return;
+    if (panel.contains(e.target) || bell?.contains(e.target)) return;
+    panel.classList.add('hidden');
+  });
+}
+
+function openAlertSymbol(symbol) {
+  if (!symbol) return;
+  const coin = config?.coins?.find((c) => c.symbol === symbol);
+  openTab(symbol, coin?.label ?? symbol.replace('USDT', ''));
+  document.getElementById('alert-panel')?.classList.add('hidden');
+}
+
+function renderAlertList() {
+  const list = document.getElementById('alert-list');
+  const count = document.getElementById('alert-count');
+  if (count) count.textContent = String(sessionAlerts.length);
+  if (!list) return;
+  if (!sessionAlerts.length) {
+    list.innerHTML = '<div class="alert-empty">No alerts yet — watching all coins</div>';
+    return;
+  }
+  list.innerHTML = sessionAlerts.map((a) => `
+    <button type="button" class="alert-row ${a.side}" data-alert-symbol="${a.symbol}">
+      <span class="alert-row-kind">${a.kind}</span>
+      <span class="alert-row-title">${escapeHtml(a.title)}</span>
+      <span class="alert-row-detail">${escapeHtml(a.detail)}</span>
+      <span class="alert-row-time">${fmtTime(a.at)}</span>
+    </button>
+  `).join('');
+}
+
+function showAlertToast(alert) {
+  const host = document.getElementById('alert-toasts');
+  if (!host) return;
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = `alert-toast ${alert.side}`;
+  el.dataset.alertSymbol = alert.symbol;
+  el.innerHTML = `
+    <span class="alert-toast-kind">${alert.kind}</span>
+    <span class="alert-toast-title">${escapeHtml(alert.title)}</span>
+    <span class="alert-toast-detail">${escapeHtml(alert.detail)}</span>
+  `;
+  host.prepend(el);
+  while (host.children.length > 5) host.lastChild?.remove();
+  setTimeout(() => {
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 280);
+  }, ALERT_TOAST_MS);
 }
 
 // ═══════ End Footprint Chart ═══════
@@ -2257,6 +2573,7 @@ function applyLiveFootprint(ev) {
 async function init() {
   setupTabs();
   setupDataMode();
+  setupAlertUi();
   initChart();
   try {
     config = await fetch('/api/config').then((r) => r.json());
@@ -2280,6 +2597,7 @@ async function init() {
   } catch { /* ignore */ }
   seedFootprintKlines();
   drawFootprint();
+  renderAlertList();
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -2315,6 +2633,9 @@ async function init() {
         break;
       case 'footprint_live':
         applyLiveFootprint(ev);
+        break;
+      case 'footprint_tick':
+        applyFootprintTick(ev);
         break;
       case 'spot_flow':
         ingestSpotFlow(ev.snapshot);
