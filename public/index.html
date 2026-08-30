@@ -128,28 +128,6 @@
       </div>
     </section>
 
-    <section class="panel move-panel" id="move-panel">
-      <div class="panel-head">
-        <div>
-          <h2>Leverage liquidity</h2>
-          <p class="hint">$ is estimated from live Binance open interest and the long/short position split — only the slice that would cluster at that leverage. Still an estimate, not Coinglass. Remaining % until LIQUIDATED.</p>
-        </div>
-        <span id="liq-now" class="liq-now">—</span>
-      </div>
-      <div id="liq-alert" class="liq-alert">Watching liquidation bands…</div>
-      <div id="liq-abs" class="liq-abs hidden"></div>
-      <div class="liq-map">
-        <div class="liq-col">
-          <h3>Above · short liquidations</h3>
-          <div id="liq-asks" class="liq-asks"></div>
-        </div>
-        <div class="liq-col">
-          <h3>Below · long liquidations</h3>
-          <div id="liq-bids" class="liq-bids"></div>
-        </div>
-      </div>
-    </section>
-
     <section class="panel spot-compare-panel hidden" id="spot-compare-panel">
       <div class="panel-head">
         <div>
@@ -331,14 +309,6 @@
           <p>Bursts, large prints, market state changes, absorption, and liquidity pull / wall events appear in the events panel.</p>
         </div>
         <div class="legend-block">
-          <h3>Directional setup</h3>
-          <p>1H, 4H, and 1D print LONG or SHORT when footprint, support/resistance, and liquidity lean the same way. Entry is the level, not the live tape. TP is 1% then 2% from that entry. WAIT means those pieces are not aligned.</p>
-        </div>
-        <div class="legend-block">
-          <h3>Liquidity</h3>
-          <p>Each band shows how much % is left until that leverage is liquidated. After price reaches it, it says LIQUIDATED. Absorption means aggressive flow is being absorbed and price is stalling.</p>
-        </div>
-        <div class="legend-block">
           <h3>Flow battle</h3>
           <p>Positive delta is not a buyer win. Aggressive buyers vs passive sellers, and aggressive sellers vs passive buyers. Winner is who actually controls price.</p>
         </div>
@@ -347,6 +317,6 @@
   </main>
 
   <script src="/sim-live.bundle.js"></script>
-  <script src="/app.js?v=fp-tabs15" type="module"></script>
+  <script src="/app.js?v=fp-noliq1" type="module"></script>
 </body>
 </html>

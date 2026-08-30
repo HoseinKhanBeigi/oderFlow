@@ -128,28 +128,6 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (req.url?.startsWith('/api/liq-estimate')) {
-      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
-      const symbol = (u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase();
-      try {
-        json(res, await getLiqEstimate(symbol));
-      } catch {
-        res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end('{}');
-      }
-      return;
-    }
-
-    if (req.url?.startsWith('/api/leverage-brackets')) {
-      try {
-        json(res, await getLeverageBrackets());
-      } catch {
-        res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end('{}');
-      }
-      return;
-    }
-
     if (req.url?.startsWith('/api/lab/dataset')) {
       const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
       try {
@@ -446,13 +424,13 @@ const oiTimer = setInterval(() => {
   void (async () => {
     for (const coin of cryptoCoins) {
       try {
-        const est = await getLiqEstimate(coin.symbol);
-        if (est.oiUsd > 0) {
-          spotHub.setOi(coin.symbol, est.oiUsd);
-          perpFeed.engine.getSymbol(coin.symbol, 'perp').liquidityResponse.noteOi(est.oiUsd);
-          simHub.ingestOi(coin.symbol, est.oiUsd);
+        const ctx = await fetchOiContext(coin.symbol);
+        if (ctx.oiUsd > 0) {
+          spotHub.setOi(coin.symbol, ctx.oiUsd);
+          perpFeed.engine.getSymbol(coin.symbol, 'perp').liquidityResponse.noteOi(ctx.oiUsd);
+          simHub.ingestOi(coin.symbol, ctx.oiUsd);
         }
-        if (est.fundingRate != null) simHub.ingestFunding(coin.symbol, est.fundingRate);
+        if (ctx.fundingRate != null) simHub.ingestFunding(coin.symbol, ctx.fundingRate);
       } catch {
         /* OI is optional context */
       }
@@ -708,113 +686,30 @@ function json(res: ServerResponse, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
-type LevBracket = { floor: number; cap: number; minLev: number; maxLev: number };
-type LevSpec = { max: number; brackets: LevBracket[] };
+type OiContext = { symbol: string; oiUsd: number; fundingRate: number | null };
 
-let levCache: { at: number; data: Record<string, LevSpec> } | null = null;
+const oiCtxCache = new Map<string, { at: number; data: OiContext }>();
 
-async function getLeverageBrackets(): Promise<Record<string, LevSpec>> {
-  if (levCache && Date.now() - levCache.at < 15 * 60_000) return levCache.data;
-  const wanted = new Set(coins.map((c) => c.symbol));
-  const r = await fetch('https://www.binance.com/bapi/futures/v1/friendly/future/common/brackets', {
-    headers: { 'User-Agent': 'Mozilla/5.0' },
-  });
-  if (!r.ok) throw new Error(`leverage brackets ${r.status}`);
-  const payload = (await r.json()) as {
-    data?: {
-      brackets?: Array<{
-        symbol?: string;
-        riskBrackets?: Array<{
-          bracketNotionalFloor?: number;
-          bracketNotionalCap?: number;
-          minOpenPosLeverage?: number;
-          maxOpenPosLeverage?: number;
-        }>;
-      }>;
-    };
-  };
-  const out: Record<string, LevSpec> = {};
-  for (const item of payload.data?.brackets ?? []) {
-    if (!item.symbol || !wanted.has(item.symbol)) continue;
-    const brackets = (item.riskBrackets ?? [])
-      .map((b) => ({
-        floor: Number(b.bracketNotionalFloor),
-        cap: Number(b.bracketNotionalCap),
-        minLev: Number(b.minOpenPosLeverage),
-        maxLev: Number(b.maxOpenPosLeverage),
-      }))
-      .filter((b) => Number.isFinite(b.floor) && b.cap > 0 && b.maxLev > 0)
-      .sort((a, b) => a.floor - b.floor);
-    if (!brackets.length) continue;
-    out[item.symbol] = {
-      max: Math.max(...brackets.map((b) => b.maxLev)),
-      brackets,
-    };
-  }
-  if (Object.keys(out).length) levCache = { at: Date.now(), data: out };
-  return out;
-}
-
-type LiqEstimate = {
-  symbol: string;
-  price: number;
-  oiUsd: number;
-  fundingRate: number | null;
-  longRatio: number;
-  shortRatio: number;
-  split: 'position' | 'account' | 'none';
-};
-
-const liqEstCache = new Map<string, { at: number; data: LiqEstimate }>();
-
-function asShare(n: number): number {
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  if (n > 1 && n <= 100) return n / 100;
-  if (n > 1) return 0;
-  return n;
-}
-
-async function binanceJson<T>(url: string): Promise<T | null> {
-  const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-  if (!r.ok) return null;
-  return (await r.json()) as T;
-}
-
-async function getLiqEstimate(symbol: string): Promise<LiqEstimate> {
-  const hit = liqEstCache.get(symbol);
+async function fetchOiContext(symbol: string): Promise<OiContext> {
+  const hit = oiCtxCache.get(symbol);
   if (hit && Date.now() - hit.at < 30_000) return hit.data;
   const q = encodeURIComponent(symbol);
-  const [oi, mark, pos, acc] = await Promise.all([
-    binanceJson<{ openInterest?: string }>(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${q}`),
-    binanceJson<{ markPrice?: string; lastFundingRate?: string }>(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${q}`),
-    binanceJson<Array<{ longAccount?: string; shortAccount?: string }>>(
-      `https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=${q}&period=5m&limit=1`,
-    ),
-    binanceJson<Array<{ longAccount?: string; shortAccount?: string }>>(
-      `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${q}&period=5m&limit=1`,
-    ),
+  const [oiRes, markRes] = await Promise.all([
+    fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${q}`, { headers: { 'User-Agent': 'Mozilla/5.0' } }),
+    fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${q}`, { headers: { 'User-Agent': 'Mozilla/5.0' } }),
   ]);
-  if (!oi || !mark) throw new Error('oi fetch failed');
+  if (!oiRes.ok || !markRes.ok) throw new Error('oi fetch failed');
+  const oi = (await oiRes.json()) as { openInterest?: string };
+  const mark = (await markRes.json()) as { markPrice?: string; lastFundingRate?: string };
   const price = Number(mark.markPrice);
   const contracts = Number(oi.openInterest);
-  const posLong = asShare(Number(pos?.[0]?.longAccount));
-  const posShort = asShare(Number(pos?.[0]?.shortAccount));
-  const accLong = asShare(Number(acc?.[0]?.longAccount));
-  const accShort = asShare(Number(acc?.[0]?.shortAccount));
-  const usePos = posLong > 0 && posShort > 0;
-  const longRatio = usePos ? posLong : accLong > 0 ? accLong : 0.5;
-  const shortRatio = usePos ? posShort : accShort > 0 ? accShort : 0.5;
-  const fundingRate = Number((mark as { lastFundingRate?: string }).lastFundingRate);
-  const data: LiqEstimate = {
+  const fundingRate = Number(mark.lastFundingRate);
+  const data: OiContext = {
     symbol,
-    price: Number.isFinite(price) ? price : 0,
     oiUsd: Number.isFinite(contracts) && Number.isFinite(price) ? contracts * price : 0,
     fundingRate: Number.isFinite(fundingRate) ? fundingRate : null,
-    longRatio,
-    shortRatio,
-    split: usePos ? 'position' : accLong > 0 ? 'account' : 'none',
   };
-  if (data.oiUsd > 0) liqEstCache.set(symbol, { at: Date.now(), data });
+  if (data.oiUsd > 0) oiCtxCache.set(symbol, { at: Date.now(), data });
   return data;
 }
 
