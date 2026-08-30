@@ -17,7 +17,6 @@ export const DEFAULT_WATCHLIST: WatchCoin[] = [
   { symbol: 'LINKUSDT', label: 'LINK', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'XRPUSDT', label: 'XRP', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'DOGEUSDT', label: 'DOGE', minUsd: 1_000, venue: 'crypto' },
-
   { symbol: 'SUIUSDT', label: 'SUI', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'FARTCOINUSDT', label: 'FARTCOIN', minUsd: 500, venue: 'crypto' },
   { symbol: 'PAXGUSDT', label: 'PAXG', minUsd: 1_000, venue: 'crypto' },
@@ -28,7 +27,7 @@ export const DEFAULT_WATCHLIST: WatchCoin[] = [
   { symbol: 'XLMUSDT', label: 'XLM', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'PYTHUSDT', label: 'PYTH', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'TRUMPUSDT', label: 'TRUMP', minUsd: 500, venue: 'crypto' },
-
+  { symbol: 'CROUSDT', label: 'CRO', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'EGLDUSDT', label: 'EGLD', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'ZKCUSDT', label: 'ZKC', minUsd: 500, venue: 'crypto' },
   { symbol: 'TNSRUSDT', label: 'TNSR', minUsd: 500, venue: 'crypto' },

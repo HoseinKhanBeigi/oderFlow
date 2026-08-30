@@ -1331,7 +1331,24 @@ function wireBarToFp(w) {
 }
 
 /**
+ * Run async work over items with a hard concurrency cap.
+ * Avoids bursting 2×N requests when the grid has many coins.
+ */
+async function mapPool(items, concurrency, worker) {
+  const list = [...items];
+  let cursor = 0;
+  const runners = Array.from({ length: Math.max(1, Math.min(concurrency, list.length || 1)) }, async () => {
+    while (cursor < list.length) {
+      const idx = cursor++;
+      await worker(list[idx], idx);
+    }
+  });
+  await Promise.all(runners);
+}
+
+/**
  * Loads stored footprint history for every visible symbol/timeframe.
+ * Caps parallel fetches, then only pulls klines for charts still short on history.
  */
 async function loadFootprintHistory() {
   const tf = chartTfMinutes;
@@ -1339,35 +1356,44 @@ async function loadFootprintHistory() {
   const market = footprintMarket();
   const req = ++fpHistoryReq;
   const coins = visibleCoins();
-  await Promise.all(coins.map(async (coin) => {
+  let enabled = fpHistoryEnabled;
+
+  await mapPool(coins, 4, async (coin) => {
+    if (req !== fpHistoryReq) return;
     try {
       const params = new URLSearchParams({
         symbol: coin.symbol,
         exchange,
         tf: String(tf),
-        limit: '800',
+        limit: '600',
         days: String(Math.min(fpRetentionDays, 14)),
         market,
       });
       const data = await fetch(`/api/footprint?${params}`).then((r) => r.json());
       if (req !== fpHistoryReq) return;
       if (!data?.enabled) {
-        fpHistoryEnabled = false;
+        enabled = false;
         return;
       }
+      enabled = true;
       const map = new Map();
       for (const w of data.bars ?? []) map.set(w.t, wireBarToFp(w));
       fpHistoryStore[historyKey(coin.symbol, tf, exchange)] = map;
+      scheduleDraw(coin.symbol);
     } catch {
       /* keep whatever history we already had */
     }
-  }));
-  if (req === fpHistoryReq) scheduleDraw();
+  });
+
+  if (req !== fpHistoryReq) return;
+  fpHistoryEnabled = enabled;
 }
 
 function seedFootprintKlines() {
-  if (fpHistoryEnabled) void loadFootprintHistory();
-  void seedFromKlines();
+  void (async () => {
+    if (fpHistoryEnabled) await loadFootprintHistory();
+    await seedFromKlines();
+  })();
 }
 
 async function seedFromKlines() {
@@ -1379,8 +1405,18 @@ async function seedFromKlines() {
     return;
   }
   const req = ++fpKlineReq;
-  const coins = visibleCoins();
-  await Promise.all(coins.map(async (coin) => {
+  // Prefer Postgres history when present — only backfill empty/thin charts with klines.
+  const coins = visibleCoins().filter((coin) => {
+    const hist = getFpHistory(coin.symbol, tf, selectedExchange);
+    return hist.size < 24;
+  });
+  if (!coins.length) {
+    scheduleDraw();
+    return;
+  }
+
+  await mapPool(coins, 3, async (coin) => {
+    if (req !== fpKlineReq || tf !== chartTfMinutes || klineExchange() !== exchange) return;
     try {
       const rows = await fetch(
         `/api/klines?symbol=${encodeURIComponent(coin.symbol)}&interval=${fpKlineInterval(tf)}&exchange=${encodeURIComponent(exchange)}&market=${encodeURIComponent(market)}&limit=300`,
@@ -1416,11 +1452,11 @@ async function seedFromKlines() {
         fillKlineProxyLevels(bar, c.volume, c.quote, c.takerBuy);
         seed.set(c.time, bar);
       }
+      scheduleDraw(coin.symbol);
     } catch {
       /* live 1m rollup still works */
     }
-  }));
-  if (req === fpKlineReq) scheduleDraw();
+  });
 }
 
 function klineQuoteUsd(volume, quote, high, low, close) {
