@@ -26,11 +26,6 @@ function isSpotView() {
   return dataMode !== 'perp';
 }
 let lastSummary = null;
-let lastDailySignal = null;
-const lastDailyByTf = {};
-let dailySignalReq = 0;
-let dailySignalTimer = null;
-let signalTfMinutes = 1440;
 const summaries = {};
 const tapeBySymbol = {};
 const eventsBySymbol = {};
@@ -67,38 +62,8 @@ const TF_LABEL = {
   '1m': 'last 1 minute',
   '5m': 'last 5 minutes',
   '15m': 'last 15 minutes',
-  '1H': 'this 1h bar',
-  '4H': 'this 4h bar',
-  '1D': 'this daily bar',
 };
 
-const SIGNAL_TF_NAME = { 60: '1h', 240: '4h', 1440: 'daily' };
-const SIGNAL_TF_CODE = { 60: '1H', 240: '4H', 1440: '1D' };
-
-function isHtfSignalTab(tf = selectedTf) {
-  return tf === '1H' || tf === '4H' || tf === '1D';
-}
-
-function signalAdj(minutes = signalTfMinutes) {
-  return SIGNAL_TF_NAME[minutes] ?? SIGNAL_TF_NAME[1440];
-}
-
-function signalCode(minutes = signalTfMinutes) {
-  return SIGNAL_TF_CODE[minutes] ?? '1D';
-}
-
-function setupMeta(setup, adj = signalAdj()) {
-  const map = {
-    SUPPORT_HOLD: 'Support is holding',
-    RESISTANCE_REJECT: 'Resistance is rejecting',
-    BREAKOUT_UP: 'Holding above resistance',
-    BREAKDOWN: 'Trading below support',
-    FLOW_CONTINUATION: `${adj} flow continuation`,
-    MID_RANGE: `No ${adj} level in play`,
-    INSUFFICIENT: `Not enough ${adj} history`,
-  };
-  return map[setup] ?? String(setup).replace(/_/g, ' ');
-}
 
 const EX_SHORT = { binance: 'BN', bybit: 'BY', okx: 'OKX', bitget: 'BG', hyperliquid: 'HL', dydx: 'DX', bitstamp: 'BS' };
 const DEFAULT_EXCHANGES = ['binance', 'bybit', 'okx', 'bitget', 'hyperliquid', 'dydx', 'bitstamp'];
@@ -472,19 +437,6 @@ function forcedConfirms(side) {
 }
 
 function liveAbsorption() {
-  if (isHtfSignalTab()) {
-    const abs = lastDailySignal?.flow?.absorbed;
-    if (!abs) return null;
-    const buyer = abs === 'BUYERS';
-    const adj = signalAdj();
-    return {
-      buyer,
-      title: buyer ? 'Buyer absorption' : 'Seller absorption',
-      text: buyer
-        ? `${adj} buyer absorption — aggressive buying, ${adj} high still capping price`
-        : `${adj} seller absorption — aggressive selling, ${adj} low still holding`,
-    };
-  }
   const w = lastSummary?.windows?.[selectedTf] || lastSummary?.windows?.['10s'];
   const a = w?.absorption;
   if (!a?.detected) return null;
@@ -745,7 +697,6 @@ function applySymbolFilter() {
   seedBook(selectedSymbol);
   startLiqEstimateLoop();
   renderSpotCompare();
-  startDailySignalLoop();
 }
 
 function chipHtml(c) {
@@ -863,236 +814,8 @@ function tfShort(tf = chartTfMinutes) {
   return `${tf}m`;
 }
 
-function syncSignalTfTabs() {
-  document.querySelectorAll('#ds-tf-tabs [data-stf]').forEach((b) => {
-    b.classList.toggle('active', Number(b.dataset.stf) === signalTfMinutes);
-  });
-}
-
-function setSignalTf(minutes, { reload = true } = {}) {
-  const tf = minutes === 60 || minutes === 240 || minutes === 1440 ? minutes : 1440;
-  const changed = tf !== signalTfMinutes;
-  signalTfMinutes = tf;
-  syncSignalTfTabs();
-  if (isHtfSignalTab(selectedTf)) {
-    selectedTf = signalCode(tf);
-    document.querySelectorAll('#tf-tabs .tf-tab').forEach((b) => b.classList.toggle('active', b.dataset.tf === selectedTf));
-  }
-  lastDailySignal = lastDailyByTf[tf] ?? lastDailySignal;
-  renderDailySetup();
-  if (isHtfSignalTab()) {
-    if (isSpotView()) updateSpotUi();
-    else updateUi();
-  }
-  drawFootprint();
-  if (reload && changed) void loadDailySignal();
-}
-
-function startDailySignalLoop() {
-  if (dailySignalTimer) clearInterval(dailySignalTimer);
-  void loadDailySignal();
-  dailySignalTimer = setInterval(() => void loadDailySignal(), 20_000);
-}
-
-async function loadDailySignal() {
-  const symbol = selectedSymbol;
-  const tf = signalTfMinutes;
-  const req = ++dailySignalReq;
-  try {
-    const params = new URLSearchParams({
-      symbol,
-      exchange: selectedExchange,
-      market: footprintMarket(),
-      tf: String(tf),
-    });
-    const data = await fetch(`/api/daily-signal?${params}`).then((r) => {
-      if (!r.ok) throw new Error(`daily-signal ${r.status}`);
-      return r.json();
-    });
-    if (req !== dailySignalReq || symbol !== selectedSymbol) return;
-    lastDailyByTf[tf] = data;
-    if (tf !== signalTfMinutes) return;
-    lastDailySignal = data;
-    renderDailySetup();
-    if (isHtfSignalTab()) {
-      if (isSpotView()) updateSpotUi();
-      else if (lastSummary) updateUi();
-    }
-    drawFootprint();
-  } catch {
-    if (req !== dailySignalReq) return;
-    lastDailySignal = {
-      timeframe: signalCode(tf),
-      bias: 'WAIT',
-      setup: 'INSUFFICIENT',
-      reason: `${signalCode(tf)} signal API is not running — restart npm start and refresh.`,
-      plan: {},
-    };
-    renderDailySetup();
-  }
-}
-
-function renderDailySetup() {
-  const sig = lastDailySignal;
-  const bias = sig?.bias ?? 'WAIT';
-  const setup = sig?.setup ?? 'INSUFFICIENT';
-  const plan = sig?.plan ?? {};
-  const adj = signalAdj();
-  const code = sig?.timeframe ?? signalCode();
-  const title = setupMeta(setup, adj);
-
-  const biasEl = $('daily-bias');
-  const titleEl = $('daily-setup-title');
-  const helpEl = $('daily-setup-help');
-  const levelsEl = $('daily-levels');
-  const labelEl = $('daily-setup-label');
-  if (labelEl) labelEl.textContent = `${code} setup`;
-  if (biasEl) {
-    biasEl.textContent = bias;
-    biasEl.className = `daily-bias ${bias.toLowerCase()}`;
-  }
-  if (titleEl) titleEl.textContent = sig ? title : `Waiting for ${adj} structure…`;
-  if (helpEl) {
-    if (!sig) helpEl.textContent = 'Footprint + support/resistance + live liquidity. TP is 1% then 2%.';
-    else {
-      const conf = Math.round((sig.confidence ?? 0) * 100);
-      helpEl.textContent = `${sig.reason ?? ''} · ${conf}% confidence`;
-    }
-  }
-  if (levelsEl) {
-    const bits = [];
-    if (sig?.levels?.support != null) bits.push(`<span class="sup">S ${fmtPrice(sig.levels.support)}</span>`);
-    if (sig?.levels?.poc != null) bits.push(`<span class="poc">POC ${fmtPrice(sig.levels.poc)}</span>`);
-    if (sig?.levels?.resistance != null) bits.push(`<span class="res">R ${fmtPrice(sig.levels.resistance)}</span>`);
-    if (plan.entry != null) bits.push(`<span class="poc">IN ${fmtPrice(plan.entry)}</span>`);
-    if (plan.tp1 != null) bits.push(`<span class="tp">TP1 ${fmtPrice(plan.tp1)}</span>`);
-    if (plan.tp2 != null) bits.push(`<span class="tp">TP2 ${fmtPrice(plan.tp2)}</span>`);
-    if (plan.sl != null) bits.push(`<span class="sl">SL ${fmtPrice(plan.sl)}</span>`);
-    levelsEl.innerHTML = bits.join('');
-  }
-
-  const dsTitle = $('ds-title');
-  if (dsTitle) dsTitle.textContent = `${code} signal`;
-  const dsBias = $('ds-bias');
-  const dsSetup = $('ds-setup');
-  const dsReason = $('ds-reason');
-  if (dsBias) {
-    dsBias.textContent = bias;
-    dsBias.className = `ds-bias ${bias.toLowerCase()}`;
-  }
-  if (dsSetup) dsSetup.textContent = sig ? title : `Waiting for ${adj} structure…`;
-  const setPlan = (id, value) => {
-    const el = $(id);
-    if (el) el.textContent = value != null && Number.isFinite(value) ? `$${fmtPrice(value)}` : '—';
-  };
-  setPlan('ds-entry', plan.entry);
-  setPlan('ds-tp1', plan.tp1);
-  setPlan('ds-tp2', plan.tp2);
-  setPlan('ds-sl', plan.sl);
-  const entryNote = $('ds-entry-note');
-  const entryCell = $('ds-entry')?.parentElement;
-  if (entryNote) {
-    if (plan.entryMode === 'NOW') entryNote.textContent = plan.entryWhy || 'Price is at the level — enter here';
-    else if (plan.entryMode === 'WAIT_FOR_LEVEL') entryNote.textContent = plan.entryWhy || 'Wait for this level — do not chase';
-    else entryNote.textContent = plan.entryWhy || '—';
-  }
-  if (entryCell) {
-    entryCell.classList.toggle('now', plan.entryMode === 'NOW');
-    entryCell.classList.toggle('wait-level', plan.entryMode === 'WAIT_FOR_LEVEL');
-  }
-  if (dsReason) {
-    if (!sig) {
-      dsReason.textContent = 'If this stays empty, restart the dashboard so /api/daily-signal is live.';
-    } else if (bias === 'WAIT' || plan.entryMode === 'NONE') {
-      dsReason.textContent = sig.reason || plan.entryWhy || `No 1–2% setup — ${adj} footprint, S/R, and liquidity are not aligned.`;
-    } else if (plan.entryMode === 'WAIT_FOR_LEVEL') {
-      dsReason.textContent = `Do not enter ${fmtPrice(sig.price ?? 0)}. Limit ${bias === 'LONG' ? 'buy' : 'sell'} ${plan.entry != null ? fmtPrice(plan.entry) : '—'} · TP1 1% · TP2 2%. ${plan.entryWhy ?? ''}`;
-    } else {
-      dsReason.textContent = `${plan.entryWhy ?? sig.reason} TP1 1% · TP2 2% from that entry.`;
-    }
-  }
-}
-
-function renderDailyAsSignal(price, summary) {
-  const sig = lastDailySignal;
-  const adj = signalAdj();
-  const code = sig?.timeframe ?? signalCode();
-  renderDailySetup();
-  if ($('price')) $('price').textContent = price > 0 ? `$${fmtPrice(price)}` : '—';
-  const coin = config?.coins?.find((c) => c.symbol === selectedSymbol);
-  const venue = isSpotView()
-    ? (selectedExchange === 'all' ? 'multi-exchange spot' : `${selectedExchange} spot`)
-    : coin?.venue === 'equity'
-      ? 'Binance TradFi perp'
-      : selectedExchange === 'all'
-        ? 'multi-exchange'
-        : selectedExchange;
-  if ($('symbol-label')) {
-    $('symbol-label').textContent = `${coin?.label ?? selectedSymbol} · ${venue} · ${code}`;
-  }
-  const bias = sig?.bias ?? 'WAIT';
-  const setup = sig?.setup ?? 'INSUFFICIENT';
-  $('state-badge').textContent = bias === 'WAIT' ? `NO ${code} EDGE` : `${bias} · ${String(setup).replace(/_/g, ' ')}`;
-  $('state-badge').className = `state-badge ${bias === 'LONG' ? 'buy-flow' : bias === 'SHORT' ? 'sell-flow' : ''}`;
-  $('state-title').textContent = setupMeta(setup, adj);
-  $('state-help').textContent = sig?.reason
-    ?? `${adj} bias waits until footprint, support/resistance, and liquidity agree.`;
-  const ch = sig?.flow?.todayChangePercent ?? 0;
-  const chEl = $('price-change');
-  if (chEl) {
-    chEl.textContent = `${ch >= 0 ? '+' : ''}${ch.toFixed(2)}% on the ${adj} bar`;
-    chEl.className = `price-change ${ch > 0 ? 'up' : ch < 0 ? 'down' : ''}`;
-  }
-  $('flow-window-label').textContent = TF_LABEL[code] ?? TF_LABEL['1D'];
-  const delta = sig?.flow?.todayDelta ?? 0;
-  $('delta').textContent = fmtUsd(delta);
-  $('delta').className = `value ${delta >= 0 ? 'pos' : 'neg'}`;
-  const dp = ((sig?.flow?.todayDeltaPercent ?? 0) * 100).toFixed(0);
-  $('delta-pct').textContent = delta >= 0 ? `${dp}% buy-side dominance` : `${Math.abs(Number(dp))}% sell-side dominance`;
-  $('score').textContent = String(sig?.score ?? 0);
-  $('score').style.color = (sig?.score ?? 0) > 0 ? 'var(--buy)' : (sig?.score ?? 0) < 0 ? 'var(--sell)' : 'inherit';
-  $('impact').textContent = (sig?.location ?? 'UNKNOWN').replace(/_/g, ' ');
-  $('impact-help').textContent = sig?.pathOfLeastResistance
-    ? `Path of least resistance ${sig.pathOfLeastResistance.toLowerCase()}`
-    : `${adj} location vs support / resistance`;
-  $('confidence').textContent = sig ? `${Math.round(sig.confidence * 100)}%` : '—';
-  $('flow-multiple').textContent = sig?.footprintComplete ? `${code} footprint complete` : 'Using OHLC until footprint fills in';
-  const buy = sig?.flow?.todayBuy ?? 0;
-  const sell = sig?.flow?.todaySell ?? 0;
-  const total = buy + sell || 1;
-  $('buy-bar').style.width = `${(buy / total) * 100}%`;
-  $('sell-bar').style.width = `${(sell / total) * 100}%`;
-  $('buy-vol').textContent = fmtUsd(buy);
-  $('sell-vol').textContent = fmtUsd(sell);
-  const absBox = $('absorption-box');
-  if (sig?.flow?.absorbed) {
-    absBox.classList.remove('hidden');
-    $('absorption-title').textContent = sig.flow.absorbed === 'SELLERS' ? 'SELLER ABSORPTION' : 'BUYER ABSORPTION';
-    $('absorption-text').textContent = sig.flow.absorbed === 'SELLERS'
-      ? 'Aggressive selling into the daily low, price holding — passive buyers absorbing.'
-      : 'Aggressive buying into the daily high, price stalling — passive sellers absorbing.';
-  } else {
-    absBox.classList.add('hidden');
-  }
-  const w = summary?.windows?.['15m'] ?? summary?.windows?.['1m'] ?? summary?.windows?.['10s'];
-  if (w) {
-    renderFlowBattle(w);
-    renderMovePotential(w.movePotential);
-  }
-  if (summary) renderCompare(summary);
-  renderLiquidityResponse();
-}
-
 function updateUi() {
   if (isSpotView()) return;
-  if (isHtfSignalTab()) {
-    if (lastSummary && lastSummary.symbol === selectedSymbol) {
-      renderDailyAsSignal(lastSummary.price, lastSummary);
-    } else {
-      renderDailyAsSignal(lastDailySignal?.price ?? 0, null);
-    }
-    return;
-  }
   if (!lastSummary || lastSummary.symbol !== selectedSymbol) return;
   const w = windowData(lastSummary, selectedTf);
   if (!w) return;
@@ -1161,7 +884,6 @@ function updateUi() {
   renderMovePotential(w.movePotential);
   renderCompare(lastSummary);
   renderLiquidityResponse();
-  renderDailySetup();
 }
 
 function battleLabel(s) {
@@ -1487,13 +1209,6 @@ function updateSpotUi() {
   const coin = config?.coins?.find((c) => c.symbol === snap.symbol);
   const venue = selectedExchange === 'all' ? 'multi-exchange spot' : `${selectedExchange} spot`;
   $('symbol-label').textContent = `${coin?.label ?? snap.symbol} · ${venue}`;
-  if (isHtfSignalTab()) {
-    renderDailyAsSignal(snap.price, null);
-    renderSpotHud(snap);
-    renderSpotCompare();
-    renderLiquidityResponse();
-    return;
-  }
   if (w && $('price')) {
     $('price').textContent = snap.price > 0 ? `$${fmtPrice(snap.price)}` : '—';
     const ch = w.efficiency?.priceChangePercent ?? 0;
@@ -1535,7 +1250,6 @@ function updateSpotUi() {
   renderSpotHud(snap);
   renderSpotCompare();
   renderLiquidityResponse();
-  renderDailySetup();
 }
 
 function renderSpotHud(snap) {
@@ -1673,9 +1387,7 @@ function setupTabs() {
     if (!btn) return;
     selectedTf = btn.dataset.tf;
     document.querySelectorAll('#tf-tabs .tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
-    if (selectedTf === '1H') setSignalTf(60);
-    else if (selectedTf === '4H') setSignalTf(240);
-    else if (selectedTf === '1D') setSignalTf(1440);
+    if (isSpotView()) updateSpotUi();
     else updateUi();
   });
 }
@@ -1806,11 +1518,6 @@ function initChart() {
   fpCanvas.addEventListener('pointerup', endDrag);
   fpCanvas.addEventListener('pointercancel', endDrag);
 
-  document.getElementById('ds-tf-tabs')?.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-stf]');
-    if (!btn) return;
-    setSignalTf(Number(btn.dataset.stf));
-  });
   document.getElementById('chart-tf-tabs')?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-ctf]');
     if (!btn) return;
@@ -1820,8 +1527,6 @@ function initChart() {
     seedFootprintKlines();
     renderLiquidityResponse();
     subscribeSimulator();
-    if (chartTfMinutes === 60 || chartTfMinutes === 240 || chartTfMinutes === 1440) setSignalTf(chartTfMinutes);
-    else void loadDailySignal();
   });
   document.getElementById('chart-ex-tabs')?.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-ex]');
@@ -1832,7 +1537,6 @@ function initChart() {
     seedFootprintKlines();
     subscribeFootprint();
     renderTape();
-    void loadDailySignal();
   });
   document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
 }
@@ -2866,48 +2570,6 @@ function drawLiqOverlay(ctx, { leftPad, plotRight, yForPrice, topPad, chartH, gl
   ctx.restore();
 }
 
-function drawDailySrOverlay(ctx, { leftPad, plotRight, yForPrice, topPad, chartH, globalHigh, globalLow }) {
-  const levels = lastDailySignal?.levels ?? {};
-  const plan = lastDailySignal?.plan ?? {};
-  const tfTag = lastDailySignal?.timeframe ?? signalCode();
-  const rows = [
-    levels.support != null ? { price: levels.support, label: `${tfTag} S`, color: '#4ade80', dash: [6, 4] } : null,
-    levels.resistance != null ? { price: levels.resistance, label: `${tfTag} R`, color: '#f87171', dash: [6, 4] } : null,
-    levels.poc != null ? { price: levels.poc, label: 'POC', color: '#fbbf24', dash: [2, 3] } : null,
-    plan.tp1 != null ? { price: plan.tp1, label: 'TP1 1%', color: '#22c55e', dash: [4, 3] } : null,
-    plan.tp2 != null ? { price: plan.tp2, label: 'TP2 2%', color: '#86efac', dash: [2, 3] } : null,
-    plan.sl != null ? { price: plan.sl, label: 'SL', color: '#fb7185', dash: [3, 3] } : null,
-    plan.entry != null ? { price: plan.entry, label: plan.entryMode === 'NOW' ? 'ENTRY NOW' : 'WAIT ENTRY', color: '#60a5fa', dash: [8, 3] } : null,
-  ].filter(Boolean);
-  if (!rows.length) return;
-  ctx.save();
-  ctx.font = 'bold 10px JetBrains Mono, monospace';
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'right';
-  for (const r of rows) {
-    if (r.price < globalLow || r.price > globalHigh) continue;
-    const y = yForPrice(r.price);
-    if (y < topPad + 2 || y > topPad + chartH - 2) continue;
-    ctx.strokeStyle = r.color;
-    ctx.lineWidth = 1;
-    ctx.globalAlpha = 0.78;
-    ctx.setLineDash(r.dash);
-    ctx.beginPath();
-    ctx.moveTo(leftPad, y);
-    ctx.lineTo(plotRight, y);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
-    const tag = `${r.label} ${fmtPrice(r.price)}`;
-    const tw = ctx.measureText(tag).width;
-    ctx.fillStyle = 'rgba(13, 17, 23, 0.82)';
-    ctx.fillRect(plotRight - tw - 10, y - 7, tw + 8, 14);
-    ctx.fillStyle = r.color;
-    ctx.fillText(tag, plotRight - 6, y);
-  }
-  ctx.restore();
-}
-
 function updateFpLevNow(livePx, pred) {
   const el = document.getElementById('fp-lev-now');
   if (!el) return;
@@ -3089,7 +2751,6 @@ async function init() {
   seedFootprintKlines();
   drawFootprint();
   renderTape();
-  startDailySignalLoop();
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws`);

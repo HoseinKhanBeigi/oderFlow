@@ -25,13 +25,6 @@ import {
   SpotFlowEngine,
 } from '../src/spot/index.js';
 import type { WindowSnapshot } from '../src/models/signals.js';
-import {
-  barsFromKlines,
-  emptyDailySignal,
-  evaluateDailySignal,
-  liquidityContextFromWindow,
-} from '../src/analysis/daily-signal.js';
-import { timeframeFromMinutes, type SignalTimeframe } from '../src/models/daily-signal.js';
 import { SimulationHub } from '../src/simulation/hub.js';
 import { listPresets } from '../src/simulation/presets.js';
 import {
@@ -197,22 +190,6 @@ const server = createServer(async (req, res) => {
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'coverage failed' }));
-      }
-      return;
-    }
-
-    if (req.url?.startsWith('/api/daily-signal')) {
-      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
-      try {
-        json(res, await getDailySignal(u.searchParams));
-      } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          ...emptyDailySignal((u.searchParams.get('symbol') ?? 'BTCUSDT').toUpperCase(), parseMarketParam(u.searchParams.get('market')), {
-            timeframe: parseSignalTf(u.searchParams.get('tf')).timeframe,
-          }),
-          error: err instanceof Error ? err.message : 'daily signal failed',
-        }));
       }
       return;
     }
@@ -538,107 +515,6 @@ function clampInt(raw: string | null, fallback: number, min: number, max: number
   const n = Number(raw);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, Math.floor(n)));
-}
-
-const dailySignalCache = new Map<string, { at: number; payload: ReturnType<typeof evaluateDailySignal> }>();
-
-const SIGNAL_KLINE: Record<number, { interval: string; limit: number; spanDays: number }> = {
-  60: { interval: '1h', limit: 250, spanDays: 10 },
-  240: { interval: '4h', limit: 150, spanDays: 20 },
-  1440: { interval: '1d', limit: 60, spanDays: 0 },
-};
-
-function parseSignalTf(raw: string | null): { minutes: number; timeframe: SignalTimeframe } {
-  const n = Number(raw);
-  if (n === 60 || n === 240 || n === 1440) return { minutes: n, timeframe: timeframeFromMinutes(n) };
-  return { minutes: 1440, timeframe: '1D' };
-}
-
-async function getDailySignal(params: URLSearchParams): Promise<ReturnType<typeof evaluateDailySignal>> {
-  const symbol = (params.get('symbol') ?? 'BTCUSDT').toUpperCase();
-  const market = parseMarketParam(params.get('market'));
-  const exchanges = parseFootprintExchanges(params.get('exchange'), market);
-  const { minutes: tf, timeframe } = parseSignalTf(params.get('tf'));
-  const key = `${market}|${symbol}|${exchanges.join(',')}|${tf}`;
-  const hit = dailySignalCache.get(key);
-  if (hit && Date.now() - hit.at < 15_000) return hit.payload;
-
-  const live = liveWindow(symbol, market);
-  const price = live?.price && live.price > 0 ? live.price : 0;
-  const { bars, complete } = await loadDailyBars(symbol, market, exchanges, tf);
-  const klineBars = await loadDailyKlines(symbol, market, exchanges[0] ?? 'binance', tf);
-  const merged = mergeDailyBars(klineBars, bars);
-  const signal = evaluateDailySignal({
-    symbol,
-    market,
-    bars: merged,
-    price,
-    liquidity: live ? liquidityContextFromWindow(live) : null,
-    footprintComplete: complete && bars.some((b) => b.totalBuy + b.totalSell > 0),
-    timeframe,
-  });
-  dailySignalCache.set(key, { at: Date.now(), payload: signal });
-  if (dailySignalCache.size > 80) {
-    const oldest = [...dailySignalCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
-    if (oldest) dailySignalCache.delete(oldest[0]);
-  }
-  return signal;
-}
-
-function liveWindow(symbol: string, _market: 'spot' | 'perp'): WindowSnapshot | null {
-  try {
-    // Perp book walls sit at the same price as spot S/R, so both views use it.
-    return perpFeed.engine.snapshot(symbol, 'perp', '15m');
-  } catch {
-    return null;
-  }
-}
-
-async function loadDailyBars(
-  symbol: string,
-  market: 'spot' | 'perp',
-  exchanges: ExchangeId[],
-  tfMinutes: number,
-): Promise<{ bars: FootprintBar[]; complete: boolean }> {
-  if (!isStorageEnabled()) return { bars: [], complete: false };
-  await recorderFor(market).flush();
-  const nowSec = Math.floor(Date.now() / 1000);
-  const liveFrom = nowSec - (nowSec % 60);
-  const spec = SIGNAL_KLINE[tfMinutes] ?? SIGNAL_KLINE[1440]!;
-  const spanDays = spec.spanDays > 0 ? spec.spanDays : RETENTION_DAYS;
-  const fromSec = liveFrom - spanDays * 1440 * 60;
-  const rows = await loadBars({
-    symbol,
-    market,
-    exchanges,
-    fromSec,
-    toSec: liveFrom,
-  });
-  return { bars: rollup(rows, tfMinutes), complete: rows.length > 0 };
-}
-
-async function loadDailyKlines(
-  symbol: string,
-  market: 'spot' | 'perp',
-  exchange: ExchangeId,
-  tfMinutes: number,
-): Promise<FootprintBar[]> {
-  try {
-    const spec = SIGNAL_KLINE[tfMinutes] ?? SIGNAL_KLINE[1440]!;
-    const rows = await fetchVenueKlines(exchange, symbol, spec.interval, market, spec.limit);
-    return barsFromKlines(rows, { symbol, exchange, market });
-  } catch {
-    return [];
-  }
-}
-
-function mergeDailyBars(klines: FootprintBar[], footprint: FootprintBar[]): FootprintBar[] {
-  if (!klines.length) return footprint;
-  if (!footprint.length) return klines;
-  const byTime = new Map<number, FootprintBar>();
-  for (const bar of klines) byTime.set(bar.time, bar);
-  for (const bar of footprint) byTime.set(bar.time, bar);
-  return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
 
 async function getFootprintHistory(params: URLSearchParams): Promise<unknown> {
