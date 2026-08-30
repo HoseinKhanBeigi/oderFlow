@@ -2261,12 +2261,10 @@ function applyLiveFootprint(ev) {
 
 const ALERT_TF_MINUTES = 60; // alerts always evaluate on 1h bars
 const ALERT_KEEP_1M = 720; // ~12h of 1m bars → enough prior for 1h vacuum context
-const ALERT_IMB_LEVELS = 2;
 const ALERT_MAX_SESSION = 80;
 const ALERT_TOAST_MS = 7000;
 const alertFpStore = {};
 const alertSeen = new Map();
-const alertDeltaPrev = {};
 const sessionAlerts = [];
 let alertUiBound = false;
 
@@ -2375,106 +2373,29 @@ function evaluateSymbolAlerts(symbol) {
   const bars = alertBarsForSymbol(symbol, ALERT_TF_MINUTES);
   if (!bars.length) return;
   const idx = bars.length - 1;
-  const bar = bars[idx];
-  const prior = bars.slice(Math.max(0, idx - 20), idx);
+  const story = strategyStoryForBar(bars, idx);
+  if (!story) return;
+  const control =
+    story.line1 === 'Buyers in control' ? 'buy'
+      : story.line1 === 'Sellers in control' ? 'sell'
+        : null;
+  if (!control) return;
+
   const label = alertLabel(symbol);
   const tf = tfShort(ALERT_TF_MINUTES);
-  const barKey = bar.time;
+  const barKey = bars[idx].time;
+  const kindKey = control === 'buy' ? 'buyers' : 'sellers';
+  if (!canFireAlert(`${symbol}:ctrl:${kindKey}:${barKey}`, 120_000)) return;
 
-  if (prior.length) {
-    const vac = barVacuumKind(bar, prior);
-    if (vac === 'UPSIDE' && canFireAlert(`${symbol}:vac:up:${barKey}`)) {
-      pushFpAlert({
-        id: `${symbol}-vac-up-${barKey}`,
-        symbol,
-        kind: 'vacuum',
-        side: 'buy',
-        title: `${label} · Asks pulled`,
-        detail: `Upside vacuum on ${tf} — price ran up`,
-        at: Date.now(),
-      });
-    }
-    if (vac === 'DOWNSIDE' && canFireAlert(`${symbol}:vac:dn:${barKey}`)) {
-      pushFpAlert({
-        id: `${symbol}-vac-dn-${barKey}`,
-        symbol,
-        kind: 'vacuum',
-        side: 'sell',
-        title: `${label} · Bids pulled`,
-        detail: `Downside vacuum on ${tf} — price dumped`,
-        at: Date.now(),
-      });
-    }
-  }
-
-  const rev = absorptionReversalKind(bar, null);
-  if (rev === 'SELLER' && canFireAlert(`${symbol}:abs:sell:${barKey}`)) {
-    pushFpAlert({
-      id: `${symbol}-abs-sell-${barKey}`,
-      symbol,
-      kind: 'absorption',
-      side: 'buy',
-      title: `${label} · Sellers absorbed`,
-      detail: `Absorption + reverse up on ${tf}`,
-      at: Date.now(),
-    });
-  }
-  if (rev === 'BUYER' && canFireAlert(`${symbol}:abs:buy:${barKey}`)) {
-    pushFpAlert({
-      id: `${symbol}-abs-buy-${barKey}`,
-      symbol,
-      kind: 'absorption',
-      side: 'sell',
-      title: `${label} · Buyers absorbed`,
-      detail: `Absorption + reverse down on ${tf}`,
-      at: Date.now(),
-    });
-  }
-
-  const imb = countImbalanceLevels(bar, imbalanceRatio);
-  if (imb.buyDom >= ALERT_IMB_LEVELS && canFireAlert(`${symbol}:imb:buy:${barKey}`, 60_000)) {
-    pushFpAlert({
-      id: `${symbol}-imb-buy-${barKey}`,
-      symbol,
-      kind: 'imbalance',
-      side: 'buy',
-      title: `${label} · Buy imbalance`,
-      detail: `${imb.buyDom} levels ≥ ${imbalanceRatio}× on ${tf}`,
-      at: Date.now(),
-    });
-  }
-  if (imb.sellDom >= ALERT_IMB_LEVELS && canFireAlert(`${symbol}:imb:sell:${barKey}`, 60_000)) {
-    pushFpAlert({
-      id: `${symbol}-imb-sell-${barKey}`,
-      symbol,
-      kind: 'imbalance',
-      side: 'sell',
-      title: `${label} · Sell imbalance`,
-      detail: `${imb.sellDom} levels ≥ ${imbalanceRatio}× on ${tf}`,
-      at: Date.now(),
-    });
-  }
-
-  const delta = (bar.totalBuy ?? 0) - (bar.totalSell ?? 0);
-  const vol = (bar.totalBuy ?? 0) + (bar.totalSell ?? 0);
-  const prev = alertDeltaPrev[symbol];
-  if (prev && prev.time === barKey && prev.delta !== 0 && delta !== 0) {
-    const flipped = (prev.delta > 0 && delta < 0) || (prev.delta < 0 && delta > 0);
-    const jump = Math.abs(delta - prev.delta);
-    const bigEnough = jump >= Math.max(vol * 0.12, 8_000);
-    if (flipped && bigEnough && canFireAlert(`${symbol}:delta:${barKey}:${delta > 0 ? 'up' : 'dn'}`, 45_000)) {
-      pushFpAlert({
-        id: `${symbol}-delta-${barKey}-${Date.now()}`,
-        symbol,
-        kind: 'delta',
-        side: delta > 0 ? 'buy' : 'sell',
-        title: `${label} · Delta flip`,
-        detail: `${tf} delta ${fmtUsd(prev.delta)} → ${fmtUsd(delta)}`,
-        at: Date.now(),
-      });
-    }
-  }
-  alertDeltaPrev[symbol] = { time: barKey, delta };
+  pushFpAlert({
+    id: `${symbol}-ctrl-${kindKey}-${barKey}`,
+    symbol,
+    kind: 'control',
+    side: control,
+    title: `${label} · ${story.line1}`,
+    detail: `${story.line2 || 'price followed'} · ${tf}`,
+    at: Date.now(),
+  });
 }
 
 function applyFootprintTick(ev) {
@@ -2536,7 +2457,7 @@ function renderAlertList() {
   if (count) count.textContent = String(sessionAlerts.length);
   if (!list) return;
   if (!sessionAlerts.length) {
-    list.innerHTML = '<div class="alert-empty">No alerts yet — watching all coins on 1h</div>';
+    list.innerHTML = '<div class="alert-empty">No alerts yet — buyers/sellers in control on 1h</div>';
     return;
   }
   list.innerHTML = sessionAlerts.map((a) => `
