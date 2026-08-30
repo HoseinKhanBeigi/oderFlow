@@ -31,6 +31,7 @@ export const DEFAULT_WATCHLIST: WatchCoin[] = [
   { symbol: 'CROUSDT', label: 'CRO', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'EGLDUSDT', label: 'EGLD', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'ZKCUSDT', label: 'ZKC', minUsd: 500, venue: 'crypto' },
+  { symbol: 'TNSRUSDT', label: 'TNSR', minUsd: 500, venue: 'crypto' },
 ];
 
 /**
