@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Order Flow — Live</title>
-  <link rel="stylesheet" href="/styles.css" />
+  <title>Order Flow — Footprint</title>
+  <link rel="stylesheet" href="/styles.css?v=fp-style3" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -14,14 +14,13 @@
       <span class="logo">◉</span>
       <div>
         <h1>Order Flow</h1>
-        <p class="subtitle">Who is aggressively hitting the book right now?</p>
+        <p class="subtitle">Live footprint chart</p>
       </div>
     </div>
     <div class="header-meta">
       <div class="data-mode-tabs" id="data-mode-tabs">
         <button class="data-mode-tab active" data-mode="perp" type="button">FUTURES</button>
         <button class="data-mode-tab" data-mode="spot" type="button">SPOT</button>
-        <button class="data-mode-tab" data-mode="compare" type="button">SPOT vs FUTURES</button>
       </div>
       <div id="status" class="status connecting">Connecting…</div>
       <div id="symbol-label" class="symbol-label">—</div>
@@ -43,13 +42,12 @@
     <div class="open-tabs" id="open-tabs"></div>
   </div>
 
-  <main class="layout">
-    <!-- Chart -->
+  <main class="layout layout-chart-only">
     <section class="panel chart-panel">
       <div class="panel-head">
         <div>
           <h2 id="chart-title">Order flow footprint</h2>
-          <p class="hint" id="chart-hint">Upside vacuum: resting asks were pulled, so buying lifted price fast. Downside vacuum: resting bids were pulled, so selling dumped price fast. Gold = next candle, blue = live price.</p>
+          <p class="hint" id="chart-hint">Upside vacuum: resting asks were pulled, so buying lifted price fast. Downside vacuum: resting bids were pulled, so selling dumped price fast. Blue = live price.</p>
         </div>
         <div class="chart-toolbar">
           <div class="chart-tf-tabs" id="chart-ex-tabs">
@@ -63,260 +61,35 @@
             <button class="chart-tf-tab" data-ex="bitstamp" type="button">Bitstamp</button>
           </div>
           <div class="chart-tf-tabs" id="chart-tf-tabs">
-          <button class="chart-live-btn hidden" id="chart-live-btn" type="button">Latest</button>
-          <button class="chart-tf-tab" data-ctf="1">1m</button>
-          <button class="chart-tf-tab" data-ctf="5">5m</button>
-          <button class="chart-tf-tab active" data-ctf="15">15m</button>
-          <button class="chart-tf-tab" data-ctf="30">30m</button>
-          <button class="chart-tf-tab" data-ctf="45">45m</button>
-          <button class="chart-tf-tab" data-ctf="60">1h</button>
-          <button class="chart-tf-tab" data-ctf="120">2h</button>
-          <button class="chart-tf-tab" data-ctf="240">4h</button>
-          <button class="chart-tf-tab" data-ctf="1440">1D</button>
-        </div>
+            <button class="chart-live-btn hidden" id="chart-live-btn" type="button">Latest</button>
+            <button class="chart-tf-tab" data-ctf="1">1m</button>
+            <button class="chart-tf-tab" data-ctf="5">5m</button>
+            <button class="chart-tf-tab active" data-ctf="15">15m</button>
+            <button class="chart-tf-tab" data-ctf="30">30m</button>
+            <button class="chart-tf-tab" data-ctf="45">45m</button>
+            <button class="chart-tf-tab" data-ctf="60">1h</button>
+            <button class="chart-tf-tab" data-ctf="120">2h</button>
+            <button class="chart-tf-tab" data-ctf="240">4h</button>
+            <button class="chart-tf-tab" data-ctf="1440">1D</button>
+          </div>
           <label id="imb-cfg" class="imb-cfg hidden" title="Highlight a price level when buy/sell ≥ this ratio">
             Imbalance
             <input id="imb-ratio" type="number" min="1.5" max="10" step="0.5" value="3" />
           </label>
         </div>
       </div>
-      <div id="spot-hud" class="spot-hud hidden"></div>
-      <div id="tv-chart" style="width:100%;height:560px;overflow:hidden;position:relative;"></div>
+      <div id="tv-chart" style="width:100%;height:calc(100vh - 220px);min-height:520px;overflow:hidden;position:relative;"></div>
       <div class="chart-legend">
         <span id="fp-lev-now" class="fp-lev-now">—</span>
-        <span class="legend-item fp-abs">next candle</span>
-        <span class="legend-item fp-live">live price</span>
-        <span class="legend-item fp-rest-bid">asks pulled · ran up</span>
-        <span class="legend-item fp-rest-ask">bids pulled · dumped</span>
-        <span class="legend-item fp-pbuy">sellers absorbed · reversed up</span>
-        <span class="legend-item fp-psell">buyers absorbed · reversed down</span>
-      </div>
-    </section>
-
-    <section class="panel sim-live-panel" id="sim-live-panel">
-      <div class="panel-head">
-        <div>
-          <h2>Live microstructure</h2>
-          <p class="hint">Same symbol and aggressive prints as the footprint. Live book vs taker flow — not a price forecast, not a physics toy.</p>
-        </div>
-        <div class="sim-live-meta">
-          <span id="sim-live-window" class="muted">30s window</span>
-          <span id="sim-live-badge" class="liq-now">Waiting for book…</span>
-        </div>
-      </div>
-      <div class="sim-live-wrap">
-        <div id="sim-live-canvas" class="sim-live-canvas"></div>
-        <div class="sim-live-side">
-          <div id="sim-live-state" class="state-pill">—</div>
-          <div id="sim-live-mechanics" class="hint">Connecting to live order flow…</div>
-          <dl class="state-dl sim-live-dl">
-            <div><dt>Aggressive buy</dt><dd id="sim-live-buy">—</dd></div>
-            <div><dt>Aggressive sell</dt><dd id="sim-live-sell">—</dd></div>
-            <div><dt>Delta</dt><dd id="sim-live-delta">—</dd></div>
-            <div><dt>Ask depth</dt><dd id="sim-live-ask">—</dd></div>
-            <div><dt>Bid depth</dt><dd id="sim-live-bid">—</dd></div>
-            <div><dt>Effort vs result</dt><dd id="sim-live-effort">—</dd></div>
-          </dl>
-          <div class="pressure sim-live-pressure">
-            <span>Sell</span>
-            <div class="pressure-track"><div id="sim-live-needle" class="pressure-needle"></div></div>
-            <span>Buy</span>
-          </div>
-          <h3 id="sim-live-why-h" class="sim-why-h">WHY?</h3>
-          <ul id="sim-live-why" class="why-list"></ul>
-        </div>
-      </div>
-    </section>
-
-    <section class="panel spot-compare-panel hidden" id="spot-compare-panel">
-      <div class="panel-head">
-        <div>
-          <h2>Spot vs futures</h2>
-          <p class="hint">Independent spot and futures mechanics. Combined labels are interpretations, not trade signals.</p>
-        </div>
-        <span id="sf-price" class="liq-now">—</span>
-      </div>
-      <div id="sf-interpretation" class="sf-interpretation">Waiting for spot and futures windows…</div>
-      <div class="sf-grid sf-grid-3">
-        <div class="sf-col" id="sf-spot"></div>
-        <div class="sf-col" id="sf-futures"></div>
-        <div class="sf-col" id="sf-combined"></div>
-      </div>
-      <div id="sf-exchanges" class="sf-exchanges"></div>
-      <div id="sf-liquidity" class="sf-liquidity"></div>
-    </section>
-    <section class="panel signal-panel">
-      <div class="signal-top">
-        <div>
-          <span class="label">Price</span>
-          <div id="price" class="price">—</div>
-          <div id="price-change" class="price-change">—</div>
-        </div>
-        <div class="signal-badge-wrap">
-          <div id="state-badge" class="state-badge">NO_SIGNAL</div>
-          <div id="state-title" class="state-title">Waiting for data…</div>
-        </div>
-      </div>
-      <p id="state-help" class="state-help">
-        Aggressive flow measures taker trades — buyers crossing the ask or sellers crossing the bid.
-      </p>
-
-      <div class="tf-tabs" id="tf-tabs">
-        <button class="tf-tab active" data-tf="10s">10s impulse</button>
-        <button class="tf-tab" data-tf="1m">1m</button>
-        <button class="tf-tab" data-tf="5m">5m trend</button>
-        <button class="tf-tab" data-tf="15m">15m</button>
-      </div>
-
-      <div class="metrics-grid">
-        <div class="metric-card">
-          <span class="label">Net delta</span>
-          <span id="delta" class="value">$0</span>
-          <span id="delta-pct" class="sub">—</span>
-        </div>
-        <div class="metric-card">
-          <span class="label">Direction</span>
-          <span id="score" class="value">0</span>
-          <span class="sub">−100 sell … +100 buy</span>
-        </div>
-        <div class="metric-card">
-          <span class="label">Price response</span>
-          <span id="impact" class="value">—</span>
-          <span id="impact-help" class="sub">Did flow move price?</span>
-        </div>
-        <div class="metric-card">
-          <span class="label">Confidence</span>
-          <span id="confidence" class="value">—</span>
-          <span id="flow-multiple" class="sub">—</span>
-        </div>
-      </div>
-
-      <div id="absorption-box" class="absorption-box hidden">
-        <strong id="absorption-title">Absorption detected</strong>
-        <p id="absorption-text"></p>
-      </div>
-
-      <div id="flow-battle" class="flow-battle">
-        <div class="battle-head">Flow battle</div>
-        <div class="battle-grid">
-          <div class="battle-col">
-            <span class="label">Aggressive buyers</span>
-            <span id="battle-agg-buy" class="value buy">0</span>
-            <span class="label">Passive sellers</span>
-            <span id="battle-pas-sell" class="value sell">0</span>
-          </div>
-          <div class="battle-col">
-            <span class="label">Aggressive sellers</span>
-            <span id="battle-agg-sell" class="value sell">0</span>
-            <span class="label">Passive buyers</span>
-            <span id="battle-pas-buy" class="value buy">0</span>
-          </div>
-        </div>
-        <div id="battle-winner" class="battle-winner">—</div>
-        <div id="battle-state" class="battle-state">—</div>
-        <div id="battle-conf" class="sub">—</div>
-        <p id="battle-evidence" class="hint"></p>
-      </div>
-    </section>
-
-    <!-- Flow bar -->
-    <section class="panel flow-panel">
-      <div class="panel-head">
-        <h2>Aggressive volume</h2>
-        <span id="flow-window-label" class="muted">last 10 seconds</span>
-      </div>
-      <div class="bar-labels">
-        <span class="buy-label">Buyers hitting ASK</span>
-        <span class="sell-label">Sellers hitting BID</span>
-      </div>
-      <div class="bar-wrap">
-        <div id="buy-bar" class="bar buy" style="width:50%"></div>
-        <div id="sell-bar" class="bar sell" style="width:50%"></div>
-      </div>
-      <div class="flow-stats">
-        <div class="flow-stat buy">
-          <span class="label">Aggressive buy</span>
-          <span id="buy-vol" class="value">$0</span>
-        </div>
-        <div class="flow-stat sell">
-          <span class="label">Aggressive sell</span>
-          <span id="sell-vol" class="value">$0</span>
-        </div>
-      </div>
-
-      <h2 class="section-gap">Impulse vs sustained</h2>
-      <p class="hint">Short window = burst now. Long window = is it still going?</p>
-      <div class="compare-row" id="compare-row"></div>
-    </section>
-
-    <!-- Bottom row: tape + events -->
-    <div class="bottom-row">
-      <section class="panel tape-panel">
-        <div class="panel-head">
-          <div>
-            <h2>Live tape</h2>
-            <p class="hint">Aggressive prints from the selected exchange (or all). Lev is Binance’s max leverage for that dollar size.</p>
-          </div>
-          <span id="tape-count" class="muted">0 shown</span>
-        </div>
-        <div class="tape-header">
-          <span>Time</span>
-          <span>Ex</span>
-          <span>Action</span>
-          <span>Price</span>
-          <span>Value $</span>
-          <span>Lev</span>
-          <span>Flags</span>
-        </div>
-        <div id="tape" class="tape"></div>
-      </section>
-
-      <section class="panel events-panel">
-        <div class="panel-head">
-          <div>
-            <h2>Live events</h2>
-            <p class="hint">Bursts, large prints, and state changes for this coin</p>
-          </div>
-          <span id="events-count" class="muted">0 events</span>
-        </div>
-        <div id="events" class="events"></div>
-      </section>
-    </div>
-
-    <!-- Legend -->
-    <section class="panel legend-panel">
-      <h2>How to read this</h2>
-      <div class="legend-grid">
-        <div class="legend-block">
-          <h3>Side</h3>
-          <p><span class="pill buy">Aggressive BUY</span> Buyer crossed spread → hit resting sellers on the ask.</p>
-          <p><span class="pill sell">Aggressive SELL</span> Seller crossed spread → hit resting buyers on the bid.</p>
-        </div>
-        <div class="legend-block">
-          <h3>Size tiers (fixed $)</h3>
-          <ul id="tier-legend" class="legend-list"></ul>
-        </div>
-        <div class="legend-block">
-          <h3>Relative flags</h3>
-          <ul class="legend-list">
-            <li><strong>LARGE</strong> — top ~5%</li>
-            <li><strong>VERY_LARGE</strong> — top ~1%</li>
-            <li><strong>EXTREME</strong> — top ~0.1%</li>
-          </ul>
-        </div>
-        <div class="legend-block">
-          <h3>Events</h3>
-          <p>Bursts, large prints, market state changes, absorption, and liquidity pull / wall events appear in the events panel.</p>
-        </div>
-        <div class="legend-block">
-          <h3>Flow battle</h3>
-          <p>Positive delta is not a buyer win. Aggressive buyers vs passive sellers, and aggressive sellers vs passive buyers. Winner is who actually controls price.</p>
-        </div>
+        <span class="legend-item fp-live">Live price</span>
+        <span class="legend-item fp-rest-bid">Asks pulled · price ran up</span>
+        <span class="legend-item fp-rest-ask">Bids pulled · price dumped</span>
+        <span class="legend-item fp-pbuy">Sellers absorbed · reversed up</span>
+        <span class="legend-item fp-psell">Buyers absorbed · reversed down</span>
       </div>
     </section>
   </main>
 
-  <script src="/sim-live.bundle.js"></script>
-  <script src="/app.js?v=fp-noliq1" type="module"></script>
+  <script src="/app.js?v=fp-nonext1" type="module"></script>
 </body>
 </html>
