@@ -401,7 +401,7 @@ function sendSimState(socket: WebSocket): void {
 
 const liveFootprintTimer = setInterval(() => {
   for (const socket of footprintSubs.keys()) sendLiveFootprint(socket);
-}, Number(process.env.FOOTPRINT_PUSH_MS ?? 1_000));
+}, Number(process.env.FOOTPRINT_PUSH_MS ?? 250));
 liveFootprintTimer.unref?.();
 
 const simTimer = setInterval(() => {

@@ -91,34 +91,6 @@
         <span class="legend-item fp-pbuy">sellers absorbed · reversed up</span>
         <span class="legend-item fp-psell">buyers absorbed · reversed down</span>
       </div>
-      <div id="daily-signal-banner" class="daily-signal-banner">
-        <div class="ds-head">
-          <div>
-            <div class="ds-title-row">
-              <h2 id="ds-title">Daily signal</h2>
-              <div class="ds-tf-tabs" id="ds-tf-tabs">
-                <button class="chart-tf-tab" data-stf="60" type="button">1H</button>
-                <button class="chart-tf-tab" data-stf="240" type="button">4H</button>
-                <button class="chart-tf-tab active" data-stf="1440" type="button">1D</button>
-              </div>
-            </div>
-            <p class="hint">Entry is a support/resistance or liquidity wall — not whatever print is on the tape. TP is 1% then 2% from that entry.</p>
-          </div>
-          <div id="ds-bias" class="ds-bias wait">WAIT</div>
-        </div>
-        <div id="ds-setup" class="ds-setup">Waiting for structure…</div>
-        <div class="ds-plan">
-          <div class="ds-cell">
-            <span class="label">Entry</span>
-            <span id="ds-entry" class="ds-val">—</span>
-            <span id="ds-entry-note" class="ds-note">—</span>
-          </div>
-          <div class="ds-cell tp"><span class="label">TP 1%</span><span id="ds-tp1" class="ds-val">—</span></div>
-          <div class="ds-cell tp"><span class="label">TP 2%</span><span id="ds-tp2" class="ds-val">—</span></div>
-          <div class="ds-cell sl"><span class="label">Stop</span><span id="ds-sl" class="ds-val">—</span></div>
-        </div>
-        <p id="ds-reason" class="hint">Reload the page after pulling this update so the daily endpoint is live.</p>
-      </div>
     </section>
 
     <section class="panel sim-live-panel" id="sim-live-panel">
@@ -388,6 +360,6 @@
   </main>
 
   <script src="/sim-live.bundle.js"></script>
-  <script src="/app.js?v=fp-titles4" type="module"></script>
+  <script src="/app.js?v=fp-live1" type="module"></script>
 </body>
 </html>

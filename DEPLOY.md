@@ -67,13 +67,31 @@ Live recording only captures data from the moment the server starts. The
 preceding 30 days are reconstructed from Binance's public daily archives
 (`data.binance.vision`) — free, no API key, tick-level `aggTrades`.
 
-Run it once against the deployed database:
+### From Railway's web console (SSH / shell)
+
+`railway` is a **local CLI** — it is not installed in the service shell.
+`DATABASE_URL` is already injected there, so run npm directly:
+
+```bash
+npm run backfill -- --days 30 --gap-fill --symbols PAXGUSDT,CLUSDT,XAGUSDT
+```
+
+Or for the full watchlist:
+
+```bash
+npm run backfill -- --days 30 --gap-fill
+```
+
+### From your laptop
+
+Install the [Railway CLI](https://docs.railway.com/guides/cli), link the project,
+then either:
 
 ```bash
 railway run npm run backfill -- --days 30 --gap-fill
 ```
 
-Or locally against the same database:
+or paste the Postgres URL from the dashboard:
 
 ```bash
 DATABASE_URL='...' npm run backfill -- --days 30 --gap-fill

@@ -2225,11 +2225,9 @@ function priceToTick(price, tick) {
 }
 
 function ingestTradeToChart(trade) {
-  // With persistence on, the server owns the live bar and pushes the complete
-  // footprint. The tape is filtered to large prints, so building from it here
-  // would understate volume and fight the server's bar. Spot always uses the
-  // server aggregator for the same reason.
-  if (fpHistoryEnabled || isSpotView()) return;
+  // Server aggregator owns the live bar and pushes it over WS. The tape is
+  // filtered to large prints, so building from it here would understate volume.
+  if (fpLiveSocket?.readyState === WebSocket.OPEN) return;
   if (tradeMarket(trade) !== footprintMarket()) return;
   const tick = tickSize(trade.price);
   const level = priceToTick(trade.price, tick);
@@ -2958,7 +2956,6 @@ function rebuildChart() {
 
 function subscribeFootprint() {
   if (fpLiveSocket?.readyState !== WebSocket.OPEN) return;
-  if (!fpHistoryEnabled && !isSpotView()) return;
   fpLiveSocket.send(JSON.stringify({
     type: 'sub_footprint',
     symbol: selectedSymbol,
@@ -3044,8 +3041,7 @@ function escapeHtml(s) {
  * holding it locally and counting it twice.
  */
 function applyLiveFootprint(ev) {
-  const liveOk = fpHistoryEnabled || ev.market === 'spot' || isSpotView();
-  if (!liveOk || ev.symbol !== selectedSymbol) return;
+  if (ev.symbol !== selectedSymbol) return;
   if (ev.market && ev.market !== footprintMarket()) return;
   const bars = ev.bars ?? [];
   if (!bars.length) return;
@@ -3054,7 +3050,7 @@ function applyLiveFootprint(ev) {
   if (minute !== fpLastLiveMinute) {
     fpLastLiveMinute = minute;
     for (const key of Object.keys(footprintStore)) delete footprintStore[key];
-    void loadFootprintHistory();
+    if (fpHistoryEnabled) void loadFootprintHistory();
   }
 
   for (const { exchange, bar } of bars) {
