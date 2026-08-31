@@ -1,6 +1,7 @@
 import {
   initPassiveLiquidity,
   ingestPassiveLiquidity,
+  setPassiveCoins,
 } from './passive-liquidity.js';
 
 const _noopEl = {
@@ -839,6 +840,7 @@ function applyDataMode(mode) {
   const coins = visibleCoins();
   if (coins.length) selectedSymbol = coins[0].symbol;
   $('symbol-label').textContent = `${coins.length} charts · ${mode}`;
+  setPassiveCoins(coins);
   seedFootprintKlines();
   scheduleDraw();
 }
@@ -2640,7 +2642,6 @@ async function init() {
   setupDataMode();
   setupAlertUi();
   initPassiveLiquidity({
-    getSymbol: () => selectedSymbol,
     getMarket: () => dataMode,
   });
   try {
@@ -2651,8 +2652,10 @@ async function init() {
     if ($('imb-ratio') !== _noopEl) $('imb-ratio').value = String(imbalanceRatio);
     if (config.coins?.length) selectedSymbol = config.coins[0].symbol;
     applyDataMode(config.market === 'spot' ? 'spot' : 'perp');
+    setPassiveCoins(visibleCoins());
   } catch {
     initChart();
+    setPassiveCoins([{ symbol: 'BTCUSDT', label: 'BTC' }]);
   }
   renderAlertList();
 

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Order Flow — Footprint</title>
-  <link rel="stylesheet" href="/styles.css?v=fp-grid2" />
+  <link rel="stylesheet" href="/styles.css?v=pl-coins1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -94,10 +94,11 @@
       <section class="panel pl-panel" id="pl-panel">
         <div class="panel-head">
           <div>
-            <h2>Passive liquidity</h2>
+            <h2>Passive liquidity <span id="pl-symbol" class="pl-symbol">BTC</span></h2>
             <p class="hint">Resting bid/ask behaviour: where liquidity sits, how long it has been there, whether it is consumed, cancelled or replenished, and what it does as price approaches. Click a level in the profile for its full history.</p>
           </div>
           <div class="pl-head-meta">
+            <div class="chart-tf-tabs pl-coin-tabs" id="pl-coin-tabs" aria-label="Passive liquidity symbol"></div>
             <span id="pl-state" class="pl-state">—</span>
             <span id="pl-quality" class="pl-quality">—</span>
           </div>
@@ -131,6 +132,6 @@
     </main>
   </div>
 
-  <script src="/app.js?v=fp-grid2" type="module"></script>
+  <script src="/app.js?v=pl-coins1" type="module"></script>
 </body>
 </html>

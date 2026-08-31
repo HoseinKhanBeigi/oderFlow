@@ -1672,3 +1672,24 @@ body {
   .pl-body { grid-template-columns: 1fr; }
   .pl-sides { grid-template-columns: 1fr; }
 }
+
+.pl-symbol {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  margin-left: 0.35rem;
+}
+.pl-coin-tabs {
+  max-width: min(520px, 55vw);
+  max-height: 4.2rem;
+  overflow: auto;
+  justify-content: flex-end;
+}
+.pl-head-meta {
+  align-items: flex-start;
+}
+@media (max-width: 900px) {
+  .pl-coin-tabs { max-width: 100%; justify-content: flex-start; }
+}

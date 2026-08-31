@@ -10,10 +10,12 @@
 
 const RENDER_MS = 80;
 const HEATMAP_POLL_MS = 1000;
+const DEFAULT_SYMBOL = 'BTCUSDT';
 
 const state = {
   snapshots: new Map(),
-  symbol: null,
+  coins: [],
+  symbol: DEFAULT_SYMBOL,
   market: 'perp',
   heatmap: [],
   heatmapSymbol: null,
@@ -126,14 +128,34 @@ export function setPassiveMarket(market) {
   state.dirty = true;
 }
 
+/**
+ * Replace the coin tabs from the live watchlist. Keeps BTC when still listed,
+ * otherwise falls back to the first coin.
+ */
+export function setPassiveCoins(coins) {
+  const list = Array.isArray(coins) ? coins.filter((c) => c?.symbol) : [];
+  state.coins = list;
+  const stillThere = list.some((c) => c.symbol === state.symbol);
+  if (!stillThere) {
+    const btc = list.find((c) => c.symbol === DEFAULT_SYMBOL);
+    setPassiveSymbol(btc?.symbol ?? list[0]?.symbol ?? DEFAULT_SYMBOL);
+  }
+  renderCoinTabs();
+}
+
 export function setPassiveSymbol(symbol) {
-  if (!symbol || symbol === state.symbol) return;
+  if (!symbol || symbol === state.symbol) {
+    renderCoinTabs();
+    return;
+  }
   state.symbol = symbol;
   state.selected = null;
   state.detail = null;
   state.heatmap = [];
   state.heatmapSymbol = null;
   state.dirty = true;
+  renderCoinTabs();
+  updateSymbolLabel();
 }
 
 export function ingestPassiveLiquidity(symbol, snapshot) {
@@ -147,17 +169,18 @@ function current() {
 }
 
 /**
- * @param {{ getSymbol: () => string, getMarket: () => string }} hooks
- *   Read rather than pushed, so the panel stays in sync with the dashboard's
- *   symbol and market selection without every call site having to notify it.
+ * @param {{ getMarket?: () => string }} hooks
+ *   Market follows the dashboard (perp/spot). Symbol is chosen from the
+ *   watchlist tabs on this panel and defaults to BTCUSDT.
  */
 export function initPassiveLiquidity(hooks = {}) {
   el.panel = $('pl-panel');
   if (!el.panel) return;
-  state.getSymbol = typeof hooks.getSymbol === 'function' ? hooks.getSymbol : null;
   state.getMarket = typeof hooks.getMarket === 'function' ? hooks.getMarket : null;
   el.state = $('pl-state');
   el.quality = $('pl-quality');
+  el.symbol = $('pl-symbol');
+  el.coinTabs = $('pl-coin-tabs');
   el.heatmap = $('pl-heatmap');
   el.profile = $('pl-profile');
   el.bands = $('pl-bands');
@@ -166,6 +189,14 @@ export function initPassiveLiquidity(hooks = {}) {
   el.walls = $('pl-walls');
   el.why = $('pl-why');
   el.level = $('pl-level');
+
+  if (el.coinTabs) {
+    el.coinTabs.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-pl-symbol]');
+      if (!btn) return;
+      setPassiveSymbol(btn.dataset.plSymbol);
+    });
+  }
 
   if (el.profile) {
     el.profile.addEventListener('click', onProfileClick);
@@ -178,13 +209,38 @@ export function initPassiveLiquidity(hooks = {}) {
     state.dirty = true;
   });
 
+  renderCoinTabs();
+  updateSymbolLabel();
   setInterval(pollHeatmap, HEATMAP_POLL_MS);
   loop();
 }
 
+function coinLabel(symbol) {
+  const coin = state.coins.find((c) => c.symbol === symbol);
+  return coin?.label ?? String(symbol).replace(/USDT$/i, '') ?? symbol;
+}
+
+function updateSymbolLabel() {
+  if (el.symbol) el.symbol.textContent = coinLabel(state.symbol);
+}
+
+function renderCoinTabs() {
+  if (!el.coinTabs) return;
+  const coins = state.coins.length
+    ? state.coins
+    : [{ symbol: DEFAULT_SYMBOL, label: 'BTC' }];
+  el.coinTabs.innerHTML = coins
+    .map(
+      (c) =>
+        `<button class="chart-tf-tab${c.symbol === state.symbol ? ' active' : ''}" data-pl-symbol="${c.symbol}" type="button">${c.label ?? coinLabel(c.symbol)}</button>`,
+    )
+    .join('');
+  updateSymbolLabel();
+}
+
 function loop() {
   state.rafId = requestAnimationFrame(loop);
-  syncSelection();
+  if (state.getMarket) setPassiveMarket(state.getMarket());
   const now = performance.now();
   if (!state.dirty || now - state.lastRender < RENDER_MS) return;
   state.lastRender = now;
@@ -194,11 +250,6 @@ function loop() {
   } catch (err) {
     console.error('[passive-liquidity] render failed:', err);
   }
-}
-
-function syncSelection() {
-  if (state.getMarket) setPassiveMarket(state.getMarket());
-  if (state.getSymbol) setPassiveSymbol(state.getSymbol());
 }
 
 async function pollHeatmap() {
