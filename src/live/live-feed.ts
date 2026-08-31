@@ -521,7 +521,8 @@ export class LiveBinanceFeed {
 
       const states = this.lastStates.get(coin.symbol) ?? {};
       for (const key of ['10s', '1m', '5m'] as const) {
-        const w = windows[key];
+        // Use the full window for alerts — WireWindowSnapshot omits passiveLiquidity.
+        const w = full[key];
         const prev = states[key] ?? null;
         if (w.state !== prev && w.state !== 'NO_SIGNAL' && isVolatileWindow(w)) {
           this.emit({
