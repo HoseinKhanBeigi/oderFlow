@@ -1,66 +1,62 @@
 import type { AlertThresholds } from '../config/types.js';
 import type { AlertEvent, WindowSnapshot } from '../models/signals.js';
-import { formatQuote } from '../core/integrity.js';
+import type { WindowId } from '../models/trade.js';
+
+/** Windows noisy enough that a spike is not worth a ping. */
+const SKIP_WINDOWS = new Set<WindowId>(['1s', '5s', '10s', '30s']);
+
+/** Minimum |price change %| before a window counts as expanding. */
+const MIN_MOVE_PCT: Partial<Record<WindowId, number>> = {
+  '1m': 0.2,
+  '5m': 0.35,
+  '15m': 0.5,
+};
+
+/**
+ * True when price is actually expanding in this window.
+ * Large flow with no displacement (absorption / dead tape) is not volatility.
+ */
+export function isVolatileWindow(snapshot: WindowSnapshot): boolean {
+  if (SKIP_WINDOWS.has(snapshot.window)) return false;
+  const absPct = Math.abs(snapshot.priceChangePercent);
+  const floor = MIN_MOVE_PCT[snapshot.window] ?? 0.25;
+  if (absPct < floor) return false;
+
+  const impact = snapshot.priceImpactEfficiency;
+  if (impact === 'HIGH' || impact === 'EXTREME') return true;
+  if (snapshot.state === 'LIQUIDITY_VACUUM_UP' || snapshot.state === 'LIQUIDITY_VACUUM_DOWN') return true;
+  return absPct >= floor * 2;
+}
 
 export function buildAlerts(
   snapshot: WindowSnapshot,
-  thresholds: AlertThresholds,
+  _thresholds: AlertThresholds,
   now: number,
 ): AlertEvent[] {
-  const alerts: AlertEvent[] = [];
-  const base = {
-    symbol: snapshot.symbol,
-    window: snapshot.window,
-    timestamp: now,
-  };
+  if (!isVolatileWindow(snapshot)) return [];
 
-  if (snapshot.buyBurstDetected && snapshot.aggressiveBuyVolume >= thresholds.extremeBurstQuote) {
-    alerts.push({
-      ...base,
-      type: 'EXTREME BUY BURST',
-      message: `Extreme aggressive buy burst ${formatQuote(snapshot.aggressiveBuyVolume)}`,
-      payload: { volume: snapshot.aggressiveBuyVolume },
-    });
+  const dir = snapshot.priceChangePercent >= 0 ? 'UP' : 'DOWN';
+  const pct = snapshot.priceChangePercent;
+  const bits: string[] = [];
+  if (snapshot.buyBurstDetected) bits.push('buy burst');
+  if (snapshot.sellBurstDetected) bits.push('sell burst');
+  if (snapshot.state === 'LIQUIDITY_VACUUM_UP' || snapshot.state === 'LIQUIDITY_VACUUM_DOWN') {
+    bits.push('liquidity vacuum');
   }
-  if (snapshot.sellBurstDetected && snapshot.aggressiveSellVolume >= thresholds.extremeBurstQuote) {
-    alerts.push({
-      ...base,
-      type: 'EXTREME SELL BURST',
-      message: `Extreme aggressive sell burst ${formatQuote(snapshot.aggressiveSellVolume)}`,
-      payload: { volume: snapshot.aggressiveSellVolume },
-    });
-  }
-  if (snapshot.window === '10s' && snapshot.delta >= thresholds.netFlow10sQuote) {
-    alerts.push({
-      ...base,
-      type: `>${formatQuote(thresholds.netFlow10sQuote)} NET BUY FLOW IN 10S`,
-      message: `Net aggressive buy flow ${formatQuote(snapshot.delta)} in 10s`,
-      payload: { delta: snapshot.delta },
-    });
-  }
-  if (snapshot.window === '10s' && snapshot.delta <= -thresholds.netFlow10sQuote) {
-    alerts.push({
-      ...base,
-      type: `>${formatQuote(thresholds.netFlow10sQuote)} NET SELL FLOW IN 10S`,
-      message: `Net aggressive sell flow ${formatQuote(snapshot.delta)} in 10s`,
-      payload: { delta: snapshot.delta },
-    });
-  }
-  if (snapshot.state === 'BUYER_ABSORPTION' || (snapshot.delta > 0 && snapshot.priceImpactEfficiency === 'LOW' && snapshot.flowMultipleBuy >= 3)) {
-    alerts.push({
-      ...base,
-      type: snapshot.state === 'BUYER_ABSORPTION' ? 'POSSIBLE BUYER ABSORPTION' : 'LARGE BUY FLOW WITHOUT PRICE RESPONSE',
-      message: 'Large aggressive buying with little upward price response',
-      payload: { delta: snapshot.delta, priceChangePercent: snapshot.priceChangePercent },
-    });
-  }
-  if (snapshot.state === 'SELLER_ABSORPTION' || (snapshot.delta < 0 && snapshot.priceImpactEfficiency === 'LOW' && snapshot.flowMultipleSell >= 3)) {
-    alerts.push({
-      ...base,
-      type: snapshot.state === 'SELLER_ABSORPTION' ? 'POSSIBLE SELLER ABSORPTION' : 'LARGE SELL FLOW WITHOUT PRICE RESPONSE',
-      message: 'Large aggressive selling with little downward price response',
-      payload: { delta: snapshot.delta, priceChangePercent: snapshot.priceChangePercent },
-    });
-  }
-  return alerts;
+  const extra = bits.length ? ` · ${bits.join(' · ')}` : '';
+
+  return [
+    {
+      symbol: snapshot.symbol,
+      window: snapshot.window,
+      timestamp: now,
+      type: `VOLATILITY ${dir}`,
+      message: `Range expanding ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% in ${snapshot.window}${extra}`,
+      payload: {
+        priceChangePercent: pct,
+        absolutePriceChange: snapshot.absolutePriceChange,
+        impact: snapshot.priceImpactEfficiency,
+      },
+    },
+  ];
 }

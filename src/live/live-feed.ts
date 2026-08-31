@@ -11,6 +11,7 @@ import {
 import { EXCHANGE_LABELS, parseExchangesEnv, type ExchangeId } from '../exchange/venues.js';
 import type { LiquidationEvent, MarketTrade, MarketType, OrderBookSnapshot } from '../models/trade.js';
 import type { WindowSnapshot } from '../models/signals.js';
+import { isVolatileWindow } from '../analysis/alerts.js';
 import type { BinanceAggTrade, BinanceBookTicker, BinanceForceOrder, BinanceTrade } from '../exchange/types.js';
 import { DEFAULT_WATCHLIST, minUsdFor, type WatchCoin } from './watchlist.js';
 import { VenueTradeFan } from './venue-trades.js';
@@ -493,7 +494,7 @@ export class LiveBinanceFeed {
       for (const key of ['10s', '1m', '5m'] as const) {
         const w = windows[key];
         const prev = states[key] ?? null;
-        if (w.state !== prev && w.state !== 'NO_SIGNAL') {
+        if (w.state !== prev && w.state !== 'NO_SIGNAL' && isVolatileWindow(w)) {
           this.emit({
             type: 'state_change',
             symbol: coin.symbol,

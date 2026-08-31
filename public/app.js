@@ -2470,17 +2470,54 @@ function canFireAlert(key, cooldownMs = 90_000) {
   return true;
 }
 
+function barIsVolatile(bar, prior = []) {
+  if (!bar) return false;
+  const mid = bar.close || bar.open || 0;
+  if (!(mid > 0)) return false;
+  const range = Math.max(0, (bar.high ?? bar.close) - (bar.low ?? bar.close));
+  const body = Math.abs((bar.close ?? mid) - (bar.open ?? mid));
+  const rangePct = (range / mid) * 100;
+  const bodyPct = (body / mid) * 100;
+  if (bodyPct >= 0.35) return true;
+  if (rangePct >= 0.6) return true;
+  const sample = prior.slice(-14);
+  if (sample.length >= 5) {
+    const atr = sample.reduce((s, b) => s + Math.max(0, (b.high ?? b.close) - (b.low ?? b.close)), 0) / sample.length;
+    if (atr > 0 && range >= atr * 1.25) return true;
+  }
+  return false;
+}
+
+function pingVolatility(alert) {
+  if (typeof Notification === 'undefined') return;
+  const title = alert.title || 'Volatility';
+  const body = alert.detail || '';
+  const tag = `vol-${alert.symbol}`;
+  const show = () => {
+    try {
+      new Notification(title, { body, tag, silent: false });
+    } catch { /* ignore */ }
+  };
+  if (Notification.permission === 'granted') show();
+  else if (Notification.permission === 'default') {
+    Notification.requestPermission().then((p) => { if (p === 'granted') show(); });
+  }
+}
+
 function pushFpAlert(alert) {
   sessionAlerts.unshift(alert);
   if (sessionAlerts.length > ALERT_MAX_SESSION) sessionAlerts.length = ALERT_MAX_SESSION;
   renderAlertList();
   showAlertToast(alert);
+  pingVolatility(alert);
 }
 
 function evaluateSymbolAlerts(symbol) {
   const bars = alertBarsForSymbol(symbol, ALERT_TF_MINUTES);
   if (!bars.length) return;
   const idx = bars.length - 1;
+  const bar = bars[idx];
+  if (!barIsVolatile(bar, bars.slice(0, idx))) return;
   const story = strategyStoryForBar(bars, idx);
   if (!story) return;
   const kind =
@@ -2493,7 +2530,7 @@ function evaluateSymbolAlerts(symbol) {
 
   const label = alertLabel(symbol);
   const tf = tfShort(ALERT_TF_MINUTES);
-  const barKey = bars[idx].time;
+  const barKey = bar.time;
   if (!canFireAlert(`${symbol}:story:${kind.key}:${barKey}`, 120_000)) return;
 
   pushFpAlert({
@@ -2502,7 +2539,7 @@ function evaluateSymbolAlerts(symbol) {
     kind: kind.key,
     side: kind.side,
     title: `${label} · ${story.line1}`,
-    detail: `${story.line2 || 'setup'} · ${tf}`,
+    detail: `${story.line2 || 'setup'} · ${tf} · range expanding`,
     at: Date.now(),
   });
 }
@@ -2558,7 +2595,7 @@ function renderAlertList() {
   if (count) count.textContent = String(sessionAlerts.length);
   if (!list) return;
   if (!sessionAlerts.length) {
-    list.innerHTML = '<div class="alert-empty">No alerts yet — buyers/sellers in control on 1h</div>';
+    list.innerHTML = '<div class="alert-empty">No alerts yet — ping only when the 1h range is expanding</div>';
     return;
   }
   list.innerHTML = sessionAlerts.map((a) => `

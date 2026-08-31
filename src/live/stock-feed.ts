@@ -4,6 +4,7 @@ import { StockTickClassifier, syntheticStockBook } from '../exchange/stock-adapt
 import type { MarketTrade } from '../models/trade.js';
 import { minUsdFor, type WatchCoin } from './watchlist.js';
 import type { CoinOverview, LiveFeedEvent, LiveFeedListener, LiveSummary } from './live-feed.js';
+import { isVolatileWindow } from '../analysis/alerts.js';
 
 export interface StockFeedConfig {
   stocks: WatchCoin[];
@@ -244,7 +245,7 @@ export class StockLiveFeed {
       for (const key of ['10s', '1m', '5m'] as const) {
         const w = windows[key];
         const prev = states[key] ?? null;
-        if (w.state !== prev && w.state !== 'NO_SIGNAL') {
+        if (w.state !== prev && w.state !== 'NO_SIGNAL' && isVolatileWindow(w)) {
           this.emit({
             type: 'state_change',
             symbol: stock.symbol,

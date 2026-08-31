@@ -97,6 +97,7 @@ export class SymbolEngine {
   private lastNow = 0;
   private lastLargeBuyCount = 0;
   private lastLargeSellCount = 0;
+  private readonly lastVolatile = new Map<WindowId, boolean>();
 
   constructor(
     readonly symbol: string,
@@ -511,8 +512,12 @@ export class SymbolEngine {
       }),
     };
 
-    for (const alert of buildAlerts(snap, this.config.alerts, now)) {
-      this.emit({ kind: 'alert', alert });
+    const alerts = buildAlerts(snap, this.config.alerts, now);
+    const volatile = alerts.length > 0;
+    const wasVolatile = this.lastVolatile.get(window) ?? false;
+    this.lastVolatile.set(window, volatile);
+    if (volatile && !wasVolatile) {
+      for (const alert of alerts) this.emit({ kind: 'alert', alert });
     }
     if (snap.movePotential.liquidity.events.length) {
       this.emit({
