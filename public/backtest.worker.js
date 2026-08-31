@@ -58,6 +58,44 @@
       }
       return lo / this.filled * 100;
     }
+    /**
+     * Tie-aware percentile rank: the midpoint between the share of samples below
+     * `value` and the share at or below it.
+     *
+     * `percentileRank` counts ties as "below", so a value of 0 measured against a
+     * history that is mostly zeros comes back as the 100th percentile — reading as
+     * an extreme when it is really the most ordinary value in the series. Order
+     * book activity is full of legitimate zeros (no consumption this second, no
+     * displacement this second), so anything classifying that activity needs the
+     * midrank instead.
+     */
+    midRank(value) {
+      if (this.filled === 0) return 50;
+      this.refresh();
+      const below = this.countBelow(value);
+      const atOrBelow = this.countAtOrBelow(value);
+      return (below + atOrBelow) / 2 / this.filled * 100;
+    }
+    countBelow(value) {
+      let lo = 0;
+      let hi = this.filled;
+      while (lo < hi) {
+        const mid = lo + hi >> 1;
+        if ((this.sorted[mid] ?? 0) < value) lo = mid + 1;
+        else hi = mid;
+      }
+      return lo;
+    }
+    countAtOrBelow(value) {
+      let lo = 0;
+      let hi = this.filled;
+      while (lo < hi) {
+        const mid = lo + hi >> 1;
+        if ((this.sorted[mid] ?? 0) <= value) lo = mid + 1;
+        else hi = mid;
+      }
+      return lo;
+    }
     zScore(value, minStd) {
       const std = Math.max(this.std(), minStd);
       if (std === 0) return 0;
@@ -282,12 +320,13 @@
       const priceEff = efficiency(displacement, executed);
       const impliedBidDefense = clamp(sellPct - (100 - dispPct) * (bar.close <= bar.open ? 1 : 0.3), 0, 100);
       const impliedAskDefense = clamp(buyPct - (100 - dispPct) * (bar.close >= bar.open ? 1 : 0.3), 0, 100);
-      const bidRepl = bar.bidReplenishment ?? impliedBidDefense;
-      const askRepl = bar.askReplenishment ?? impliedAskDefense;
       const impliedAskWd = clamp(dispPct - buyPct * 0.5, 0, 100);
       const impliedBidWd = clamp(dispPct - sellPct * 0.5, 0, 100);
-      const askWd = bar.askWithdrawal ?? impliedAskWd;
-      const bidWd = bar.bidWithdrawal ?? impliedBidWd;
+      const pl = bar.passive;
+      const bidRepl = pl?.bidReplenishment ?? bar.bidReplenishment ?? impliedBidDefense;
+      const askRepl = pl?.askReplenishment ?? bar.askReplenishment ?? impliedAskDefense;
+      const askWd = pl?.askWithdrawal ?? bar.askWithdrawal ?? impliedAskWd;
+      const bidWd = pl?.bidWithdrawal ?? bar.bidWithdrawal ?? impliedBidWd;
       const sellerAbs = bar.hasFootprint && sellPct >= 80 && dispPct <= 40 && priceMovePct >= -0.12 && bidRepl >= 55 ? 1 : 0;
       const buyerAbs = bar.hasFootprint && buyPct >= 80 && dispPct <= 40 && priceMovePct <= 0.12 && askRepl >= 55 ? 1 : 0;
       this.absorbSellBars = sellerAbs ? this.absorbSellBars + 1 : 0;
@@ -405,6 +444,20 @@
         funding: bar.funding ?? 0,
         longLiquidations: bar.longLiquidations ?? 0,
         shortLiquidations: bar.shortLiquidations ?? 0,
+        nearBidDepth: pl?.nearBidDepth ?? 0,
+        nearAskDepth: pl?.nearAskDepth ?? 0,
+        weightedBidDepth: pl?.weightedBidDepth ?? 0,
+        weightedAskDepth: pl?.weightedAskDepth ?? 0,
+        nearBookImbalance: pl?.nearBookImbalance ?? 0,
+        bidReplenishmentRatio: pl?.bidReplenishmentRatio ?? 0,
+        askReplenishmentRatio: pl?.askReplenishmentRatio ?? 0,
+        bidPersistence: pl?.bidPersistence ?? 0,
+        askPersistence: pl?.askPersistence ?? 0,
+        passiveBuyerStrength: pl?.passiveBuyerStrength ?? 0,
+        passiveSellerStrength: pl?.passiveSellerStrength ?? 0,
+        defendedBidTests: pl?.defendedBidTests ?? 0,
+        defendedAskTests: pl?.defendedAskTests ?? 0,
+        hasPassiveLiquidity: pl ? 1 : 0,
         volatility: realizedVol,
         structure,
         dataQuality: quality,
@@ -628,6 +681,34 @@
         return snap.downsideVacuum;
       case "vacuumStrength":
         return snap.vacuumStrength;
+      case "nearBidDepth":
+        return snap.nearBidDepth;
+      case "nearAskDepth":
+        return snap.nearAskDepth;
+      case "weightedBidDepth":
+        return snap.weightedBidDepth;
+      case "weightedAskDepth":
+        return snap.weightedAskDepth;
+      case "nearBookImbalance":
+        return snap.nearBookImbalance;
+      case "bidReplenishmentRatio":
+        return snap.bidReplenishmentRatio;
+      case "askReplenishmentRatio":
+        return snap.askReplenishmentRatio;
+      case "bidPersistence":
+        return snap.bidPersistence;
+      case "askPersistence":
+        return snap.askPersistence;
+      case "passiveBuyerStrength":
+        return snap.passiveBuyerStrength;
+      case "passiveSellerStrength":
+        return snap.passiveSellerStrength;
+      case "defendedBidTests":
+        return snap.defendedBidTests;
+      case "defendedAskTests":
+        return snap.defendedAskTests;
+      case "hasPassiveLiquidity":
+        return snap.hasPassiveLiquidity;
       case "spotFuturesDeltaDiv":
         return snap.spotDelta - snap.futuresDelta;
       case "spotLed":
@@ -794,6 +875,10 @@
     if (metric === "downsideEfficiency") return snap.downsideEfficiency;
     if (metric === "upsideEfficiency") return snap.upsideEfficiency;
     if (metric === "priceEfficiency") return snap.priceEfficiency;
+    if (metric === "passiveBuyerStrength") return snap.passiveBuyerStrength;
+    if (metric === "passiveSellerStrength") return snap.passiveSellerStrength;
+    if (metric === "bidPersistence") return snap.bidPersistence;
+    if (metric === "askPersistence") return snap.askPersistence;
     return metricValue(snap, metric);
   }
   function nearly(a, b) {
@@ -1397,7 +1482,18 @@
     { id: "choch_bear", label: "Bearish micro CHoCH", condition: { type: "cond", metric: "chochBearish", op: "=", value: 1 }, bias: "DOWN" },
     { id: "cvd_div", label: "CVD bullish divergence", condition: { type: "cond", metric: "cvdDivergence", op: "=", value: 1 }, bias: "UP" },
     { id: "spot_led", label: "Spot-led movement", condition: { type: "cond", metric: "spotLed", op: "=", value: 1 }, bias: "UP" },
-    { id: "lev_rally", label: "Leverage-driven rally", condition: { type: "cond", metric: "leverageDrivenRally", op: "=", value: 1 }, bias: "EITHER" }
+    { id: "lev_rally", label: "Leverage-driven rally", condition: { type: "cond", metric: "leverageDrivenRally", op: "=", value: 1 }, bias: "EITHER" },
+    // Passive liquidity — only fire on datasets where the book was recorded.
+    { id: "strong_pbid", label: "Strong passive buyers", condition: { type: "cond", metric: "passiveBuyerStrength", op: ">=", value: 70 }, bias: "UP" },
+    { id: "strong_pask", label: "Strong passive sellers", condition: { type: "cond", metric: "passiveSellerStrength", op: ">=", value: 70 }, bias: "DOWN" },
+    { id: "bid_persist", label: "Persistent bids", condition: { type: "cond", metric: "bidPersistence", op: ">=", value: 75 }, bias: "UP" },
+    { id: "ask_persist", label: "Persistent asks", condition: { type: "cond", metric: "askPersistence", op: ">=", value: 75 }, bias: "DOWN" },
+    { id: "bid_repl_ratio", label: "Bids refilling faster than consumed", condition: { type: "cond", metric: "bidReplenishmentRatio", op: ">=", value: 1 }, bias: "UP" },
+    { id: "ask_repl_ratio", label: "Asks refilling faster than consumed", condition: { type: "cond", metric: "askReplenishmentRatio", op: ">=", value: 1 }, bias: "DOWN" },
+    { id: "defended_bid", label: "Defended bid level", condition: { type: "cond", metric: "defendedBidTests", op: ">=", value: 2 }, bias: "UP" },
+    { id: "defended_ask", label: "Defended ask level", condition: { type: "cond", metric: "defendedAskTests", op: ">=", value: 2 }, bias: "DOWN" },
+    { id: "near_bid_skew", label: "Near-touch bid skew", condition: { type: "cond", metric: "nearBookImbalance", op: ">=", value: 0.3 }, bias: "UP" },
+    { id: "near_ask_skew", label: "Near-touch ask skew", condition: { type: "cond", metric: "nearBookImbalance", op: "<=", value: -0.3 }, bias: "DOWN" }
   ];
   function runSignalStudy(bars, preset, tfMinutes, window, fromSec) {
     const builder = new FeatureBuilder(windowBars(window, tfMinutes));

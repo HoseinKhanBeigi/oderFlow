@@ -25,6 +25,7 @@ import {
   SpotFlowEngine,
 } from '../src/spot/index.js';
 import type { WindowSnapshot } from '../src/models/signals.js';
+import { PassiveFeatureRecorder, type PassiveLiquidityEngine } from '../src/passive-liquidity/index.js';
 import {
   mergeDataset,
   klinesToCandles,
@@ -97,6 +98,7 @@ const spotRecorder = new FootprintRecorder({
   flushMs: Number(process.env.FOOTPRINT_FLUSH_MS ?? 15_000),
 });
 const spotHub = new SpotFlowEngine(IMBALANCE_RATIO);
+const passiveFeatures = { perp: new PassiveFeatureRecorder(), spot: new PassiveFeatureRecorder() };
 
 perpFeed.onAnyTrade((trade, exchange) => {
   perpRecorder.ingest(trade, exchange);
@@ -105,6 +107,15 @@ spotFeed.onAnyTrade((trade, exchange) => {
   if (!spotHub.ingestTrade(trade, exchange)) return;
   spotRecorder.ingest(trade, exchange);
 });
+
+function passiveEngineFor(params: URLSearchParams): PassiveLiquidityEngine | null {
+  const symbol = (params.get('symbol') ?? coins[0]?.symbol ?? 'BTCUSDT').toUpperCase();
+  if (!coins.some((c) => c.symbol === symbol)) return null;
+  const market = parseMarketParam(params.get('market'));
+  const feed = market === 'spot' ? spotFeed : perpFeed;
+  if (!feed.coins.some((c) => c.symbol === symbol)) return null;
+  return feed.engine.getSymbol(symbol, market).passiveLiquidity;
+}
 
 const server = createServer(async (req, res) => {
     if (req.url?.startsWith('/api/depth')) {
@@ -118,6 +129,46 @@ const server = createServer(async (req, res) => {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end('{}');
       }
+      return;
+    }
+
+    /**
+     * The heatmap and per-level history are large and only ever needed for the
+     * one symbol on screen, so they are pulled on demand instead of broadcast.
+     */
+    if (req.url?.startsWith('/api/passive-liquidity/heatmap')) {
+      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+      const engine = passiveEngineFor(u.searchParams);
+      if (!engine) {
+        json(res, { frames: [] });
+        return;
+      }
+      const limit = Math.max(1, Math.min(600, Number(u.searchParams.get('frames') ?? 240)));
+      const frames = engine.heatmap();
+      json(res, { frames: frames.slice(Math.max(0, frames.length - limit)) });
+      return;
+    }
+
+    if (req.url?.startsWith('/api/passive-liquidity/level')) {
+      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+      const engine = passiveEngineFor(u.searchParams);
+      const price = Number(u.searchParams.get('price'));
+      const side = u.searchParams.get('side') === 'BID' ? 'BID' : 'ASK';
+      if (!engine || !Number.isFinite(price)) {
+        json(res, { detail: null });
+        return;
+      }
+      json(res, { detail: engine.levelDetail(side, price, Date.now()) });
+      return;
+    }
+
+    if (req.url?.startsWith('/api/passive-liquidity')) {
+      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+      const engine = passiveEngineFor(u.searchParams);
+      json(res, {
+        snapshot: engine ? engine.snapshot({ now: Date.now() }) : null,
+        memory: engine ? engine.priceLevelMemory().slice(0, 40) : [],
+      });
       return;
     }
 
@@ -319,9 +370,15 @@ perpFeed.on((ev) => {
   if (ev.type === 'summary') {
     spotHub.setFuturesWindow(ev.summary.symbol, ev.summary.windows['1m'] as WindowSnapshot);
   }
+  if (ev.type === 'passive_liquidity') {
+    passiveFeatures.perp.record(ev.symbol, ev.snapshot.timestamp, ev.snapshot.features);
+  }
   broadcast({ ...ev, market: 'perp' });
 });
 spotFeed.on((ev) => {
+  if (ev.type === 'passive_liquidity') {
+    passiveFeatures.spot.record(ev.symbol, ev.snapshot.timestamp, ev.snapshot.features);
+  }
   if (ev.type === 'book') {
     spotHub.ingestBook({
       symbol: ev.symbol,
@@ -536,6 +593,7 @@ async function getLabDataset(params: URLSearchParams) {
     candles,
     footprint,
     spotFootprint,
+    passive: passiveFeatures[market].range(symbol, tf, fetchFrom, toSec),
     tfMinutes: tf,
     fromSec: fetchFrom,
     toSec,

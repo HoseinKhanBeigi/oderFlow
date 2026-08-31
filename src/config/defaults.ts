@@ -226,6 +226,66 @@ export const DEFAULT_CONFIG: EngineConfig = {
     },
   },
 
+  passiveLiquidity: {
+    bandEdgesBps: [0, 5, 10, 25, 50, 100, 250],
+    imbalanceCutsBps: [5, 10, 25, 50, 100],
+    nearTouchBps: 10,
+    /** exp(-0.03 * bps): ~0.86 at 5bps, ~0.22 at 50bps, ~0.05 at 100bps. */
+    distanceWeightK: 0.03,
+    maxTrackedBps: 250,
+
+    tradeMatchWindowMs: 100,
+    tradeMatchTicks: 1,
+    unresolvedCommitMs: 150,
+    replenishWindowMs: 5_000,
+
+    levelSampleSize: 4_096,
+    metricSampleSize: 512,
+    metricWindowMs: 10_000,
+    metricSampleMs: 1_000,
+
+    wallMinPercentile: 95,
+    wallMinVsNearbyMedian: 3,
+    wallYoungMs: 2_000,
+    wallMatureMs: 300_000,
+    wallBreakFraction: 0.8,
+
+    approachArmBps: 2,
+    approachWithdrawalFraction: 0.5,
+
+    highPercentile: 85,
+    extremePercentile: 92,
+    lowPercentile: 30,
+
+    minAbsorptionScore: 60,
+    minVacuumScore: 60,
+    confirmedTestCount: 4,
+    buildingTestCount: 2,
+    zoneBps: 5,
+
+    strengthWeights: {
+      depth: 0.1,
+      nearDepth: 0.18,
+      persistence: 0.14,
+      replenishment: 0.18,
+      withdrawalInverse: 0.14,
+      absorbedAggression: 0.12,
+      priceInefficiency: 0.08,
+      defendedTests: 0.06,
+    },
+
+    minTrustedQuality: 45,
+    bookStaleMs: 3_000,
+    maxTimestampDriftMs: 5_000,
+
+    heatmapFrameMs: 1_000,
+    heatmapFrames: 600,
+    timelinePoints: 64,
+    profileLevelsPerSide: 24,
+    eventCapacity: 256,
+    memoryCapacity: 512,
+  },
+
   historicalBaselineSamples: 1_024,
   accelerationLookbackBuckets: 5,
   cvdSlopeMs: 5_000,

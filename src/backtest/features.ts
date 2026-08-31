@@ -105,12 +105,14 @@ export class FeatureBuilder {
 
     const impliedBidDefense = clamp(sellPct - (100 - dispPct) * (bar.close <= bar.open ? 1 : 0.3), 0, 100);
     const impliedAskDefense = clamp(buyPct - (100 - dispPct) * (bar.close >= bar.open ? 1 : 0.3), 0, 100);
-    const bidRepl = bar.bidReplenishment ?? impliedBidDefense;
-    const askRepl = bar.askReplenishment ?? impliedAskDefense;
     const impliedAskWd = clamp(dispPct - buyPct * 0.5, 0, 100);
     const impliedBidWd = clamp(dispPct - sellPct * 0.5, 0, 100);
-    const askWd = bar.askWithdrawal ?? impliedAskWd;
-    const bidWd = bar.bidWithdrawal ?? impliedBidWd;
+    // Measured book behaviour always wins over the trade-derived proxy.
+    const pl = bar.passive;
+    const bidRepl = pl?.bidReplenishment ?? bar.bidReplenishment ?? impliedBidDefense;
+    const askRepl = pl?.askReplenishment ?? bar.askReplenishment ?? impliedAskDefense;
+    const askWd = pl?.askWithdrawal ?? bar.askWithdrawal ?? impliedAskWd;
+    const bidWd = pl?.bidWithdrawal ?? bar.bidWithdrawal ?? impliedBidWd;
 
     const sellerAbs =
       bar.hasFootprint && sellPct >= 80 && dispPct <= 40 && priceMovePct >= -0.12 && bidRepl >= 55 ? 1 : 0;
@@ -245,6 +247,20 @@ export class FeatureBuilder {
       funding: bar.funding ?? 0,
       longLiquidations: bar.longLiquidations ?? 0,
       shortLiquidations: bar.shortLiquidations ?? 0,
+      nearBidDepth: pl?.nearBidDepth ?? 0,
+      nearAskDepth: pl?.nearAskDepth ?? 0,
+      weightedBidDepth: pl?.weightedBidDepth ?? 0,
+      weightedAskDepth: pl?.weightedAskDepth ?? 0,
+      nearBookImbalance: pl?.nearBookImbalance ?? 0,
+      bidReplenishmentRatio: pl?.bidReplenishmentRatio ?? 0,
+      askReplenishmentRatio: pl?.askReplenishmentRatio ?? 0,
+      bidPersistence: pl?.bidPersistence ?? 0,
+      askPersistence: pl?.askPersistence ?? 0,
+      passiveBuyerStrength: pl?.passiveBuyerStrength ?? 0,
+      passiveSellerStrength: pl?.passiveSellerStrength ?? 0,
+      defendedBidTests: pl?.defendedBidTests ?? 0,
+      defendedAskTests: pl?.defendedAskTests ?? 0,
+      hasPassiveLiquidity: pl ? 1 : 0,
       volatility: realizedVol,
       structure,
       dataQuality: quality,
@@ -482,6 +498,34 @@ export function metricValue(snap: FeatureSnapshot, metric: import('./types.js').
       return snap.downsideVacuum;
     case 'vacuumStrength':
       return snap.vacuumStrength;
+    case 'nearBidDepth':
+      return snap.nearBidDepth;
+    case 'nearAskDepth':
+      return snap.nearAskDepth;
+    case 'weightedBidDepth':
+      return snap.weightedBidDepth;
+    case 'weightedAskDepth':
+      return snap.weightedAskDepth;
+    case 'nearBookImbalance':
+      return snap.nearBookImbalance;
+    case 'bidReplenishmentRatio':
+      return snap.bidReplenishmentRatio;
+    case 'askReplenishmentRatio':
+      return snap.askReplenishmentRatio;
+    case 'bidPersistence':
+      return snap.bidPersistence;
+    case 'askPersistence':
+      return snap.askPersistence;
+    case 'passiveBuyerStrength':
+      return snap.passiveBuyerStrength;
+    case 'passiveSellerStrength':
+      return snap.passiveSellerStrength;
+    case 'defendedBidTests':
+      return snap.defendedBidTests;
+    case 'defendedAskTests':
+      return snap.defendedAskTests;
+    case 'hasPassiveLiquidity':
+      return snap.hasPassiveLiquidity;
     case 'spotFuturesDeltaDiv':
       return snap.spotDelta - snap.futuresDelta;
     case 'spotLed':

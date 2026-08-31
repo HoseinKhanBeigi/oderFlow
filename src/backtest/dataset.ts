@@ -1,4 +1,5 @@
 import type { FootprintBar } from '../footprint/types.js';
+import type { PassiveLiquidityFeatures } from '../models/passive-liquidity.js';
 import type { DataCoverage, MarketBar } from './types.js';
 
 export interface CandleRow {
@@ -14,6 +15,8 @@ export interface DatasetInput {
   candles: CandleRow[];
   footprint: FootprintBar[];
   spotFootprint?: FootprintBar[];
+  /** Measured passive-liquidity features keyed by aligned bar time. */
+  passive?: Map<number, PassiveLiquidityFeatures>;
   tfMinutes: number;
   fromSec: number;
   toSec: number;
@@ -26,14 +29,17 @@ export function mergeDataset(input: DatasetInput): { bars: MarketBar[]; coverage
   const bars: MarketBar[] = [];
   let fpHits = 0;
   let spotHits = 0;
+  let bookHits = 0;
 
   for (const c of input.candles) {
     const t = align(c.time, tf);
     if (t < input.fromSec || t >= input.toSec) continue;
     const f = fp.get(t);
     const s = spot.get(t);
+    const pl = input.passive?.get(t) ?? null;
     if (f) fpHits += 1;
     if (s) spotHits += 1;
+    if (pl) bookHits += 1;
     const buy = f?.totalBuy ?? 0;
     const sell = f?.totalSell ?? 0;
     bars.push({
@@ -52,22 +58,23 @@ export function mergeDataset(input: DatasetInput): { bars: MarketBar[]; coverage
       largestSell: f?.largestSell ?? 0,
       levels: f?.levels ?? [],
       hasFootprint: Boolean(f),
-      hasBook: false,
+      hasBook: Boolean(pl),
       spotBuy: s?.totalBuy ?? buy,
       spotSell: s?.totalSell ?? sell,
       futuresBuy: buy,
       futuresSell: sell,
-      bidDepth: null,
-      askDepth: null,
-      bidReplenishment: null,
-      askReplenishment: null,
-      bidWithdrawal: null,
-      askWithdrawal: null,
+      bidDepth: pl?.bidDepth ?? null,
+      askDepth: pl?.askDepth ?? null,
+      bidReplenishment: pl?.bidReplenishment ?? null,
+      askReplenishment: pl?.askReplenishment ?? null,
+      bidWithdrawal: pl?.bidWithdrawal ?? null,
+      askWithdrawal: pl?.askWithdrawal ?? null,
       oi: null,
       oiChange: null,
       funding: null,
       longLiquidations: null,
       shortLiquidations: null,
+      passive: pl,
     });
   }
 
@@ -77,12 +84,20 @@ export function mergeDataset(input: DatasetInput): { bars: MarketBar[]; coverage
   const spotPct = (spotHits / n) * 100;
   if (tradesPct < 50) warnings.push('Order-flow footprint covers under 50% of candles. Absorption and delta will be sparse.');
   if (spotPct < 20) warnings.push('Spot footprint missing for most bars. Spot vs futures conditions will not fire.');
-  warnings.push('L2 book, OI, funding, and liquidations are not in this historical series (Phase 2). Implied replenishment/vacuum proxies are used.');
+  const bookPct = (bookHits / n) * 100;
+  if (bookPct <= 0) {
+    warnings.push('No recorded order book in this range. Passive liquidity metrics are unavailable and implied replenishment/withdrawal proxies are used instead.');
+  } else if (bookPct < 100) {
+    warnings.push(
+      `Order book measured on ${round(bookPct)}% of bars (the live session only). Gate passive-liquidity rules on hasPassiveLiquidity = 1 to avoid mixing measured and proxied bars.`,
+    );
+  }
+  warnings.push('OI, funding, and liquidations are not in this historical series.');
 
   const coverage: DataCoverage = {
     candles: 100,
     trades: round(tradesPct),
-    l2: 0,
+    l2: round(bookPct),
     oi: 0,
     funding: 0,
     liquidations: 0,

@@ -12,6 +12,7 @@ import { EXCHANGE_LABELS, parseExchangesEnv, type ExchangeId } from '../exchange
 import type { LiquidationEvent, MarketTrade, MarketType, OrderBookSnapshot } from '../models/trade.js';
 import type { WindowSnapshot } from '../models/signals.js';
 import { isVolatileWindow } from '../analysis/alerts.js';
+import type { PassiveLiquiditySnapshot } from '../models/passive-liquidity.js';
 import type { BinanceAggTrade, BinanceBookTicker, BinanceForceOrder, BinanceTrade } from '../exchange/types.js';
 import { DEFAULT_WATCHLIST, minUsdFor, type WatchCoin } from './watchlist.js';
 import { VenueTradeFan } from './venue-trades.js';
@@ -37,13 +38,19 @@ export interface TapeItem {
   market?: MarketType;
 }
 
+/**
+ * Passive liquidity is window-independent and large, so it travels in its own
+ * event instead of being repeated inside every window of every summary.
+ */
+export type WireWindowSnapshot = Omit<WindowSnapshot, 'passiveLiquidity'>;
+
 export interface LiveSummary {
   timestamp: number;
   symbol: string;
   market: MarketType;
   price: number;
   tradeCount: number;
-  windows: Record<'10s' | '30s' | '1m' | '5m' | '15m', WindowSnapshot>;
+  windows: Record<'10s' | '30s' | '1m' | '5m' | '15m', WireWindowSnapshot>;
 }
 
 export interface CoinOverview {
@@ -99,6 +106,11 @@ export type LiveFeedEvent =
       type: 'move_potential';
       symbol: string;
       events: string[];
+    }
+  | {
+      type: 'passive_liquidity';
+      symbol: string;
+      snapshot: PassiveLiquiditySnapshot;
     };
 
 export type LiveFeedListener = (event: LiveFeedEvent) => void;
@@ -109,6 +121,11 @@ export type LiveFeedListener = (event: LiveFeedEvent) => void;
  */
 export type RawTradeListener = (trade: MarketTrade, exchange: ExchangeId) => void;
 export type RawLiquidationListener = (liq: LiquidationEvent) => void;
+
+function stripPassive(snapshot: WindowSnapshot): WireWindowSnapshot {
+  const { passiveLiquidity: _passiveLiquidity, ...wire } = snapshot;
+  return wire;
+}
 
 function parseBookLevels(rows: unknown): { price: number; quantity: number; quoteValue: number }[] {
   if (!Array.isArray(rows)) return [];
@@ -482,13 +499,25 @@ export class LiveBinanceFeed {
 
     for (const coin of this.coins) {
       const engine = this.engine.getSymbol(coin.symbol, this.config.market);
-      const windows = {
+      const full = {
         '10s': engine.snapshot('10s', now),
         '30s': engine.snapshot('30s', now),
         '1m': engine.snapshot('1m', now),
         '5m': engine.snapshot('5m', now),
         '15m': engine.snapshot('15m', now),
       };
+      const windows = {
+        '10s': stripPassive(full['10s']),
+        '30s': stripPassive(full['30s']),
+        '1m': stripPassive(full['1m']),
+        '5m': stripPassive(full['5m']),
+        '15m': stripPassive(full['15m']),
+      };
+
+      const passive = full['1m'].passiveLiquidity;
+      if (passive.mid > 0) {
+        this.emit({ type: 'passive_liquidity', symbol: coin.symbol, snapshot: passive });
+      }
 
       const states = this.lastStates.get(coin.symbol) ?? {};
       for (const key of ['10s', '1m', '5m'] as const) {

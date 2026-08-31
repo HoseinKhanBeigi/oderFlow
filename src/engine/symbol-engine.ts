@@ -24,6 +24,8 @@ import { PassiveFlowEngine } from '../passive-flow/passive-flow-engine.js';
 import { FlowWinnerEngine } from '../flow-battle/flow-winner-engine.js';
 import { emptyPassiveMetrics } from '../models/passive.js';
 import { LiquidityResponseEngine } from '../liquidity-response/engine.js';
+import { PassiveLiquidityEngine } from '../passive-liquidity/engine.js';
+import type { PassiveLiquiditySnapshot } from '../models/passive-liquidity.js';
 import type {
   AlertEvent,
   MultiWindowSnapshot,
@@ -83,8 +85,16 @@ export class SymbolEngine {
   readonly defense: DefenseEngine;
   readonly flowWinner: FlowWinnerEngine;
   readonly liquidityResponse: LiquidityResponseEngine;
+  readonly passiveLiquidity: PassiveLiquidityEngine;
 
   private readonly listeners = new Set<EngineListener>();
+  /**
+   * The passive liquidity snapshot is window-independent, so it is computed once
+   * per timestamp and shared across every window in a multi-window emit.
+   */
+  private passiveCache: { at: number; snapshot: PassiveLiquiditySnapshot } | null = null;
+  private sequenceGaps = 0;
+  private reconnects = 0;
   private lastBuyVolume = 0;
   private lastSellVolume = 0;
   private lastDeltaSign = 0;
@@ -128,6 +138,11 @@ export class SymbolEngine {
     this.defense = new DefenseEngine(config.flowBattle);
     this.flowWinner = new FlowWinnerEngine(config.flowBattle, this.defense);
     this.liquidityResponse = new LiquidityResponseEngine(config.liquidityResponse);
+    this.passiveLiquidity = new PassiveLiquidityEngine(
+      symbol,
+      config.passiveLiquidity,
+      config.liquidityResponse.percentileBands,
+    );
   }
 
   on(listener: EngineListener): () => void {
@@ -187,6 +202,7 @@ export class SymbolEngine {
     this.trackSamePrice(trade);
 
     this.liquidityResponse.onTrade(trade, isLarge);
+    this.passiveLiquidity.onTrade(trade);
 
     if (!this.book.empty()) {
       const flag = this.iceberg.onTrade(trade, this.book);
@@ -213,7 +229,13 @@ export class SymbolEngine {
   ingestBookDelta(delta: OrderBookDelta): void {
     const result = this.book.applyDelta(delta);
     this.integrity.lastBookTimestamp = delta.timestamp;
-    if (result.gap) this.integrity.noteSequenceGap(delta.timestamp);
+    if (result.gap) {
+      this.integrity.noteSequenceGap(delta.timestamp);
+      // Incremental state is no longer trustworthy: stop attributing book
+      // changes until a fresh snapshot restores continuity.
+      this.sequenceGaps += 1;
+      this.passiveLiquidity.noteReset(delta.timestamp);
+    }
     this.checkSpread();
     this.rolling.touchPrice(delta.timestamp, this.book.mid());
     this.updateLiquidityPath(delta.timestamp);
@@ -237,6 +259,8 @@ export class SymbolEngine {
   noteReconnect(now: number): void {
     this.integrity.noteReconnect(now);
     this.liquidityResponse.noteReset(now);
+    this.reconnects += 1;
+    this.passiveLiquidity.noteReset(now);
   }
 
   snapshot(window: WindowId, now = this.lastNow): WindowSnapshot {
@@ -499,6 +523,7 @@ export class SymbolEngine {
         oiExpected: this.marketType === 'perp',
         liquidationExpected: this.marketType === 'perp',
       }),
+      passiveLiquidity: this.passiveLiquiditySnapshot(now),
       movePotential: this.movePotential.evaluate({
         symbol: this.symbol,
         book: this.book,
@@ -565,6 +590,20 @@ export class SymbolEngine {
     this.priceImpact.seed(impactsPerMillion);
   }
 
+  private passiveLiquiditySnapshot(now: number): PassiveLiquiditySnapshot {
+    if (this.passiveCache && this.passiveCache.at === now) return this.passiveCache.snapshot;
+    const snapshot = this.passiveLiquidity.snapshot({
+      now,
+      reconnects: this.reconnects,
+      sequenceGaps: this.sequenceGaps,
+      sequenceContinuous: !this.integrity.flags.has('sequenceGap'),
+      bookEmpty: this.book.empty(),
+      exchangeTimestamp: this.book.timestamp,
+    });
+    this.passiveCache = { at: now, snapshot };
+    return snapshot;
+  }
+
   private isUnusualLarge(
     flowMultiple: number,
     percentile: number,
@@ -615,6 +654,7 @@ export class SymbolEngine {
     this.lastSellVolume = view.agg.sellVolume;
     this.consumption.observe(now, bid, ask, buyDelta, sellDelta);
     this.passive.observe(now, bid, ask);
+    this.passiveLiquidity.onBook(now, this.book);
     this.movePotential.observe(now, this.book, buyDelta, sellDelta);
     this.liquidityResponse.onBook(now, this.book, buyDelta, sellDelta);
   }

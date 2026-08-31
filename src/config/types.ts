@@ -212,6 +212,102 @@ export interface LiquidityResponseConfig {
   percentileBands: PercentileBandConfig;
 }
 
+export interface PassiveLiquidityConfig {
+  /** Band edges in bps from mid. Consecutive pairs form the bands. */
+  bandEdgesBps: number[];
+  /** Cuts used for band-scoped book imbalance. */
+  imbalanceCutsBps: number[];
+  /** "Near touch" distance that feeds the Price Engine most heavily. */
+  nearTouchBps: number;
+  /** Decay constant k in exp(-k * distanceBps). Calibrate per market. */
+  distanceWeightK: number;
+  /** Levels beyond this distance are ignored for level tracking. */
+  maxTrackedBps: number;
+
+  /** Book change to trade reconciliation window, both directions. */
+  tradeMatchWindowMs: number;
+  /** Ticks either side of a trade price that may absorb its quantity. */
+  tradeMatchTicks: number;
+  /** A drop unmatched for this long is committed as a cancellation. */
+  unresolvedCommitMs: number;
+  /** Additions this long after consumption count as replenishment. */
+  replenishWindowMs: number;
+
+  /** Rolling sample size for per-level notional percentiles. */
+  levelSampleSize: number;
+  /** Rolling sample size for side-level flow metrics. */
+  metricSampleSize: number;
+  /**
+   * Trailing window all normalized metrics are measured over. Percentiles are
+   * only comparable against samples of the same window length.
+   */
+  metricWindowMs: number;
+  /** How often a metric-window sample is added to the distributions. */
+  metricSampleMs: number;
+
+  /** Percentile of local level sizes above which a level may be a wall. */
+  wallMinPercentile: number;
+  /** Multiple of nearby median size required alongside the percentile. */
+  wallMinVsNearbyMedian: number;
+  /** Below this age a large wall is treated as unproven, not strong. */
+  wallYoungMs: number;
+  /** Age at which persistence saturates. */
+  wallMatureMs: number;
+  /** Fractional size loss that counts as an attack survived vs broken. */
+  wallBreakFraction: number;
+
+  /** Mid must close by at least this much for approach tracking to arm. */
+  approachArmBps: number;
+  /** Fraction of size lost during an approach, unexplained by trades. */
+  approachWithdrawalFraction: number;
+
+  /** Percentiles used to gate absorption and vacuum classification. */
+  highPercentile: number;
+  extremePercentile: number;
+  lowPercentile: number;
+
+  minAbsorptionScore: number;
+  minVacuumScore: number;
+  /** Distinct defended tests before a zone may be called confirmed. */
+  confirmedTestCount: number;
+  buildingTestCount: number;
+  /** Zone half-width in bps for grouping tests at "the same" level. */
+  zoneBps: number;
+
+  /** Weights for PassiveBuyerStrength / PassiveSellerStrength. */
+  strengthWeights: PassiveStrengthWeights;
+
+  /** Below this data-quality score the engine returns NO_DIRECTIONAL_EDGE. */
+  minTrustedQuality: number;
+  /** Book older than this is stale. */
+  bookStaleMs: number;
+  /** Acceptable exchange-vs-local clock drift. */
+  maxTimestampDriftMs: number;
+
+  /** Heatmap frame interval and retention. */
+  heatmapFrameMs: number;
+  heatmapFrames: number;
+  /** Per-level timeline retention. */
+  timelinePoints: number;
+  /** Max levels reported in the profile, per side. */
+  profileLevelsPerSide: number;
+  /** Max lifecycle events retained between snapshots. */
+  eventCapacity: number;
+  /** Price-level memory capacity. */
+  memoryCapacity: number;
+}
+
+export interface PassiveStrengthWeights {
+  depth: number;
+  nearDepth: number;
+  persistence: number;
+  replenishment: number;
+  withdrawalInverse: number;
+  absorbedAggression: number;
+  priceInefficiency: number;
+  defendedTests: number;
+}
+
 export interface EngineConfig {
   windows: WindowId[];
   bucketMs: number;
@@ -237,6 +333,7 @@ export interface EngineConfig {
   movePotential: MovePotentialConfig;
   flowBattle: FlowBattleConfig;
   liquidityResponse: LiquidityResponseConfig;
+  passiveLiquidity: PassiveLiquidityConfig;
   historicalBaselineSamples: number;
   accelerationLookbackBuckets: number;
   cvdSlopeMs: number;

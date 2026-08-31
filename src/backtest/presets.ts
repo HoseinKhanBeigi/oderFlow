@@ -200,14 +200,90 @@ export const STRATEGY_PRESETS: Strategy[] = [
   strat(
     'PASSIVE_BUYER_DEFENSE',
     'Passive Buyer Defense',
-    'Bids replenish under sell pressure — same family as seller absorption.',
-    { longSetup: sellerAbsSetup, longEntry: sellerAbsEntry },
+    'Measured bid behaviour: bids refill at least as fast as they are consumed while sell aggression is elevated. Requires a dataset with recorded order book; falls back to nothing when the book is missing.',
+    {
+      longSetup: and(
+        cond('hasPassiveLiquidity', '=', 1),
+        cond('aggressiveSell', 'percentile_above', 80),
+        cond('bidReplenishmentRatio', '>=', 0.9),
+        cond('passiveBuyerStrength', '>=', 65),
+        cond('bidPersistence', '>=', 60),
+        cond('downsideEfficiency', '<=', 40),
+      ),
+      longEntry: sellerAbsEntry,
+    },
   ),
   strat(
     'PASSIVE_SELLER_DEFENSE',
     'Passive Seller Defense',
-    'Asks replenish under buy pressure — same family as buyer absorption.',
-    { shortSetup: buyerAbsSetup, shortEntry: buyerAbsEntry },
+    'Measured ask behaviour: asks refill against elevated buy aggression while price fails to extend.',
+    {
+      shortSetup: and(
+        cond('hasPassiveLiquidity', '=', 1),
+        cond('aggressiveBuy', 'percentile_above', 80),
+        cond('askReplenishmentRatio', '>=', 0.9),
+        cond('passiveSellerStrength', '>=', 65),
+        cond('askPersistence', '>=', 60),
+        cond('upsideEfficiency', '<=', 40),
+      ),
+      shortEntry: buyerAbsEntry,
+    },
+  ),
+  strat(
+    'DEFENDED_FLOOR_HOLD',
+    'Defended Floor Hold',
+    'A price level that has been attacked repeatedly and held each time, with near-touch bid depth still skewed to the bid.',
+    {
+      context: and(cond('hasPassiveLiquidity', '=', 1), cond('defendedBidTests', '>=', 2)),
+      longEntry: and(
+        cond('hasPassiveLiquidity', '=', 1),
+        cond('defendedBidTests', '>=', 2),
+        cond('nearBookImbalance', '>=', 0.2),
+        cond('bidPersistence', '>=', 60),
+        cond('chochBullish', '=', 1),
+      ),
+    },
+  ),
+  strat(
+    'DEFENDED_CEILING_HOLD',
+    'Defended Ceiling Hold',
+    'A level repeatedly tested from below and held, with near-touch depth skewed to the ask.',
+    {
+      context: and(cond('hasPassiveLiquidity', '=', 1), cond('defendedAskTests', '>=', 2)),
+      shortEntry: and(
+        cond('hasPassiveLiquidity', '=', 1),
+        cond('defendedAskTests', '>=', 2),
+        cond('nearBookImbalance', '<=', -0.2),
+        cond('askPersistence', '>=', 60),
+        cond('chochBearish', '=', 1),
+      ),
+    },
+  ),
+  strat(
+    'NEAR_TOUCH_WITHDRAWAL',
+    'Near-touch Withdrawal',
+    'Liquidity in front of price is pulled rather than traded through — a vacuum precondition, logged as context.',
+    {
+      context: and(
+        cond('hasPassiveLiquidity', '=', 1),
+        or(cond('askWithdrawal', '>=', 65), cond('bidWithdrawal', '>=', 65)),
+        cond('nearAskDepth', '>', 0),
+      ),
+      longEntry: and(
+        cond('hasPassiveLiquidity', '=', 1),
+        cond('askWithdrawal', '>=', 65),
+        cond('askReplenishmentRatio', '<=', 0.5),
+        cond('aggressiveBuy', 'percentile_above', 70),
+        cond('bosBullish', '=', 1),
+      ),
+      shortEntry: and(
+        cond('hasPassiveLiquidity', '=', 1),
+        cond('bidWithdrawal', '>=', 65),
+        cond('bidReplenishmentRatio', '<=', 0.5),
+        cond('aggressiveSell', 'percentile_above', 70),
+        cond('bosBearish', '=', 1),
+      ),
+    },
   ),
 ];
 

@@ -102,6 +102,11 @@ function percentileOf(snap: FeatureSnapshot, metric: Condition['metric']): numbe
   if (metric === 'downsideEfficiency') return snap.downsideEfficiency;
   if (metric === 'upsideEfficiency') return snap.upsideEfficiency;
   if (metric === 'priceEfficiency') return snap.priceEfficiency;
+  // Passive strength/persistence are already expressed on a 0-100 scale.
+  if (metric === 'passiveBuyerStrength') return snap.passiveBuyerStrength;
+  if (metric === 'passiveSellerStrength') return snap.passiveSellerStrength;
+  if (metric === 'bidPersistence') return snap.bidPersistence;
+  if (metric === 'askPersistence') return snap.askPersistence;
   return metricValue(snap, metric);
 }
 

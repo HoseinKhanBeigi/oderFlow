@@ -1,3 +1,8 @@
+import {
+  initPassiveLiquidity,
+  ingestPassiveLiquidity,
+} from './passive-liquidity.js';
+
 const _noopEl = {
   textContent: '',
   innerHTML: '',
@@ -2634,6 +2639,10 @@ async function init() {
   setupTabs();
   setupDataMode();
   setupAlertUi();
+  initPassiveLiquidity({
+    getSymbol: () => selectedSymbol,
+    getMarket: () => dataMode,
+  });
   try {
     config = await fetch('/api/config').then((r) => r.json());
     fpHistoryEnabled = Boolean(config.history?.enabled);
@@ -2695,6 +2704,11 @@ async function init() {
         break;
       case 'overview':
         updateOverview(ev.coins, ev.market === 'spot' ? 'spot' : 'perp');
+        break;
+      case 'passive_liquidity':
+        if ((ev.market === 'spot' ? 'spot' : 'perp') === dataMode) {
+          ingestPassiveLiquidity(ev.symbol, ev.snapshot);
+        }
         break;
       default:
         break;

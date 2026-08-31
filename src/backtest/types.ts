@@ -6,6 +6,10 @@
  * measured after the fact and must never feed the next decision.
  */
 
+import type { PassiveLiquidityFeatures } from '../models/passive-liquidity.js';
+
+export type { PassiveLiquidityFeatures };
+
 export type LabMode = 'BACKTEST' | 'REPLAY' | 'FORWARD_TEST' | 'WALK_FORWARD';
 export type TradeDirection = 'LONG' | 'SHORT';
 export type FillModel = 'OPTIMISTIC' | 'REALISTIC' | 'CONSERVATIVE';
@@ -170,7 +174,21 @@ export type MetricId =
   | 'oiChange'
   | 'funding'
   | 'longLiquidations'
-  | 'shortLiquidations';
+  | 'shortLiquidations'
+  | 'nearBidDepth'
+  | 'nearAskDepth'
+  | 'weightedBidDepth'
+  | 'weightedAskDepth'
+  | 'nearBookImbalance'
+  | 'bidReplenishmentRatio'
+  | 'askReplenishmentRatio'
+  | 'bidPersistence'
+  | 'askPersistence'
+  | 'passiveBuyerStrength'
+  | 'passiveSellerStrength'
+  | 'defendedBidTests'
+  | 'defendedAskTests'
+  | 'hasPassiveLiquidity';
 
 export interface Condition {
   type: 'cond';
@@ -269,6 +287,12 @@ export interface MarketBar {
   funding: number | null;
   longLiquidations: number | null;
   shortLiquidations: number | null;
+  /**
+   * Measured passive-liquidity behaviour for this bar, when the bar came from a
+   * source that recorded the order book. Absent for footprint-only history, in
+   * which case the feature builder falls back to trade-derived proxies.
+   */
+  passive: PassiveLiquidityFeatures | null;
 }
 
 export interface StructureState {
@@ -368,6 +392,22 @@ export interface FeatureSnapshot {
   funding: number;
   longLiquidations: number;
   shortLiquidations: number;
+
+  nearBidDepth: number;
+  nearAskDepth: number;
+  weightedBidDepth: number;
+  weightedAskDepth: number;
+  nearBookImbalance: number;
+  bidReplenishmentRatio: number;
+  askReplenishmentRatio: number;
+  bidPersistence: number;
+  askPersistence: number;
+  passiveBuyerStrength: number;
+  passiveSellerStrength: number;
+  defendedBidTests: number;
+  defendedAskTests: number;
+  /** 1 when the passive fields above are measured rather than inferred. */
+  hasPassiveLiquidity: number;
 
   volatility: number;
   structure: StructureState;

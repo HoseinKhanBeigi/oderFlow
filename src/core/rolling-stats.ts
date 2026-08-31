@@ -67,6 +67,47 @@ export class RollingDistribution {
     return (lo / this.filled) * 100;
   }
 
+  /**
+   * Tie-aware percentile rank: the midpoint between the share of samples below
+   * `value` and the share at or below it.
+   *
+   * `percentileRank` counts ties as "below", so a value of 0 measured against a
+   * history that is mostly zeros comes back as the 100th percentile — reading as
+   * an extreme when it is really the most ordinary value in the series. Order
+   * book activity is full of legitimate zeros (no consumption this second, no
+   * displacement this second), so anything classifying that activity needs the
+   * midrank instead.
+   */
+  midRank(value: number): number {
+    if (this.filled === 0) return 50;
+    this.refresh();
+    const below = this.countBelow(value);
+    const atOrBelow = this.countAtOrBelow(value);
+    return ((below + atOrBelow) / 2 / this.filled) * 100;
+  }
+
+  private countBelow(value: number): number {
+    let lo = 0;
+    let hi = this.filled;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((this.sorted[mid] ?? 0) < value) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  private countAtOrBelow(value: number): number {
+    let lo = 0;
+    let hi = this.filled;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((this.sorted[mid] ?? 0) <= value) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
   zScore(value: number, minStd: number): number {
     const std = Math.max(this.std(), minStd);
     if (std === 0) return 0;

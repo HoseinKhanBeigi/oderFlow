@@ -22,6 +22,17 @@ export const STUDY_PRESETS: StudyPreset[] = [
   { id: 'cvd_div', label: 'CVD bullish divergence', condition: { type: 'cond', metric: 'cvdDivergence', op: '=', value: 1 }, bias: 'UP' },
   { id: 'spot_led', label: 'Spot-led movement', condition: { type: 'cond', metric: 'spotLed', op: '=', value: 1 }, bias: 'UP' },
   { id: 'lev_rally', label: 'Leverage-driven rally', condition: { type: 'cond', metric: 'leverageDrivenRally', op: '=', value: 1 }, bias: 'EITHER' },
+  // Passive liquidity — only fire on datasets where the book was recorded.
+  { id: 'strong_pbid', label: 'Strong passive buyers', condition: { type: 'cond', metric: 'passiveBuyerStrength', op: '>=', value: 70 }, bias: 'UP' },
+  { id: 'strong_pask', label: 'Strong passive sellers', condition: { type: 'cond', metric: 'passiveSellerStrength', op: '>=', value: 70 }, bias: 'DOWN' },
+  { id: 'bid_persist', label: 'Persistent bids', condition: { type: 'cond', metric: 'bidPersistence', op: '>=', value: 75 }, bias: 'UP' },
+  { id: 'ask_persist', label: 'Persistent asks', condition: { type: 'cond', metric: 'askPersistence', op: '>=', value: 75 }, bias: 'DOWN' },
+  { id: 'bid_repl_ratio', label: 'Bids refilling faster than consumed', condition: { type: 'cond', metric: 'bidReplenishmentRatio', op: '>=', value: 1 }, bias: 'UP' },
+  { id: 'ask_repl_ratio', label: 'Asks refilling faster than consumed', condition: { type: 'cond', metric: 'askReplenishmentRatio', op: '>=', value: 1 }, bias: 'DOWN' },
+  { id: 'defended_bid', label: 'Defended bid level', condition: { type: 'cond', metric: 'defendedBidTests', op: '>=', value: 2 }, bias: 'UP' },
+  { id: 'defended_ask', label: 'Defended ask level', condition: { type: 'cond', metric: 'defendedAskTests', op: '>=', value: 2 }, bias: 'DOWN' },
+  { id: 'near_bid_skew', label: 'Near-touch bid skew', condition: { type: 'cond', metric: 'nearBookImbalance', op: '>=', value: 0.3 }, bias: 'UP' },
+  { id: 'near_ask_skew', label: 'Near-touch ask skew', condition: { type: 'cond', metric: 'nearBookImbalance', op: '<=', value: -0.3 }, bias: 'DOWN' },
 ];
 
 export interface HorizonStudy {

@@ -90,6 +90,44 @@
         </div>
         <div id="fp-grid" class="fp-grid" aria-label="Footprint charts"></div>
       </section>
+
+      <section class="panel pl-panel" id="pl-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Passive liquidity</h2>
+            <p class="hint">Resting bid/ask behaviour: where liquidity sits, how long it has been there, whether it is consumed, cancelled or replenished, and what it does as price approaches. Click a level in the profile for its full history.</p>
+          </div>
+          <div class="pl-head-meta">
+            <span id="pl-state" class="pl-state">—</span>
+            <span id="pl-quality" class="pl-quality">—</span>
+          </div>
+        </div>
+        <div class="pl-legend">
+          <span class="legend-item pl-lg-bid">Passive buyers (bids)</span>
+          <span class="legend-item pl-lg-ask">Passive sellers (asks)</span>
+          <span class="legend-item pl-lg-repl">Replenishing / defending</span>
+          <span class="legend-item pl-lg-pull">Withdrawing / unreliable</span>
+          <span class="legend-item pl-lg-mid">Mid</span>
+        </div>
+        <div class="pl-body">
+          <div class="pl-canvas-wrap">
+            <span class="pl-canvas-title">Liquidity heatmap · time × price</span>
+            <canvas id="pl-heatmap"></canvas>
+          </div>
+          <div class="pl-canvas-wrap pl-canvas-profile">
+            <span class="pl-canvas-title">Current profile</span>
+            <canvas id="pl-profile"></canvas>
+          </div>
+        </div>
+        <div class="pl-grids">
+          <div class="pl-card" id="pl-bands"></div>
+          <div class="pl-card" id="pl-sides"></div>
+          <div class="pl-card" id="pl-aggression"></div>
+          <div class="pl-card" id="pl-walls"></div>
+          <div class="pl-card" id="pl-why"></div>
+          <div class="pl-card" id="pl-level"></div>
+        </div>
+      </section>
     </main>
   </div>
 
