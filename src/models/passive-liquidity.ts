@@ -225,6 +225,9 @@ export interface NetLiquiditySnapshot {
   flags: Array<'LIQUIDITY_ACCOUNTING_MISMATCH' | 'SMALL_BASE_UNRELIABLE_PERCENTAGE'>;
 }
 
+/** Dashboard net-liquidity timeframe tabs; keyed on the wire as String(ms). */
+export const NET_LIQUIDITY_WINDOWS_MS = [10_000, 30_000, 60_000, 300_000, 900_000] as const;
+
 /** Raw value plus every normalization the spec requires. Never a bare threshold. */
 export interface NormalizedMeasure {
   raw: number;
@@ -584,6 +587,8 @@ export interface PassiveLiquiditySnapshot {
   bands: LiquidityBandBucket[];
   imbalanceCuts: BookImbalanceCut[];
   netLiquidity: NetLiquiditySnapshot;
+  /** All dashboard net windows, keyed by windowMs as a string (e.g. "300000"). */
+  netByWindow: Record<string, NetLiquiditySnapshot>;
 
   /** Descending by price: asks above mid, then bids below. */
   profile: PassiveLiquidityLevel[];

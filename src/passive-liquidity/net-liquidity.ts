@@ -8,7 +8,10 @@ import type {
   PassiveLiquidityLevel,
   PassiveSide,
 } from '../models/passive-liquidity.js';
+import { NET_LIQUIDITY_WINDOWS_MS } from '../models/passive-liquidity.js';
 import type { ObservationDelta, SideFlowDelta } from './level-tracker.js';
+
+export { NET_LIQUIDITY_WINDOWS_MS };
 
 const EPSILON = 1e-9;
 const SMALL_BASE = 1;

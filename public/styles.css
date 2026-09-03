@@ -1464,45 +1464,12 @@ body {
 .pl-lg-ask::before { background: var(--sell); }
 .pl-lg-repl::before { background: var(--accent); }
 .pl-lg-pull::before { background: var(--warn); }
-.pl-lg-mid::before { background: var(--accent); opacity: 0.55; }
-
-.pl-body {
-  display: block;
-  gap: 0.7rem;
-  padding: 0.7rem 0.9rem;
-}
-.pl-canvas-wrap {
-  position: relative;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel2);
-  overflow: hidden;
-  min-height: 300px;
-}
-.pl-canvas-title {
-  position: absolute;
-  top: 6px;
-  left: 8px;
-  z-index: 2;
-  font-family: var(--mono);
-  font-size: 0.6rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-  pointer-events: none;
-}
-.pl-canvas-wrap canvas {
-  display: block;
-  width: 100%;
-  height: 380px;
-}
-.pl-canvas-profile canvas { height: 440px; }
 
 .pl-grids {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 0.7rem;
-  padding: 0 0.9rem 0.9rem;
+  padding: 0.7rem 0.9rem 0.9rem;
 }
 .pl-card {
   border: 1px solid var(--border);
@@ -1629,6 +1596,7 @@ body {
 
 .pl-walls { display: flex; flex-direction: column; gap: 0.14rem; }
 .pl-wall {
+  cursor: pointer;
   display: grid;
   grid-template-columns: 34px 1fr auto 54px 58px auto auto;
   align-items: center;
@@ -1638,6 +1606,10 @@ body {
 }
 .pl-wall-side.buy { color: var(--buy); }
 .pl-wall-side.sell { color: var(--sell); }
+.pl-wall.selected {
+  outline: 1px solid var(--border);
+  background: rgba(96, 165, 250, 0.08);
+}
 .pl-wall-price { color: var(--text); }
 .pl-wall-size { color: var(--text); text-align: right; }
 .pl-wall-dist, .pl-wall-score { color: var(--muted); text-align: right; }
@@ -1723,7 +1695,6 @@ body {
 .pl-timeline i.cancelled { background: var(--warn); opacity: 0.9; }
 
 @media (max-width: 1100px) {
-  .pl-body { grid-template-columns: 1fr; }
   .pl-sides { grid-template-columns: 1fr; }
   .pl-net-card { grid-column: span 1; }
 }

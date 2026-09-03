@@ -20,7 +20,7 @@ export { classifyState } from './state.js';
 export { buildWhy as buildPassiveLiquidityWhy } from './why.js';
 export { PassiveFeatureRecorder } from './feature-recorder.js';
 export { PassiveMetricNormalizer } from './normalize.js';
-export { NetLiquidityTracker, calculateNetLiquiditySide, emptyNetLiquiditySnapshot } from './net-liquidity.js';
+export { NetLiquidityTracker, calculateNetLiquiditySide, emptyNetLiquiditySnapshot, NET_LIQUIDITY_WINDOWS_MS } from './net-liquidity.js';
 export type { NetLiquiditySideInput } from './net-liquidity.js';
 export {
   buildBands,

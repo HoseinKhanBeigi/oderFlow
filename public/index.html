@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Order Flow — Footprint</title>
-  <link rel="stylesheet" href="/styles.css?v=single-footprint1" />
+  <link rel="stylesheet" href="/styles.css?v=net-ws1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -99,7 +99,7 @@
         <div class="panel-head">
           <div>
             <h2>Passive liquidity <span id="pl-symbol" class="pl-symbol">BTC</span></h2>
-            <p class="hint">Resting bid/ask behaviour: where liquidity sits, how long it has been there, whether it is consumed, cancelled or replenished, and what it does as price approaches. Click a level in the profile for its full history.</p>
+            <p class="hint">Resting bid/ask behaviour: where liquidity sits, how long it has been there, whether it is consumed, cancelled or replenished, and what it does as price approaches. Click a wall for its full history.</p>
           </div>
           <div class="pl-head-meta">
             <span id="pl-state" class="pl-state">—</span>
@@ -111,13 +111,6 @@
           <span class="legend-item pl-lg-ask">Passive sellers (asks)</span>
           <span class="legend-item pl-lg-repl">Replenishing / defending</span>
           <span class="legend-item pl-lg-pull">Withdrawing / unreliable</span>
-          <span class="legend-item pl-lg-mid">Mid</span>
-        </div>
-        <div class="pl-body">
-          <div class="pl-canvas-wrap pl-canvas-profile">
-            <span class="pl-canvas-title">Current profile</span>
-            <canvas id="pl-profile"></canvas>
-          </div>
         </div>
         <div class="pl-grids">
           <div class="pl-card pl-net-card" id="pl-net"></div>
@@ -132,6 +125,6 @@
     </main>
   </div>
 
-  <script src="/app.js?v=no-heatmap1" type="module"></script>
+  <script src="/app.js?v=net-ws1" type="module"></script>
 </body>
 </html>

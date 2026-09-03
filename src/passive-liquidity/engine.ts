@@ -13,10 +13,12 @@ import type {
   PassiveLiquidityFeatures,
   PassiveLiquidityLevel,
   PassiveLiquiditySnapshot,
+  NetLiquiditySnapshot,
   PassiveSide,
   PassiveSideMetrics,
   PriceLevelMemory,
 } from '../models/passive-liquidity.js';
+import { NET_LIQUIDITY_WINDOWS_MS } from '../models/passive-liquidity.js';
 import { aggregateDepth, buildBands, buildImbalanceCuts, imbalanceOf } from './bands.js';
 import { assessAbsorption } from './absorption.js';
 import { assessDataQuality } from './data-quality.js';
@@ -214,7 +216,13 @@ export class PassiveLiquidityEngine {
     );
     this.lastNetLiquidityTrustworthy = quality.trustworthy;
 
-    const netLiquidity = this.netLiquidityTracker.snapshot(now, reportWindow, quality.trustworthy);
+    const netByWindow: Record<string, NetLiquiditySnapshot> = {};
+    for (const ms of NET_LIQUIDITY_WINDOWS_MS) {
+      netByWindow[String(ms)] = this.netLiquidityTracker.snapshot(now, ms, quality.trustworthy);
+    }
+    const netLiquidity =
+      netByWindow[String(reportWindow)]
+      ?? this.netLiquidityTracker.snapshot(now, reportWindow, quality.trustworthy);
 
     const relative: RelativeContext = {
       nearbyDepth: depth.nearBidNotional + depth.nearAskNotional,
@@ -521,6 +529,7 @@ export class PassiveLiquidityEngine {
       bands,
       imbalanceCuts,
       netLiquidity,
+      netByWindow,
       profile,
       walls: wallList,
       nearestBidWall,

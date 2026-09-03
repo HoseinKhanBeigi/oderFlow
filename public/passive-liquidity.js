@@ -8,7 +8,6 @@
  */
 
 const RENDER_MS = 80;
-const HEATMAP_POLL_MS = 1000;
 const DEFAULT_SYMBOL = 'BTCUSDT';
 const NET_WINDOWS = [
   { ms: 10_000, label: '10s' },
@@ -28,36 +27,13 @@ const state = {
   dirty: false,
   lastRender: 0,
   rafId: 0,
-  profileHitboxes: [],
-  priceRange: null,
   netWindowMs: 10_000,
-  netLiquidity: null,
-  netRequest: 0,
 };
 
 const el = {};
-let css = null;
 
 function $(id) {
   return document.getElementById(id);
-}
-
-function palette() {
-  if (css) return css;
-  const s = getComputedStyle(document.body);
-  const read = (name, fallback) => (s.getPropertyValue(name) || fallback).trim();
-  css = {
-    bid: read('--buy', '#22c55e'),
-    ask: read('--sell', '#ef4444'),
-    text: read('--text', '#eef0f3'),
-    muted: read('--muted', '#7a8494'),
-    accent: read('--accent', '#60a5fa'),
-    warn: read('--warn', '#fbbf24'),
-    border: read('--border', '#1c2230'),
-    panel: read('--panel2', '#0d1015'),
-    mono: read('--mono', 'monospace'),
-  };
-  return css;
 }
 
 function fmtUsd(value) {
@@ -98,25 +74,6 @@ function label(value) {
   return String(value ?? '—').replace(/_/g, ' ');
 }
 
-/** Levels are coloured by what is happening to them, not by an arbitrary ramp. */
-function stateColor(levelState) {
-  const c = palette();
-  switch (levelState) {
-    case 'WITHDRAWING':
-    case 'UNRELIABLE':
-      return c.warn;
-    case 'BROKEN':
-    case 'VACUUM':
-      return c.muted;
-    case 'DEFENDING':
-    case 'ABSORBING':
-    case 'REPLENISHING':
-      return c.accent;
-    default:
-      return null;
-  }
-}
-
 function stateTone(marketState) {
   const s = String(marketState ?? '');
   if (s.includes('ABSORPTION') || s.includes('DEFENDING')) return 'abs';
@@ -130,7 +87,6 @@ export function setPassiveMarket(market) {
   const next = market === 'spot' ? 'spot' : 'perp';
   if (next === state.market) return;
   state.market = next;
-  state.netLiquidity = null;
   state.dirty = true;
 }
 
@@ -157,7 +113,6 @@ export function setPassiveSymbol(symbol) {
   state.symbol = symbol;
   state.selected = null;
   state.detail = null;
-  state.netLiquidity = null;
   state.dirty = true;
   renderCoinTabs();
   updateSymbolLabel();
@@ -186,7 +141,6 @@ export function initPassiveLiquidity(hooks = {}) {
   el.quality = $('pl-quality');
   el.symbol = $('pl-symbol');
   el.coinTabs = $('pl-coin-tabs');
-  el.profile = $('pl-profile');
   el.bands = $('pl-bands');
   el.net = $('pl-net');
   el.sides = $('pl-sides');
@@ -202,9 +156,7 @@ export function initPassiveLiquidity(hooks = {}) {
       const windowMs = Number(btn.dataset.netWindow);
       if (!NET_WINDOWS.some((window) => window.ms === windowMs)) return;
       state.netWindowMs = windowMs;
-      state.netLiquidity = null;
       state.dirty = true;
-      void pollNetLiquidity();
     });
   }
 
@@ -216,10 +168,11 @@ export function initPassiveLiquidity(hooks = {}) {
     });
   }
 
-  if (el.profile) {
-    el.profile.addEventListener('click', onProfileClick);
-    el.profile.addEventListener('mousemove', (ev) => {
-      el.profile.style.cursor = hitTest(ev) ? 'pointer' : 'default';
+  if (el.walls) {
+    el.walls.addEventListener('click', (ev) => {
+      const row = ev.target.closest('[data-pl-side][data-pl-price]');
+      if (!row) return;
+      void selectLevel(row.dataset.plSide, Number(row.dataset.plPrice));
     });
   }
 
@@ -229,7 +182,6 @@ export function initPassiveLiquidity(hooks = {}) {
 
   renderCoinTabs();
   updateSymbolLabel();
-  setInterval(pollNetLiquidity, HEATMAP_POLL_MS);
   loop();
 }
 
@@ -270,39 +222,14 @@ function loop() {
   }
 }
 
-async function pollNetLiquidity() {
-  if (!state.symbol || !el.panel || el.panel.classList.contains('hidden')) return;
-  const request = ++state.netRequest;
-  const symbol = state.symbol;
-  const market = state.market;
-  const windowMs = state.netWindowMs;
-  try {
-    const params = new URLSearchParams({ symbol, market, windowMs: String(windowMs) });
-    const res = await fetch(`/api/passive-liquidity/net?${params}`);
-    const body = await res.json();
-    if (request !== state.netRequest || symbol !== state.symbol || market !== state.market || windowMs !== state.netWindowMs) return;
-    state.netLiquidity = body.netLiquidity ?? null;
-    state.dirty = true;
-  } catch {
-    // Keep the last valid window on a transient request failure.
-  }
-}
-
-function hitTest(ev) {
-  const rect = el.profile.getBoundingClientRect();
-  const y = ev.clientY - rect.top;
-  return state.profileHitboxes.find((box) => y >= box.top && y <= box.bottom) ?? null;
-}
-
-async function onProfileClick(ev) {
-  const box = hitTest(ev);
-  if (!box) return;
-  state.selected = { side: box.side, price: box.price };
+async function selectLevel(side, price) {
+  if (!side || !Number.isFinite(price)) return;
+  state.selected = { side, price };
   state.dirty = true;
   try {
     const res = await fetch(
       `/api/passive-liquidity/level?symbol=${encodeURIComponent(state.symbol)}&market=${state.market}` +
-        `&side=${box.side}&price=${box.price}`,
+        `&side=${side}&price=${price}`,
     );
     const body = await res.json();
     state.detail = body.detail ?? null;
@@ -312,12 +239,17 @@ async function onProfileClick(ev) {
   state.dirty = true;
 }
 
+function netForWindow(snap) {
+  if (!snap) return null;
+  const key = String(state.netWindowMs);
+  return snap.netByWindow?.[key]
+    ?? (state.netWindowMs === (snap.netLiquidity?.windowMs ?? 10_000) ? snap.netLiquidity : null)
+    ?? null;
+}
+
 function render() {
   const snap = current();
   renderHeader(snap);
-  const range = priceRange(snap);
-  state.priceRange = range;
-  drawProfile(snap, range);
   renderBands(snap);
   renderNetLiquidity(snap);
   renderSides(snap);
@@ -342,177 +274,6 @@ function renderHeader(snap) {
     el.quality.className = `pl-quality ${trusted ? '' : 'bad'}`;
     el.quality.title = (q?.reasons ?? []).join(' · ') || 'stream healthy';
   }
-}
-
-function priceRange(snap) {
-  const prices = [];
-  for (const level of snap?.profile ?? []) prices.push(level.price);
-  if (!prices.length) return null;
-  let min = Infinity;
-  let max = -Infinity;
-  for (const p of prices) {
-    if (p < min) min = p;
-    if (p > max) max = p;
-  }
-  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return null;
-  const pad = (max - min) * 0.02;
-  return { min: min - pad, max: max + pad };
-}
-
-function prepCanvas(canvas) {
-  if (!canvas) return null;
-  const dpr = window.devicePixelRatio || 1;
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  if (width <= 0 || height <= 0) return null;
-  if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
-    canvas.width = Math.round(width * dpr);
-    canvas.height = Math.round(height * dpr);
-  }
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-  return { ctx, width, height };
-}
-
-function yFor(price, range, height) {
-  const t = (price - range.min) / (range.max - range.min);
-  return height - t * height;
-}
-
-/**
- * Collapse price levels that would occupy the same text row. The profile can
- * contain dozens of ticks only a few pixels apart; drawing every label makes
- * both the price and notional columns unreadable. Each row keeps the strongest
- * real level for click-through while its bar represents the row's total depth.
- */
-function readableProfileRows(levels, range, plotTop, plotHeight, minRowHeight) {
-  const rows = new Map();
-  for (const level of levels) {
-    const exactY = plotTop + yFor(level.price, range, plotHeight);
-    const slot = Math.max(0, Math.min(
-      Math.floor(plotHeight / minRowHeight) - 1,
-      Math.floor((exactY - plotTop) / minRowHeight),
-    ));
-    const key = `${level.side}:${slot}`;
-    const current = rows.get(key);
-    if (!current) {
-      rows.set(key, {
-        ...level,
-        slot,
-        notionalValue: level.notionalValue,
-        strongestNotional: level.notionalValue,
-      });
-      continue;
-    }
-    const total = current.notionalValue + level.notionalValue;
-    const strongest = level.notionalValue > current.strongestNotional ? level : current;
-    rows.set(key, {
-      ...strongest,
-      slot,
-      notionalValue: total,
-      strongestNotional: Math.max(current.strongestNotional ?? current.notionalValue, level.notionalValue),
-      isWall: current.isWall || level.isWall,
-      approachWithdrawal: current.approachWithdrawal || level.approachWithdrawal,
-    });
-  }
-  return [...rows.values()].sort((a, b) => a.slot - b.slot);
-}
-
-function drawProfile(snap, range) {
-  const surface = prepCanvas(el.profile);
-  state.profileHitboxes = [];
-  if (!surface) return;
-  const { ctx, width, height } = surface;
-  const c = palette();
-
-  ctx.fillStyle = c.panel;
-  ctx.fillRect(0, 0, width, height);
-
-  const levels = snap?.profile ?? [];
-  if (!range || !levels.length) {
-    ctx.fillStyle = c.muted;
-    ctx.font = `11px ${c.mono}`;
-    ctx.fillText('no resting liquidity', 10, 18);
-    return;
-  }
-
-  const plotTop = 28;
-  const plotBottom = 10;
-  const plotHeight = Math.max(1, height - plotTop - plotBottom);
-  const rowHeight = 16;
-  const rows = readableProfileRows(levels, range, plotTop, plotHeight, rowHeight);
-
-  let peak = 0;
-  for (const level of rows) peak = Math.max(peak, level.notionalValue);
-  if (peak <= 0) return;
-
-  const labelWidth = 88;
-  const valueWidth = 66;
-  const barSpace = Math.max(20, width - labelWidth - valueWidth - 8);
-
-  ctx.font = `600 10px ${c.mono}`;
-  ctx.textBaseline = 'middle';
-
-  for (const level of rows) {
-    const y = plotTop + level.slot * rowHeight + rowHeight / 2;
-    const isBid = level.side === 'BID';
-    const barWidth = (level.notionalValue / peak) * barSpace;
-    const color = stateColor(level.state) ?? (isBid ? c.bid : c.ask);
-    const selected =
-      state.selected && state.selected.side === level.side && state.selected.price === level.price;
-
-    ctx.globalAlpha = level.isWall ? 0.95 : 0.6;
-    ctx.fillStyle = color;
-    ctx.fillRect(labelWidth, y - rowHeight / 2, barWidth, Math.max(2, rowHeight - 1));
-    ctx.globalAlpha = 1;
-
-    if (level.approachWithdrawal) {
-      ctx.strokeStyle = c.warn;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(labelWidth, y - rowHeight / 2, Math.max(barWidth, 2), Math.max(2, rowHeight - 1));
-    }
-    if (selected) {
-      ctx.strokeStyle = c.text;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(1, y - rowHeight / 2, width - 2, Math.max(2, rowHeight - 1));
-    }
-
-    ctx.fillStyle = isBid ? c.bid : c.ask;
-    ctx.textAlign = 'left';
-    ctx.fillText(`${isBid ? 'B' : 'A'} ${fmtPrice(level.price)}`, 4, y);
-    ctx.fillStyle = c.text;
-    ctx.textAlign = 'right';
-    ctx.fillText(fmtUsd(level.notionalValue), width - 4, y);
-
-    state.profileHitboxes.push({
-      side: level.side,
-      price: level.price,
-      top: y - rowHeight / 2,
-      bottom: y + rowHeight / 2,
-    });
-  }
-
-  if (snap.mid > 0) {
-    const y = plotTop + yFor(snap.mid, range, plotHeight);
-    ctx.strokeStyle = c.accent;
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 3]);
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    const midLabel = `MID ${fmtPrice(snap.mid)}`;
-    ctx.font = `700 10px ${c.mono}`;
-    const midLabelWidth = ctx.measureText(midLabel).width + 8;
-    ctx.fillStyle = c.panel;
-    ctx.fillRect(3, y - 17, midLabelWidth, 14);
-    ctx.fillStyle = c.accent;
-    ctx.textAlign = 'left';
-    ctx.fillText(midLabel, 7, y - 10);
-  }
-  ctx.textAlign = 'left';
 }
 
 function metric(key, value, cls = '', title = '') {
@@ -557,7 +318,7 @@ function netTone(side) {
 
 function renderNetLiquidity(snap) {
   if (!el.net) return;
-  const net = state.netLiquidity ?? (state.netWindowMs === 10_000 ? snap?.netLiquidity : null);
+  const net = netForWindow(snap);
   if (!net) {
     el.net.innerHTML = card('Net liquidity', '<p class="pl-empty">collecting depth history…</p>');
     return;
@@ -716,8 +477,12 @@ function renderWalls(snap) {
     return;
   }
   const wallRows = walls
-    .map(
-      (wall) => `<div class="pl-wall">
+    .map((wall) => {
+      const selected =
+        state.selected &&
+        state.selected.side === wall.side &&
+        state.selected.price === wall.price;
+      return `<div class="pl-wall${selected ? ' selected' : ''}" data-pl-side="${wall.side}" data-pl-price="${wall.price}">
         <span class="pl-wall-side ${wall.side === 'BID' ? 'buy' : 'sell'}">${wall.side}</span>
         <span class="pl-wall-price">${fmtPrice(wall.price)}</span>
         <span class="pl-wall-size">${fmtUsd(wall.notional)}</span>
@@ -725,8 +490,8 @@ function renderWalls(snap) {
         <span class="pl-wall-score" title="strength ${Math.round(wall.strength)} · reliability ${Math.round(wall.reliability)} · size ${pct(wall.sizePercentile)} · age ${fmtAge(wall.ageMs)}">${Math.round(wall.strength)}/${Math.round(wall.reliability)}</span>
         <span class="pl-wall-life ${wall.lifecycle === 'WITHDRAWN' || wall.lifecycle === 'BROKEN' ? 'bad' : ''}">${label(wall.lifecycle)}</span>
         ${wall.labels.length ? `<span class="pl-wall-flag" title="${wall.labels.map(label).join(' · ')}">!</span>` : ''}
-      </div>`,
-    )
+      </div>`;
+    })
     .join('');
   const zoneRows = zones
     .map(
@@ -775,7 +540,7 @@ function renderLevel(snap) {
   if (!detail?.level) {
     el.level.innerHTML = card(
       'Price level',
-      '<p class="pl-empty">click a level in the profile to inspect its history</p>',
+      '<p class="pl-empty">click a wall to inspect its history</p>',
     );
     return;
   }

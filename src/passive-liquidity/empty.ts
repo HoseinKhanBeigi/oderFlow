@@ -5,10 +5,19 @@ import type {
   PassiveSide,
   PassiveSideMetrics,
 } from '../models/passive-liquidity.js';
+import { NET_LIQUIDITY_WINDOWS_MS } from '../models/passive-liquidity.js';
 import { emptyAbsorption } from './absorption.js';
 import { emptyMeasure } from './normalize.js';
 import { emptyVacuum } from './vacuum.js';
 import { emptyNetLiquiditySnapshot } from './net-liquidity.js';
+
+function emptyNetByWindow() {
+  const out: PassiveLiquiditySnapshot['netByWindow'] = {};
+  for (const ms of NET_LIQUIDITY_WINDOWS_MS) {
+    out[String(ms)] = emptyNetLiquiditySnapshot(ms);
+  }
+  return out;
+}
 
 function emptySide(side: PassiveSide): PassiveSideMetrics {
   return {
@@ -156,6 +165,7 @@ export function emptyPassiveLiquiditySnapshot(
     bands: [],
     imbalanceCuts: [],
     netLiquidity: emptyNetLiquiditySnapshot(),
+    netByWindow: emptyNetByWindow(),
     profile: [],
     walls: [],
     nearestBidWall: null,
