@@ -106,3 +106,41 @@ describe('passive vs aggressive winner', () => {
     expect(snap.flowBattle.state).toBe('BALANCED_AUCTION');
   });
 });
+
+describe('passive liquidity trade matching', () => {
+  it('records consumption when a depth reduction follows its trade by several hundred milliseconds', () => {
+    const of = engine();
+    const sym = of.getSymbol('BTCUSDT', 'perp');
+    sym.ingestBookSnapshot(book({ timestamp: T0, mid: 100, askQuote: 1_000_000 }));
+    sym.ingestTrade(trade({
+      timestamp: T0 + 100,
+      price: 100.1,
+      quoteValue: 100_000,
+      side: 'BUY',
+      tradeId: 'delayed-depth',
+    }));
+    sym.ingestBookSnapshot(book({ timestamp: T0 + 600, mid: 100, askQuote: 900_000 }));
+
+    const snap = sym.passiveLiquidity.snapshot({ now: T0 + 600 });
+    expect(snap.ask.consumedNotional).toBeCloseTo(100_000, -2);
+    expect(snap.ask.cancelledNotional).toBe(0);
+  });
+
+  it('records consumption when the trade arrives after the depth reduction', () => {
+    const of = engine();
+    const sym = of.getSymbol('BTCUSDT', 'perp');
+    sym.ingestBookSnapshot(book({ timestamp: T0, mid: 100, askQuote: 1_000_000 }));
+    sym.ingestBookSnapshot(book({ timestamp: T0 + 100, mid: 100, askQuote: 900_000 }));
+    sym.ingestTrade(trade({
+      timestamp: T0 + 600,
+      price: 100.1,
+      quoteValue: 100_000,
+      side: 'BUY',
+      tradeId: 'delayed-trade',
+    }));
+
+    const snap = sym.passiveLiquidity.snapshot({ now: T0 + 600 });
+    expect(snap.ask.consumedNotional).toBeCloseTo(100_000, -2);
+    expect(snap.ask.cancelledNotional).toBe(0);
+  });
+});

@@ -234,9 +234,11 @@ export const DEFAULT_CONFIG: EngineConfig = {
     distanceWeightK: 0.03,
     maxTrackedBps: 250,
 
-    tradeMatchWindowMs: 100,
+    // Trades and partial-depth updates are separate exchange streams. During
+    // bursts they can legitimately reach us several hundred milliseconds apart.
+    tradeMatchWindowMs: 750,
     tradeMatchTicks: 1,
-    unresolvedCommitMs: 150,
+    unresolvedCommitMs: 1_000,
     replenishWindowMs: 5_000,
 
     levelSampleSize: 4_096,
