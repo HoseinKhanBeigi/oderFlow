@@ -162,6 +162,17 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.url?.startsWith('/api/passive-liquidity/net')) {
+      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
+      const engine = passiveEngineFor(u.searchParams);
+      const requested = Number(u.searchParams.get('windowMs') ?? 10_000);
+      const windowMs = Number.isFinite(requested)
+        ? Math.max(10_000, Math.min(900_000, Math.floor(requested)))
+        : 10_000;
+      json(res, { netLiquidity: engine ? engine.netLiquidity(Date.now(), windowMs) : null });
+      return;
+    }
+
     if (req.url?.startsWith('/api/passive-liquidity')) {
       const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
       const engine = passiveEngineFor(u.searchParams);

@@ -11,6 +11,13 @@
 const RENDER_MS = 80;
 const HEATMAP_POLL_MS = 1000;
 const DEFAULT_SYMBOL = 'BTCUSDT';
+const NET_WINDOWS = [
+  { ms: 10_000, label: '10s' },
+  { ms: 30_000, label: '30s' },
+  { ms: 60_000, label: '1m' },
+  { ms: 300_000, label: '5m' },
+  { ms: 900_000, label: '15m' },
+];
 
 const state = {
   snapshots: new Map(),
@@ -26,6 +33,9 @@ const state = {
   rafId: 0,
   profileHitboxes: [],
   priceRange: null,
+  netWindowMs: 10_000,
+  netLiquidity: null,
+  netRequest: 0,
 };
 
 const el = {};
@@ -125,6 +135,7 @@ export function setPassiveMarket(market) {
   state.market = next;
   state.heatmap = [];
   state.heatmapSymbol = null;
+  state.netLiquidity = null;
   state.dirty = true;
 }
 
@@ -153,6 +164,7 @@ export function setPassiveSymbol(symbol) {
   state.detail = null;
   state.heatmap = [];
   state.heatmapSymbol = null;
+  state.netLiquidity = null;
   state.dirty = true;
   renderCoinTabs();
   updateSymbolLabel();
@@ -191,6 +203,19 @@ export function initPassiveLiquidity(hooks = {}) {
   el.why = $('pl-why');
   el.level = $('pl-level');
 
+  if (el.net) {
+    el.net.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-net-window]');
+      if (!btn) return;
+      const windowMs = Number(btn.dataset.netWindow);
+      if (!NET_WINDOWS.some((window) => window.ms === windowMs)) return;
+      state.netWindowMs = windowMs;
+      state.netLiquidity = null;
+      state.dirty = true;
+      void pollNetLiquidity();
+    });
+  }
+
   if (el.coinTabs) {
     el.coinTabs.addEventListener('click', (ev) => {
       const btn = ev.target.closest('[data-pl-symbol]');
@@ -213,6 +238,7 @@ export function initPassiveLiquidity(hooks = {}) {
   renderCoinTabs();
   updateSymbolLabel();
   setInterval(pollHeatmap, HEATMAP_POLL_MS);
+  setInterval(pollNetLiquidity, HEATMAP_POLL_MS);
   loop();
 }
 
@@ -265,6 +291,24 @@ async function pollHeatmap() {
     state.dirty = true;
   } catch {
     // A failed poll just leaves the previous frames on screen.
+  }
+}
+
+async function pollNetLiquidity() {
+  if (!state.symbol || !el.panel || el.panel.classList.contains('hidden')) return;
+  const request = ++state.netRequest;
+  const symbol = state.symbol;
+  const market = state.market;
+  const windowMs = state.netWindowMs;
+  try {
+    const params = new URLSearchParams({ symbol, market, windowMs: String(windowMs) });
+    const res = await fetch(`/api/passive-liquidity/net?${params}`);
+    const body = await res.json();
+    if (request !== state.netRequest || symbol !== state.symbol || market !== state.market || windowMs !== state.netWindowMs) return;
+    state.netLiquidity = body.netLiquidity ?? null;
+    state.dirty = true;
+  } catch {
+    // Keep the last valid window on a transient request failure.
   }
 }
 
@@ -614,7 +658,7 @@ function netTone(side) {
 
 function renderNetLiquidity(snap) {
   if (!el.net) return;
-  const net = snap?.netLiquidity;
+  const net = state.netLiquidity ?? (state.netWindowMs === 10_000 ? snap?.netLiquidity : null);
   if (!net) {
     el.net.innerHTML = card('Net liquidity', '<p class="pl-empty">collecting depth history…</p>');
     return;
@@ -640,9 +684,12 @@ function renderNetLiquidity(snap) {
   const flags = net.flags?.length
     ? `<div class="pl-net-flags">${net.flags.map((flag) => `<span>${label(flag)}</span>`).join('')}</div>`
     : '';
+  const tabs = `<div class="pl-net-windows" aria-label="Net liquidity timeframe">${NET_WINDOWS.map((window) =>
+    `<button class="chart-tf-tab${window.ms === state.netWindowMs ? ' active' : ''}" data-net-window="${window.ms}" type="button">${window.label}</button>`,
+  ).join('')}</div>`;
   el.net.innerHTML = card(
-    `Net liquidity <span class="muted">${Math.round(net.windowMs / 1_000)}s change</span>`,
-    `<div class="pl-sides">${side(net.bid, 'BID')}${side(net.ask, 'ASK')}</div>
+    `Net liquidity <span class="muted">${NET_WINDOWS.find((window) => window.ms === net.windowMs)?.label ?? `${Math.round(net.windowMs / 1_000)}s`} change</span>`,
+    `${tabs}<div class="pl-sides">${side(net.bid, 'BID')}${side(net.ask, 'ASK')}</div>
      <div class="pl-net-summary">
        ${metric('Near 10bps bid', signedUsd(near.bid.behavioralNetChange), netTone(near.bid))}
        ${metric('Near 10bps ask', signedUsd(near.ask.behavioralNetChange), netTone(near.ask))}

@@ -3,7 +3,7 @@ import {
   ingestPassiveLiquidity,
   setPassiveCoins,
   setPassiveSymbol,
-} from './passive-liquidity.js?v=net-liquidity1';
+} from './passive-liquidity.js?v=net-liquidity-tf1';
 
 const _noopEl = {
   textContent: '',

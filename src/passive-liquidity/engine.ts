@@ -95,6 +95,7 @@ export class PassiveLiquidityEngine {
   private crossedBook = false;
   private truncatedLevels = 0;
   private resets = 0;
+  private lastNetLiquidityTrustworthy = false;
 
   constructor(
     readonly symbol: string,
@@ -230,6 +231,7 @@ export class PassiveLiquidityEngine {
       },
       this.config,
     );
+    this.lastNetLiquidityTrustworthy = quality.trustworthy;
 
     const netLiquidity = this.netLiquidityTracker.snapshot(now, reportWindow, quality.trustworthy);
 
@@ -599,6 +601,11 @@ export class PassiveLiquidityEngine {
       wall: null,
       memory: this.memory.get(side, price, mid),
     };
+  }
+
+  netLiquidity(now: number, windowMs: number) {
+    const boundedWindow = Math.max(10_000, Math.min(900_000, windowMs));
+    return this.netLiquidityTracker.snapshot(now, boundedWindow, this.lastNetLiquidityTrustworthy);
   }
 
   heatmap(): HeatmapFrame[] {
