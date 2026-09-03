@@ -33,6 +33,13 @@ export type {
   AlertEvent,
 } from './signals.js';
 export type {
+  NetAggressionSnapshot,
+  NetAggressionSide,
+  NetAggressionState,
+  NetAggressionWindowId,
+} from './net-aggression.js';
+export { NET_AGGRESSION_WINDOWS } from './net-aggression.js';
+export type {
   DailyBias,
   DailySetup,
   DailySignal,

@@ -3,6 +3,7 @@ import type { MovePotentialSnapshot } from './movement.js';
 import type { FlowBattleSnapshot } from './passive.js';
 import type { LiquidityResponseSnapshot } from './liquidity-response.js';
 import type { PassiveLiquiditySnapshot } from './passive-liquidity.js';
+import type { NetAggressionSnapshot } from './net-aggression.js';
 
 export interface AbsorptionResult {
   detected: boolean;
@@ -80,6 +81,8 @@ export interface WindowSnapshot {
   flowBattle: FlowBattleSnapshot;
   liquidityResponse: LiquidityResponseSnapshot;
   passiveLiquidity: PassiveLiquiditySnapshot;
+  /** Executed-trade aggression only (no cancel / replenish). */
+  netAggression: NetAggressionSnapshot;
 }
 
 export interface MultiWindowSnapshot {

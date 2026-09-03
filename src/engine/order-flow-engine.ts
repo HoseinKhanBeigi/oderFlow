@@ -1,5 +1,6 @@
 import { emptyLiquidityResponse } from '../liquidity-response/empty.js';
 import { mergeConfig, type EngineConfig } from '../config/index.js';
+import { buildNetAggression } from '../flow/net-aggression.js';
 import type { AlertEvent, MultiWindowSnapshot, SpotPerpSnapshot, WindowSnapshot } from '../models/signals.js';
 import type {
   LiquidationEvent,
@@ -104,6 +105,10 @@ function combineSnapshots(
   const sell = a.aggressiveSellVolume + b.aggressiveSellVolume;
   const total = buy + sell;
   const delta = buy - sell;
+  const buyCount = a.buyTradeCount + b.buyTradeCount;
+  const sellCount = a.sellTradeCount + b.sellTradeCount;
+  const largeBuy = a.largeBuyVolume + b.largeBuyVolume;
+  const largeSell = a.largeSellVolume + b.largeSellVolume;
   return {
     ...b,
     symbol,
@@ -111,19 +116,34 @@ function combineSnapshots(
     window,
     aggressiveBuyVolume: buy,
     aggressiveSellVolume: sell,
-    buyTradeCount: a.buyTradeCount + b.buyTradeCount,
-    sellTradeCount: a.sellTradeCount + b.sellTradeCount,
-    averageBuySize: buy / Math.max(1, a.buyTradeCount + b.buyTradeCount),
-    averageSellSize: sell / Math.max(1, a.sellTradeCount + b.sellTradeCount),
+    buyTradeCount: buyCount,
+    sellTradeCount: sellCount,
+    averageBuySize: buy / Math.max(1, buyCount),
+    averageSellSize: sell / Math.max(1, sellCount),
     delta,
     deltaPercent: total === 0 ? 0 : delta / total,
-    largeBuyVolume: a.largeBuyVolume + b.largeBuyVolume,
-    largeSellVolume: a.largeSellVolume + b.largeSellVolume,
+    largeBuyVolume: largeBuy,
+    largeSellVolume: largeSell,
     forcedBuyVolume: a.forcedBuyVolume + b.forcedBuyVolume,
     forcedSellVolume: a.forcedSellVolume + b.forcedSellVolume,
     largestBuy: Math.max(a.largestBuy, b.largestBuy),
     largestSell: Math.max(a.largestSell, b.largestSell),
     liquidityResponse: emptyLiquidityResponse(),
+    netAggression: buildNetAggression({
+      window,
+      buyVolume: buy,
+      sellVolume: sell,
+      buyCount,
+      sellCount,
+      largeBuyVolume: largeBuy,
+      largeSellVolume: largeSell,
+      buyPercentile: Math.max(a.netAggression?.buyPercentile ?? 50, b.netAggression?.buyPercentile ?? 50),
+      sellPercentile: Math.max(a.netAggression?.sellPercentile ?? 50, b.netAggression?.sellPercentile ?? 50),
+      netMagnitudePercentile: Math.max(
+        a.netAggression?.netPercentile ?? 50,
+        b.netAggression?.netPercentile ?? 50,
+      ),
+    }),
   };
 }
 

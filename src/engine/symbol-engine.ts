@@ -12,6 +12,7 @@ import { FlowClusterDetector } from '../flow/cluster-detector.js';
 import { CVDEngine } from '../flow/cvd-engine.js';
 import { LargeTradeDetector } from '../flow/large-trade-detector.js';
 import { detectPersistentFlow } from '../flow/persistent-flow.js';
+import { buildNetAggression } from '../flow/net-aggression.js';
 import { RollingFlowEngine } from '../flow/rolling-flow-engine.js';
 import { LargeTradeTape } from '../flow/tape.js';
 import { ConsumptionEngine } from '../liquidity/consumption-engine.js';
@@ -449,6 +450,48 @@ export class SymbolEngine {
       metrics,
     });
 
+    const liquidityResponse = this.liquidityResponse.snapshot({
+      now,
+      windowMs: WINDOW_MS[window],
+      buy: agg.buyVolume,
+      sell: agg.sellVolume,
+      buyCount: agg.buyCount,
+      sellCount: agg.sellCount,
+      largeBuyCount: this.lastLargeBuyCount,
+      largeSellCount: this.lastLargeSellCount,
+      priceStart,
+      priceEnd,
+      priceHigh: agg.priceHigh || Math.max(priceStart, priceEnd),
+      priceLow: agg.priceLow || Math.min(priceStart, priceEnd),
+      cvdDirection: cvd.direction,
+      shortLiquidationUsd: agg.forcedBuyVolume,
+      longLiquidationUsd: agg.forcedSellVolume,
+      flags: this.integrity.flags,
+      bookEmpty: this.book.empty(),
+      lastTradeAgeMs: this.integrity.lastTradeTimestamp
+        ? Math.max(0, now - this.integrity.lastTradeTimestamp)
+        : 0,
+      lastBookAgeMs: this.integrity.lastBookTimestamp
+        ? Math.max(0, now - this.integrity.lastBookTimestamp)
+        : 0,
+      exchangeCount: 1,
+      oiExpected: this.marketType === 'perp',
+      liquidationExpected: this.marketType === 'perp',
+    });
+
+    const netAggression = buildNetAggression({
+      window,
+      buyVolume: agg.buyVolume,
+      sellVolume: agg.sellVolume,
+      buyCount: agg.buyCount,
+      sellCount: agg.sellCount,
+      largeBuyVolume: agg.largeBuyVolume,
+      largeSellVolume: agg.largeSellVolume,
+      buyPercentile: view.buyFlowPercentile,
+      sellPercentile: view.sellFlowPercentile,
+      netMagnitudePercentile: liquidityResponse.norms.delta.percentile,
+    });
+
     const snap: WindowSnapshot = {
       symbol: this.symbol,
       marketType: this.marketType,
@@ -495,35 +538,9 @@ export class SymbolEngine {
       confidence: conf,
       state,
       flowBattle,
-      liquidityResponse: this.liquidityResponse.snapshot({
-        now,
-        windowMs: WINDOW_MS[window],
-        buy: agg.buyVolume,
-        sell: agg.sellVolume,
-        buyCount: agg.buyCount,
-        sellCount: agg.sellCount,
-        largeBuyCount: this.lastLargeBuyCount,
-        largeSellCount: this.lastLargeSellCount,
-        priceStart,
-        priceEnd,
-        priceHigh: agg.priceHigh || Math.max(priceStart, priceEnd),
-        priceLow: agg.priceLow || Math.min(priceStart, priceEnd),
-        cvdDirection: cvd.direction,
-        shortLiquidationUsd: agg.forcedBuyVolume,
-        longLiquidationUsd: agg.forcedSellVolume,
-        flags: this.integrity.flags,
-        bookEmpty: this.book.empty(),
-        lastTradeAgeMs: this.integrity.lastTradeTimestamp
-          ? Math.max(0, now - this.integrity.lastTradeTimestamp)
-          : 0,
-        lastBookAgeMs: this.integrity.lastBookTimestamp
-          ? Math.max(0, now - this.integrity.lastBookTimestamp)
-          : 0,
-        exchangeCount: 1,
-        oiExpected: this.marketType === 'perp',
-        liquidationExpected: this.marketType === 'perp',
-      }),
+      liquidityResponse,
       passiveLiquidity: this.passiveLiquiditySnapshot(now),
+      netAggression,
       movePotential: this.movePotential.evaluate({
         symbol: this.symbol,
         book: this.book,
