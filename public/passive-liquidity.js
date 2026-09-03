@@ -8,6 +8,7 @@
  */
 
 const RENDER_MS = 80;
+const NET_POLL_MS = 2_000;
 const DEFAULT_SYMBOL = 'BTCUSDT';
 const NET_WINDOWS = [
   { ms: 10_000, label: '10s' },
@@ -28,6 +29,8 @@ const state = {
   lastRender: 0,
   rafId: 0,
   netWindowMs: 10_000,
+  netLiquidity: null,
+  netRequest: 0,
 };
 
 const el = {};
@@ -87,7 +90,9 @@ export function setPassiveMarket(market) {
   const next = market === 'spot' ? 'spot' : 'perp';
   if (next === state.market) return;
   state.market = next;
+  state.netLiquidity = null;
   state.dirty = true;
+  void pollNetLiquidity();
 }
 
 /**
@@ -113,9 +118,11 @@ export function setPassiveSymbol(symbol) {
   state.symbol = symbol;
   state.selected = null;
   state.detail = null;
+  state.netLiquidity = null;
   state.dirty = true;
   renderCoinTabs();
   updateSymbolLabel();
+  void pollNetLiquidity();
 }
 
 export function ingestPassiveLiquidity(symbol, snapshot) {
@@ -156,7 +163,9 @@ export function initPassiveLiquidity(hooks = {}) {
       const windowMs = Number(btn.dataset.netWindow);
       if (!NET_WINDOWS.some((window) => window.ms === windowMs)) return;
       state.netWindowMs = windowMs;
+      state.netLiquidity = null;
       state.dirty = true;
+      void pollNetLiquidity();
     });
   }
 
@@ -182,6 +191,8 @@ export function initPassiveLiquidity(hooks = {}) {
 
   renderCoinTabs();
   updateSymbolLabel();
+  setInterval(pollNetLiquidity, NET_POLL_MS);
+  void pollNetLiquidity();
   loop();
 }
 
@@ -222,6 +233,31 @@ function loop() {
   }
 }
 
+async function pollNetLiquidity() {
+  if (!state.symbol || !el.panel || el.panel.classList.contains('hidden')) return;
+  const request = ++state.netRequest;
+  const symbol = state.symbol;
+  const market = state.market;
+  const windowMs = state.netWindowMs;
+  try {
+    const params = new URLSearchParams({ symbol, market, windowMs: String(windowMs) });
+    const res = await fetch(`/api/passive-liquidity/net?${params}`);
+    const body = await res.json();
+    if (
+      request !== state.netRequest
+      || symbol !== state.symbol
+      || market !== state.market
+      || windowMs !== state.netWindowMs
+    ) {
+      return;
+    }
+    state.netLiquidity = body.netLiquidity ?? null;
+    state.dirty = true;
+  } catch {
+    // Keep the last valid window on a transient request failure.
+  }
+}
+
 async function selectLevel(side, price) {
   if (!side || !Number.isFinite(price)) return;
   state.selected = { side, price };
@@ -240,11 +276,16 @@ async function selectLevel(side, price) {
 }
 
 function netForWindow(snap) {
+  if (state.netLiquidity && state.netLiquidity.windowMs === state.netWindowMs) {
+    return state.netLiquidity;
+  }
+  if (state.netLiquidity) return state.netLiquidity;
   if (!snap) return null;
+  if (state.netWindowMs === (snap.netLiquidity?.windowMs ?? 10_000)) {
+    return snap.netLiquidity;
+  }
   const key = String(state.netWindowMs);
-  return snap.netByWindow?.[key]
-    ?? (state.netWindowMs === (snap.netLiquidity?.windowMs ?? 10_000) ? snap.netLiquidity : null)
-    ?? null;
+  return snap.netByWindow?.[key] ?? null;
 }
 
 function render() {
@@ -316,17 +357,6 @@ function netTone(side) {
   return stateName === 'LOW_CONFIDENCE' ? 'low' : '';
 }
 
-function fmtWindowMs(ms) {
-  const n = Math.max(0, Math.round(Number(ms) || 0));
-  if (n < 60_000) return `${Math.round(n / 1000)}s`;
-  if (n < 3_600_000) {
-    const m = Math.floor(n / 60_000);
-    const s = Math.round((n % 60_000) / 1000);
-    return s > 0 ? `${m}m ${s}s` : `${m}m`;
-  }
-  return `${(n / 3_600_000).toFixed(1)}h`;
-}
-
 function renderNetLiquidity(snap) {
   if (!el.net) return;
   const net = netForWindow(snap);
@@ -357,17 +387,12 @@ function renderNetLiquidity(snap) {
     : '';
   const selectedLabel = NET_WINDOWS.find((window) => window.ms === state.netWindowMs)?.label
     ?? `${Math.round(state.netWindowMs / 1_000)}s`;
-  const truncated = net.coverageComplete === false
-    || (Number(net.availableMs) > 0 && Number(net.availableMs) < state.netWindowMs * 0.95);
-  const coverageNote = truncated
-    ? `<p class="pl-net-coverage">Only ${fmtWindowMs(net.availableMs || 0)} of history so far — 5m/15m will match until the feed has run long enough.</p>`
-    : `<p class="pl-net-coverage muted">Current depth is live book (same on every tab). Starting, net change, cancels and consumes change with the lookback.</p>`;
   const tabs = `<div class="pl-net-windows" aria-label="Net liquidity timeframe">${NET_WINDOWS.map((window) =>
     `<button class="chart-tf-tab${window.ms === state.netWindowMs ? ' active' : ''}" data-net-window="${window.ms}" type="button">${window.label}</button>`,
   ).join('')}</div>`;
   el.net.innerHTML = card(
-    `Net liquidity <span class="muted">${selectedLabel}${truncated ? ` · covering ${fmtWindowMs(net.availableMs || 0)}` : ''}</span>`,
-    `${tabs}${coverageNote}<div class="pl-sides">${side(net.bid, 'BID')}${side(net.ask, 'ASK')}</div>
+    `Net liquidity <span class="muted">${selectedLabel}</span>`,
+    `${tabs}<div class="pl-sides">${side(net.bid, 'BID')}${side(net.ask, 'ASK')}</div>
      <div class="pl-net-summary">
        ${metric('Near 10bps bid', signedUsd(near.bid.behavioralNetChange), netTone(near.bid))}
        ${metric('Near 10bps ask', signedUsd(near.ask.behavioralNetChange), netTone(near.ask))}
