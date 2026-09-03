@@ -836,12 +836,12 @@ function applyDataMode(mode) {
     'Stop hunt: sweep high/low then reverse. Distribution at highs: liquidity grabbed then reverse. Vacuum: asks/bids pulled and price ran. Blue = live price.';
   $('imb-cfg').classList.toggle('hidden', !spot);
   refreshStatus();
-  initChart();
   const coins = visibleCoins();
-  if (coins.length) selectedSymbol = coins[0].symbol;
-  $('symbol-label').textContent = `${coins.length} charts · ${mode}`;
+  if (coins.length && !coins.some((coin) => coin.symbol === selectedSymbol)) selectedSymbol = coins[0].symbol;
+  initChart();
   setPassiveCoins(coins);
   seedFootprintKlines();
+  subscribeFootprint();
   scheduleDraw();
 }
 
@@ -1079,6 +1079,22 @@ function visibleCoins() {
   return coins;
 }
 
+function selectedFootprintCoins() {
+  const coins = visibleCoins();
+  const selected = coins.find((coin) => coin.symbol === selectedSymbol);
+  return selected ? [selected] : coins.slice(0, 1);
+}
+
+function syncFootprintSymbolPicker() {
+  const select = document.getElementById('chart-symbol-select');
+  if (!select) return;
+  const coins = visibleCoins();
+  select.innerHTML = coins
+    .map((coin) => `<option value="${coin.symbol}"${coin.symbol === selectedSymbol ? ' selected' : ''}>${coin.label}</option>`)
+    .join('');
+  select.disabled = coins.length < 2;
+}
+
 function noteLivePrice(symbol, price) {
   if (!Number.isFinite(price) || price <= 0) return;
   const view = fpViews.get(symbol);
@@ -1204,7 +1220,7 @@ function bindFpCanvas(symbol, canvas) {
 function buildFpGrid() {
   const grid = document.getElementById('fp-grid');
   if (!grid) return;
-  const coins = visibleCoins();
+  const coins = selectedFootprintCoins();
   fpViews.clear();
   grid.innerHTML = '';
   for (const coin of coins) {
@@ -1235,7 +1251,9 @@ function buildFpGrid() {
     });
     bindFpCanvas(coin.symbol, canvas);
   }
-  $('symbol-label').textContent = `${coins.length} charts · ${footprintMarket()}`;
+  syncFootprintSymbolPicker();
+  const coin = coins[0];
+  $('symbol-label').textContent = coin ? `${coin.label} · ${footprintMarket()}` : '—';
   resizeAllFpViews();
 }
 
@@ -1261,6 +1279,14 @@ function initChart() {
       subscribeFootprint();
     });
     document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
+    document.getElementById('chart-symbol-select')?.addEventListener('change', (e) => {
+      const symbol = e.target.value;
+      if (!visibleCoins().some((coin) => coin.symbol === symbol)) return;
+      selectedSymbol = symbol;
+      buildFpGrid();
+      seedFootprintKlines();
+      subscribeFootprint();
+    });
   }
   buildFpGrid();
 }
@@ -1362,7 +1388,7 @@ async function loadFootprintHistory() {
   const exchange = selectedExchange;
   const market = footprintMarket();
   const req = ++fpHistoryReq;
-  const coins = visibleCoins();
+  const coins = selectedFootprintCoins();
   let enabled = fpHistoryEnabled;
 
   await mapPool(coins, 4, async (coin) => {
@@ -1413,7 +1439,7 @@ async function seedFromKlines() {
   }
   const req = ++fpKlineReq;
   // Prefer Postgres history when present — only backfill empty/thin charts with klines.
-  const coins = visibleCoins().filter((coin) => {
+  const coins = selectedFootprintCoins().filter((coin) => {
     const hist = getFpHistory(coin.symbol, tf, selectedExchange);
     return hist.size < 24;
   });
@@ -2293,14 +2319,13 @@ function rebuildChart() {
 }
 
 function subscribeFootprint() {
-  // Live 1m bars for every coin arrive via footprint_tick broadcast.
-  // Keep a single sub so the server still pushes focused live updates for the first chart.
+  // Subscribe the socket to the one footprint currently on screen.
   if (fpLiveSocket?.readyState !== WebSocket.OPEN) return;
-  const first = visibleCoins()[0];
-  if (!first) return;
+  const selected = selectedFootprintCoins()[0];
+  if (!selected) return;
   fpLiveSocket.send(JSON.stringify({
     type: 'sub_footprint',
-    symbol: first.symbol,
+    symbol: selected.symbol,
     exchange: selectedExchange,
     market: footprintMarket(),
   }));
@@ -2586,7 +2611,11 @@ function setupAlertUi() {
 
 function openAlertSymbol(symbol) {
   if (!symbol) return;
+  if (!visibleCoins().some((coin) => coin.symbol === symbol)) return;
   selectedSymbol = symbol;
+  buildFpGrid();
+  seedFootprintKlines();
+  subscribeFootprint();
   const card = document.getElementById(`fp-card-${symbol}`);
   if (card) {
     document.querySelectorAll('.fp-card.focus').forEach((el) => el.classList.remove('focus'));

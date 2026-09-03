@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Order Flow — Footprint</title>
-  <link rel="stylesheet" href="/styles.css?v=pl-coins1" />
+  <link rel="stylesheet" href="/styles.css?v=single-footprint1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -50,6 +50,10 @@
             <p class="hint" id="chart-hint">Stop hunt: sweep high/low then reverse. Distribution at highs: liquidity grabbed then reverse. Vacuum: asks/bids pulled and price ran. Blue = live price.</p>
           </div>
           <div class="chart-toolbar">
+            <label class="chart-symbol-picker" for="chart-symbol-select">
+              Symbol
+              <select id="chart-symbol-select" aria-label="Footprint symbol"></select>
+            </label>
             <div class="chart-tf-tabs" id="chart-ex-tabs">
               <button class="chart-tf-tab active" data-ex="all" type="button">All</button>
               <button class="chart-tf-tab" data-ex="binance" type="button">Binance</button>
@@ -132,6 +136,6 @@
     </main>
   </div>
 
-  <script src="/app.js?v=pl-coins1" type="module"></script>
+  <script src="/app.js?v=single-footprint1" type="module"></script>
 </body>
 </html>
