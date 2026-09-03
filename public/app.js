@@ -2,6 +2,7 @@ import {
   initPassiveLiquidity,
   ingestPassiveLiquidity,
   setPassiveCoins,
+  setPassiveSymbol,
 } from './passive-liquidity.js';
 
 const _noopEl = {
@@ -840,6 +841,7 @@ function applyDataMode(mode) {
   if (coins.length && !coins.some((coin) => coin.symbol === selectedSymbol)) selectedSymbol = coins[0].symbol;
   initChart();
   setPassiveCoins(coins);
+  setPassiveSymbol(selectedSymbol);
   seedFootprintKlines();
   subscribeFootprint();
   scheduleDraw();
@@ -1283,6 +1285,8 @@ function initChart() {
       const symbol = e.target.value;
       if (!visibleCoins().some((coin) => coin.symbol === symbol)) return;
       selectedSymbol = symbol;
+      setPassiveSymbol(symbol);
+      syncExchangeTabs();
       buildFpGrid();
       seedFootprintKlines();
       subscribeFootprint();
@@ -2613,6 +2617,8 @@ function openAlertSymbol(symbol) {
   if (!symbol) return;
   if (!visibleCoins().some((coin) => coin.symbol === symbol)) return;
   selectedSymbol = symbol;
+  setPassiveSymbol(symbol);
+  syncExchangeTabs();
   buildFpGrid();
   seedFootprintKlines();
   subscribeFootprint();
