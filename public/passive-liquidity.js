@@ -435,6 +435,45 @@ function eventColor(event) {
   }
 }
 
+/**
+ * Collapse price levels that would occupy the same text row. The profile can
+ * contain dozens of ticks only a few pixels apart; drawing every label makes
+ * both the price and notional columns unreadable. Each row keeps the strongest
+ * real level for click-through while its bar represents the row's total depth.
+ */
+function readableProfileRows(levels, range, plotTop, plotHeight, minRowHeight) {
+  const rows = new Map();
+  for (const level of levels) {
+    const exactY = plotTop + yFor(level.price, range, plotHeight);
+    const slot = Math.max(0, Math.min(
+      Math.floor(plotHeight / minRowHeight) - 1,
+      Math.floor((exactY - plotTop) / minRowHeight),
+    ));
+    const key = `${level.side}:${slot}`;
+    const current = rows.get(key);
+    if (!current) {
+      rows.set(key, {
+        ...level,
+        slot,
+        notionalValue: level.notionalValue,
+        strongestNotional: level.notionalValue,
+      });
+      continue;
+    }
+    const total = current.notionalValue + level.notionalValue;
+    const strongest = level.notionalValue > current.strongestNotional ? level : current;
+    rows.set(key, {
+      ...strongest,
+      slot,
+      notionalValue: total,
+      strongestNotional: Math.max(current.strongestNotional ?? current.notionalValue, level.notionalValue),
+      isWall: current.isWall || level.isWall,
+      approachWithdrawal: current.approachWithdrawal || level.approachWithdrawal,
+    });
+  }
+  return [...rows.values()].sort((a, b) => a.slot - b.slot);
+}
+
 function drawProfile(snap, range) {
   const surface = prepCanvas(el.profile);
   state.profileHitboxes = [];
@@ -453,20 +492,25 @@ function drawProfile(snap, range) {
     return;
   }
 
+  const plotTop = 28;
+  const plotBottom = 10;
+  const plotHeight = Math.max(1, height - plotTop - plotBottom);
+  const rowHeight = 16;
+  const rows = readableProfileRows(levels, range, plotTop, plotHeight, rowHeight);
+
   let peak = 0;
-  for (const level of levels) peak = Math.max(peak, level.notionalValue);
+  for (const level of rows) peak = Math.max(peak, level.notionalValue);
   if (peak <= 0) return;
 
-  const labelWidth = 74;
-  const valueWidth = 62;
+  const labelWidth = 88;
+  const valueWidth = 66;
   const barSpace = Math.max(20, width - labelWidth - valueWidth - 8);
-  const rowHeight = Math.max(3, Math.min(16, height / Math.max(1, levels.length)));
 
-  ctx.font = `10px ${c.mono}`;
+  ctx.font = `600 10px ${c.mono}`;
   ctx.textBaseline = 'middle';
 
-  for (const level of levels) {
-    const y = yFor(level.price, range, height);
+  for (const level of rows) {
+    const y = plotTop + level.slot * rowHeight + rowHeight / 2;
     const isBid = level.side === 'BID';
     const barWidth = (level.notionalValue / peak) * barSpace;
     const color = stateColor(level.state) ?? (isBid ? c.bid : c.ask);
@@ -489,14 +533,12 @@ function drawProfile(snap, range) {
       ctx.strokeRect(1, y - rowHeight / 2, width - 2, Math.max(2, rowHeight - 1));
     }
 
-    if (rowHeight >= 8) {
-      ctx.fillStyle = c.muted;
-      ctx.textAlign = 'left';
-      ctx.fillText(fmtPrice(level.price), 4, y);
-      ctx.fillStyle = c.text;
-      ctx.textAlign = 'right';
-      ctx.fillText(fmtUsd(level.notionalValue), width - 4, y);
-    }
+    ctx.fillStyle = isBid ? c.bid : c.ask;
+    ctx.textAlign = 'left';
+    ctx.fillText(`${isBid ? 'B' : 'A'} ${fmtPrice(level.price)}`, 4, y);
+    ctx.fillStyle = c.text;
+    ctx.textAlign = 'right';
+    ctx.fillText(fmtUsd(level.notionalValue), width - 4, y);
 
     state.profileHitboxes.push({
       side: level.side,
@@ -507,7 +549,7 @@ function drawProfile(snap, range) {
   }
 
   if (snap.mid > 0) {
-    const y = yFor(snap.mid, range, height);
+    const y = plotTop + yFor(snap.mid, range, plotHeight);
     ctx.strokeStyle = c.accent;
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 3]);
@@ -516,9 +558,14 @@ function drawProfile(snap, range) {
     ctx.lineTo(width, y);
     ctx.stroke();
     ctx.setLineDash([]);
+    const midLabel = `MID ${fmtPrice(snap.mid)}`;
+    ctx.font = `700 10px ${c.mono}`;
+    const midLabelWidth = ctx.measureText(midLabel).width + 8;
+    ctx.fillStyle = c.panel;
+    ctx.fillRect(3, y - 17, midLabelWidth, 14);
     ctx.fillStyle = c.accent;
     ctx.textAlign = 'left';
-    ctx.fillText(fmtPrice(snap.mid), 4, y - 7);
+    ctx.fillText(midLabel, 7, y - 10);
   }
   ctx.textAlign = 'left';
 }
