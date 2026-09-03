@@ -140,11 +140,6 @@ function parseBookLevels(rows: unknown): { price: number; quantity: number; quot
   return levels;
 }
 
-function exchangeTimestamp(data: Record<string, unknown>): number {
-  const timestamp = Number(data.T ?? data.E);
-  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now();
-}
-
 export class LiveBinanceFeed {
   readonly engine: OrderFlowEngine;
   readonly coins: WatchCoin[];
@@ -406,9 +401,7 @@ export class LiveBinanceFeed {
     const snapshot: OrderBookSnapshot = {
       symbol,
       marketType: market === 'spot' ? 'spot' : 'perp',
-      // Trades already use exchange event time. Keeping book updates on that
-      // same clock prevents network delay from being mistaken for cancellation.
-      timestamp: exchangeTimestamp(data),
+      timestamp: Date.now(),
       bids,
       asks,
       lastUpdateId: typeof data.lastUpdateId === 'number' ? data.lastUpdateId : undefined,
