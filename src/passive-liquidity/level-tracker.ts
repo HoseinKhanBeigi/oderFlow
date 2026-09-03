@@ -94,11 +94,19 @@ export interface SideFlowDelta {
   replenishedNotional: number;
 }
 
+export interface LevelFlowDelta extends SideFlowDelta {
+  side: PassiveSide;
+  price: number;
+  distanceBps: number;
+}
+
 export interface ObservationDelta {
   at: number;
   mid: number;
   bid: SideFlowDelta;
   ask: SideFlowDelta;
+  /** Per-price activity, used for band accounting without treating range migration as cancellation. */
+  levels: LevelFlowDelta[];
   /** Levels dropped by the exchange's depth truncation, excluded from cancels. */
   truncatedLevels: number;
   invalidLevels: number;
@@ -116,6 +124,24 @@ function emptyFlow(): SideFlowDelta {
     replenishedQuantity: 0,
     replenishedNotional: 0,
   };
+}
+
+function flowForLevel(
+  flows: LevelFlowDelta[],
+  level: Pick<TrackedLevel, 'side' | 'price'>,
+  mid: number,
+): LevelFlowDelta {
+  let flow = flows.find((entry) => entry.side === level.side && entry.price === level.price);
+  if (!flow) {
+    flow = {
+      side: level.side,
+      price: level.price,
+      distanceBps: distanceBpsOf(level.side, level.price, mid),
+      ...emptyFlow(),
+    };
+    flows.push(flow);
+  }
+  return flow;
 }
 
 /**
@@ -169,6 +195,7 @@ export class LevelTracker {
       mid,
       bid: emptyFlow(),
       ask: emptyFlow(),
+      levels: [],
       truncatedLevels: 0,
       invalidLevels: 0,
       crossedBook: false,
@@ -300,7 +327,7 @@ export class LevelTracker {
       level.visible = true;
       level.outOfView = false;
       level.removedAt = 0;
-      this.applyQuantity(level, quantity, now, mid, flow);
+      this.applyQuantity(level, quantity, now, mid, flow, delta.levels);
       this.trackApproach(level, now, mid);
       if (quantity > 0) this.sizeDist[side].add(quantity * price);
       level.sizePercentile = this.sizeDist[side].midRank(quantity * price);
@@ -319,12 +346,12 @@ export class LevelTracker {
         continue;
       }
       level.visible = false;
-      this.applyQuantity(level, 0, now, mid, flow);
+      this.applyQuantity(level, 0, now, mid, flow, delta.levels);
       if (level.quantity <= 0) level.removedAt = now;
     }
 
     for (const level of map.values()) {
-      this.settleUnresolved(level, now, mid, flow);
+      this.settleUnresolved(level, now, mid, flow, delta.levels);
       this.settleEpisode(level, now, mid);
     }
   }
@@ -384,6 +411,7 @@ export class LevelTracker {
     now: number,
     mid: number,
     flow: SideFlowDelta,
+    levelFlows: LevelFlowDelta[],
   ): void {
     const previous = level.quantity;
     const change = quantity - previous;
@@ -402,9 +430,12 @@ export class LevelTracker {
     let event: PassiveLiquidityEventType = change > 0 ? 'LIQUIDITY_ADDED' : 'LIQUIDITY_CANCELLED';
 
     if (change > 0) {
+      const levelFlow = flowForLevel(levelFlows, level, mid);
       level.addedQuantity += change;
       flow.addedQuantity += change;
       flow.addedNotional += change * level.price;
+      levelFlow.addedQuantity += change;
+      levelFlow.addedNotional += change * level.price;
 
       const withinWindow = now - level.lastConsumedAt <= this.config.replenishWindowMs;
       if (level.outstandingConsumed > 0 && withinWindow) {
@@ -414,13 +445,15 @@ export class LevelTracker {
         level.replenishmentCount += 1;
         flow.replenishedQuantity += replenished;
         flow.replenishedNotional += replenished * level.price;
+        levelFlow.replenishedQuantity += replenished;
+        levelFlow.replenishedNotional += replenished * level.price;
         event = 'LIQUIDITY_REPLENISHED';
       }
     } else {
       const drop = -change;
       const matched = this.matcher.claim(level.side, level.price, drop, now, this.ticks.tick);
       if (matched > 0) {
-        this.recordConsumption(level, matched, now, flow, previous);
+        this.recordConsumption(level, matched, now, flow, previous, levelFlows, mid);
         event = 'LIQUIDITY_CONSUMED';
       }
       const remainder = drop - matched;
@@ -462,6 +495,8 @@ export class LevelTracker {
     now: number,
     flow: SideFlowDelta,
     sizeBefore: number,
+    levelFlows: LevelFlowDelta[],
+    mid: number,
   ): void {
     level.consumedQuantity += quantity;
     level.executionCount += 1;
@@ -469,6 +504,9 @@ export class LevelTracker {
     level.lastConsumedAt = now;
     flow.consumedQuantity += quantity;
     flow.consumedNotional += quantity * level.price;
+    const levelFlow = flowForLevel(levelFlows, level, mid);
+    levelFlow.consumedQuantity += quantity;
+    levelFlow.consumedNotional += quantity * level.price;
 
     if (!level.episode) {
       level.episode = {
@@ -493,6 +531,7 @@ export class LevelTracker {
     now: number,
     mid: number,
     flow: SideFlowDelta,
+    levelFlows: LevelFlowDelta[],
   ): void {
     if (!level.unresolved.length) return;
     const kept: UnresolvedDrop[] = [];
@@ -504,7 +543,7 @@ export class LevelTracker {
         if (matched > 0) {
           // Quantity is already reduced here, so add the drop back to recover
           // the size the level held before this attack.
-          this.recordConsumption(level, matched, pending.at, flow, level.quantity + pending.quantity);
+          this.recordConsumption(level, matched, pending.at, flow, level.quantity + pending.quantity, levelFlows, mid);
           remaining -= matched;
         }
       }
@@ -514,6 +553,9 @@ export class LevelTracker {
         level.cancelledQuantity += remaining;
         flow.cancelledQuantity += remaining;
         flow.cancelledNotional += remaining * level.price;
+        const levelFlow = flowForLevel(levelFlows, level, mid);
+        levelFlow.cancelledQuantity += remaining;
+        levelFlow.cancelledNotional += remaining * level.price;
         this.pushEvent(
           level,
           'LIQUIDITY_CANCELLED',

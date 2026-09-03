@@ -184,6 +184,7 @@ export function initPassiveLiquidity(hooks = {}) {
   el.heatmap = $('pl-heatmap');
   el.profile = $('pl-profile');
   el.bands = $('pl-bands');
+  el.net = $('pl-net');
   el.sides = $('pl-sides');
   el.aggression = $('pl-aggression');
   el.walls = $('pl-walls');
@@ -299,6 +300,7 @@ function render() {
   drawHeatmap(snap, range);
   drawProfile(snap, range);
   renderBands(snap);
+  renderNetLiquidity(snap);
   renderSides(snap);
   renderAggression(snap);
   renderWalls(snap);
@@ -591,6 +593,63 @@ function pctCls(percentile) {
 function pct(percentile) {
   const p = Number(percentile);
   return Number.isFinite(p) ? `${Math.round(p)}th` : '—';
+}
+
+function signedUsd(value) {
+  const n = Number(value) || 0;
+  return `${n > 0 ? '+' : ''}${fmtUsd(n)}`;
+}
+
+function signedPercent(value, reliable) {
+  if (!reliable || value == null || !Number.isFinite(value)) return 'unreliable base';
+  return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
+}
+
+function netTone(side) {
+  const stateName = String(side?.state ?? 'LOW_CONFIDENCE');
+  if (stateName.includes('GROWING')) return 'buy';
+  if (stateName.includes('SHRINKING')) return 'sell';
+  return stateName === 'LOW_CONFIDENCE' ? 'low' : '';
+}
+
+function renderNetLiquidity(snap) {
+  if (!el.net) return;
+  const net = snap?.netLiquidity;
+  if (!net) {
+    el.net.innerHTML = card('Net liquidity', '<p class="pl-empty">collecting depth history…</p>');
+    return;
+  }
+  const side = (value, name) => `<div class="pl-net-side">
+    <h4 class="${name === 'BID' ? 'buy' : 'sell'}">${name}</h4>
+    <div class="pl-metrics">
+      ${metric('Starting', fmtUsd(value.startingDepth))}
+      ${metric('Current', fmtUsd(value.currentDepth))}
+      ${metric('Net change', signedUsd(value.bookNetChange), netTone(value))}
+      ${metric('Change', signedPercent(value.netChangePercent, value.percentageReliable), netTone(value))}
+      ${metric('New liquidity', signedUsd(value.newAdded), 'buy')}
+      ${metric('Replenished', signedUsd(value.replenished), 'buy')}
+      ${metric('Cancelled', signedUsd(-value.cancelled), 'sell')}
+      ${metric('Consumed', signedUsd(-value.consumed), 'sell')}
+      ${metric('Velocity', `${signedUsd(value.velocityPerSec)}/s`, netTone(value))}
+      ${metric('State', label(value.state), netTone(value))}
+      ${metric('Primary cause', label(value.primaryCause))}
+    </div>
+  </div>`;
+  const near = net.near10Bps;
+  const imbalance = net.liquidityChangeImbalance;
+  const flags = net.flags?.length
+    ? `<div class="pl-net-flags">${net.flags.map((flag) => `<span>${label(flag)}</span>`).join('')}</div>`
+    : '';
+  el.net.innerHTML = card(
+    `Net liquidity <span class="muted">${Math.round(net.windowMs / 1_000)}s change</span>`,
+    `<div class="pl-sides">${side(net.bid, 'BID')}${side(net.ask, 'ASK')}</div>
+     <div class="pl-net-summary">
+       ${metric('Near 10bps bid', signedUsd(near.bid.behavioralNetChange), netTone(near.bid))}
+       ${metric('Near 10bps ask', signedUsd(near.ask.behavioralNetChange), netTone(near.ask))}
+       ${metric('Change imbalance', signedUsd(imbalance), imbalance >= 0 ? 'buy' : 'sell')}
+       <p>${net.interpretation}</p>
+     </div>${flags}`,
+  );
 }
 
 function renderBands(snap) {

@@ -145,6 +145,86 @@ export interface BookImbalanceCut {
   imbalance: number;
 }
 
+export type NetLiquidityState =
+  | 'STRONGLY_GROWING'
+  | 'GROWING'
+  | 'STABLE'
+  | 'SHRINKING'
+  | 'STRONGLY_SHRINKING'
+  | 'WITHDRAWAL_DOMINATED'
+  | 'CONSUMPTION_DOMINATED'
+  | 'REPLENISHMENT_DOMINATED'
+  | 'MIXED'
+  | 'LOW_CONFIDENCE';
+
+export type NetLiquidityCause =
+  | 'NEW_LIQUIDITY'
+  | 'REPLENISHMENT'
+  | 'WITHDRAWAL'
+  | 'CONSUMPTION'
+  | 'MIXED'
+  | 'NONE';
+
+export interface NetLiquiditySide {
+  side: PassiveSide;
+  startingQuantity: number;
+  currentQuantity: number;
+  newAddedQuantity: number;
+  replenishedQuantity: number;
+  cancelledQuantity: number;
+  consumedQuantity: number;
+  bookNetQuantity: number;
+  behavioralNetQuantity: number;
+  startingDepth: number;
+  currentDepth: number;
+  newAdded: number;
+  replenished: number;
+  totalAdded: number;
+  cancelled: number;
+  consumed: number;
+  bookNetChange: number;
+  behavioralNetChange: number;
+  netChangePercent: number | null;
+  percentageReliable: boolean;
+  velocityPerSec: number;
+  velocityPercentile: number;
+  velocityZScore: number;
+  percentile: number;
+  zScore: number;
+  withdrawalPressure: number;
+  cancellationShare: number;
+  consumptionShare: number;
+  reconciliationError: number;
+  reconciliationErrorPercent: number;
+  dataConsistency: 'HIGH' | 'LOW';
+  state: NetLiquidityState;
+  primaryCause: NetLiquidityCause;
+}
+
+export interface NetLiquidityBand {
+  fromBps: number;
+  toBps: number;
+  label: string;
+  bid: NetLiquiditySide;
+  ask: NetLiquiditySide;
+  /** Book change not explained by order activity, normally levels crossing the moving band boundary. */
+  rangeMigration: { bid: number; ask: number };
+}
+
+export interface NetLiquiditySnapshot {
+  windowMs: number;
+  bid: NetLiquiditySide;
+  ask: NetLiquiditySide;
+  near5Bps: { bid: NetLiquiditySide; ask: NetLiquiditySide };
+  near10Bps: { bid: NetLiquiditySide; ask: NetLiquiditySide };
+  bands: NetLiquidityBand[];
+  liquidityChangeImbalance: number;
+  liquidityChangeImbalancePercentile: number;
+  liquidityChangeImbalanceZScore: number;
+  interpretation: string;
+  flags: Array<'LIQUIDITY_ACCOUNTING_MISMATCH' | 'SMALL_BASE_UNRELIABLE_PERCENTAGE'>;
+}
+
 /** Raw value plus every normalization the spec requires. Never a bare threshold. */
 export interface NormalizedMeasure {
   raw: number;
@@ -414,6 +494,20 @@ export interface PassiveLiquidityContext {
   bookImbalance: number;
   nearBookImbalance: number;
 
+  askNetLiquidityChange: number;
+  bidNetLiquidityChange: number;
+  nearAskNetLiquidityChange: number;
+  nearBidNetLiquidityChange: number;
+  askNetLiquidityVelocity: number;
+  bidNetLiquidityVelocity: number;
+  askWithdrawalPressure: number;
+  bidWithdrawalPressure: number;
+  askCancellationShare: number;
+  bidCancellationShare: number;
+  askConsumptionShare: number;
+  bidConsumptionShare: number;
+  liquidityChangeImbalance: number;
+
   nearestAskWall?: PassiveLiquidityWall;
   nearestBidWall?: PassiveLiquidityWall;
 
@@ -447,6 +541,19 @@ export interface PassiveLiquidityFeatures {
   weightedAskDepth: number;
   bookImbalance: number;
   nearBookImbalance: number;
+  askNetLiquidityChange: number;
+  bidNetLiquidityChange: number;
+  nearAskNetLiquidityChange: number;
+  nearBidNetLiquidityChange: number;
+  askNetLiquidityVelocity: number;
+  bidNetLiquidityVelocity: number;
+  askWithdrawalPressure: number;
+  bidWithdrawalPressure: number;
+  askCancellationShare: number;
+  bidCancellationShare: number;
+  askConsumptionShare: number;
+  bidConsumptionShare: number;
+  liquidityChangeImbalance: number;
   bidConsumption: number;
   askConsumption: number;
   bidReplenishment: number;
@@ -490,6 +597,7 @@ export interface PassiveLiquiditySnapshot {
 
   bands: LiquidityBandBucket[];
   imbalanceCuts: BookImbalanceCut[];
+  netLiquidity: NetLiquiditySnapshot;
 
   /** Descending by price: asks above mid, then bids below. */
   profile: PassiveLiquidityLevel[];

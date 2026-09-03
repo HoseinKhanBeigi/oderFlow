@@ -53,6 +53,9 @@ export type {
   PassiveLiquidityFeatures,
   PassiveLiquidityLevel,
   PassiveLiquidityWall,
+  NetLiquiditySnapshot,
+  NetLiquiditySide,
+  NetLiquidityBand,
 } from './models/passive-liquidity.js';
 export { evaluateDailySignal, emptyDailySignal, liquidityContextFromWindow } from './analysis/daily-signal.js';
 export type { DailySignal, DailyBias, DailySetup } from './models/daily-signal.js';

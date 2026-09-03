@@ -8,6 +8,7 @@ import type {
 import { emptyAbsorption } from './absorption.js';
 import { emptyMeasure } from './normalize.js';
 import { emptyVacuum } from './vacuum.js';
+import { emptyNetLiquiditySnapshot } from './net-liquidity.js';
 
 function emptySide(side: PassiveSide): PassiveSideMetrics {
   return {
@@ -65,6 +66,19 @@ export function emptyPassiveLiquidityContext(): PassiveLiquidityContext {
     buyerAbsorptionScore: 0,
     bookImbalance: 0,
     nearBookImbalance: 0,
+    askNetLiquidityChange: 0,
+    bidNetLiquidityChange: 0,
+    nearAskNetLiquidityChange: 0,
+    nearBidNetLiquidityChange: 0,
+    askNetLiquidityVelocity: 0,
+    bidNetLiquidityVelocity: 0,
+    askWithdrawalPressure: 0,
+    bidWithdrawalPressure: 0,
+    askCancellationShare: 0,
+    bidCancellationShare: 0,
+    askConsumptionShare: 0,
+    bidConsumptionShare: 0,
+    liquidityChangeImbalance: 0,
     dataQuality: 0,
   };
 }
@@ -79,6 +93,19 @@ export function emptyPassiveLiquidityFeatures(): PassiveLiquidityFeatures {
     weightedAskDepth: 0,
     bookImbalance: 0,
     nearBookImbalance: 0,
+    askNetLiquidityChange: 0,
+    bidNetLiquidityChange: 0,
+    nearAskNetLiquidityChange: 0,
+    nearBidNetLiquidityChange: 0,
+    askNetLiquidityVelocity: 0,
+    bidNetLiquidityVelocity: 0,
+    askWithdrawalPressure: 0,
+    bidWithdrawalPressure: 0,
+    askCancellationShare: 0,
+    bidCancellationShare: 0,
+    askConsumptionShare: 0,
+    bidConsumptionShare: 0,
+    liquidityChangeImbalance: 0,
     bidConsumption: 0,
     askConsumption: 0,
     bidReplenishment: 0,
@@ -128,6 +155,7 @@ export function emptyPassiveLiquiditySnapshot(
     ask: emptySide('ASK'),
     bands: [],
     imbalanceCuts: [],
+    netLiquidity: emptyNetLiquiditySnapshot(),
     profile: [],
     walls: [],
     nearestBidWall: null,

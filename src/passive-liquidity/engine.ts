@@ -34,6 +34,7 @@ import { assessVacuum } from './vacuum.js';
 import { LiquidityVelocityTracker } from './velocity.js';
 import { distanceToNextWallBps, nearestWall, WallTracker } from './walls.js';
 import { buildWhy } from './why.js';
+import { NetLiquidityTracker } from './net-liquidity.js';
 
 export interface PassiveLiquiditySnapshotInput {
   now: number;
@@ -79,6 +80,7 @@ export class PassiveLiquidityEngine {
   private readonly heatmapRecorder: HeatmapRecorder;
   private readonly prices: RingBuffer<PriceSample>;
   private readonly pendingEvents: RingBuffer<PassiveLiquidityEvent>;
+  private readonly netLiquidityTracker: NetLiquidityTracker;
 
   private lastHeatmapAt = 0;
   private lastBookAt = 0;
@@ -107,6 +109,7 @@ export class PassiveLiquidityEngine {
     this.heatmapRecorder = new HeatmapRecorder(config);
     this.prices = new RingBuffer<PriceSample>(4_096);
     this.pendingEvents = new RingBuffer<PassiveLiquidityEvent>(config.eventCapacity);
+    this.netLiquidityTracker = new NetLiquidityTracker(config.metricSampleSize, config.bandEdgesBps);
   }
 
   onTrade(trade: MarketTrade): void {
@@ -118,6 +121,9 @@ export class PassiveLiquidityEngine {
   onBook(now: number, book: LocalOrderBook): void {
     const delta = this.tracker.observe(now, book);
     if (!delta) return;
+
+    const observedLevels = this.tracker.snapshotLevels(now, delta.mid);
+    this.netLiquidityTracker.observe(now, delta.mid, observedLevels, delta);
 
     this.velocity.record('BID', now, delta.bid);
     this.velocity.record('ASK', now, delta.ask);
@@ -171,6 +177,7 @@ export class PassiveLiquidityEngine {
     this.velocity.reset();
     this.heatmapRecorder.reset();
     this.pendingEvents.clear();
+    this.netLiquidityTracker.reset();
     this.observations = 0;
     this.lastHeatmapAt = 0;
     this.lastSampleAt = 0;
@@ -223,6 +230,8 @@ export class PassiveLiquidityEngine {
       },
       this.config,
     );
+
+    const netLiquidity = this.netLiquidityTracker.snapshot(now, reportWindow, quality.trustworthy);
 
     const relative: RelativeContext = {
       nearbyDepth: depth.nearBidNotional + depth.nearAskNotional,
@@ -447,6 +456,19 @@ export class PassiveLiquidityEngine {
       buyerAbsorptionScore: buyerAbsorption.score,
       bookImbalance,
       nearBookImbalance: nearImbalance,
+      askNetLiquidityChange: netLiquidity.ask.bookNetChange,
+      bidNetLiquidityChange: netLiquidity.bid.bookNetChange,
+      nearAskNetLiquidityChange: netLiquidity.near10Bps.ask.behavioralNetChange,
+      nearBidNetLiquidityChange: netLiquidity.near10Bps.bid.behavioralNetChange,
+      askNetLiquidityVelocity: netLiquidity.ask.velocityPerSec,
+      bidNetLiquidityVelocity: netLiquidity.bid.velocityPerSec,
+      askWithdrawalPressure: netLiquidity.ask.withdrawalPressure,
+      bidWithdrawalPressure: netLiquidity.bid.withdrawalPressure,
+      askCancellationShare: netLiquidity.ask.cancellationShare,
+      bidCancellationShare: netLiquidity.bid.cancellationShare,
+      askConsumptionShare: netLiquidity.ask.consumptionShare,
+      bidConsumptionShare: netLiquidity.bid.consumptionShare,
+      liquidityChangeImbalance: netLiquidity.liquidityChangeImbalance,
       dataQuality: quality.score,
     };
     if (nearestAskWall) context.nearestAskWall = nearestAskWall;
@@ -463,6 +485,19 @@ export class PassiveLiquidityEngine {
       weightedAskDepth: depth.weightedAskNotional,
       bookImbalance,
       nearBookImbalance: nearImbalance,
+      askNetLiquidityChange: netLiquidity.ask.bookNetChange,
+      bidNetLiquidityChange: netLiquidity.bid.bookNetChange,
+      nearAskNetLiquidityChange: netLiquidity.near10Bps.ask.behavioralNetChange,
+      nearBidNetLiquidityChange: netLiquidity.near10Bps.bid.behavioralNetChange,
+      askNetLiquidityVelocity: netLiquidity.ask.velocityPerSec,
+      bidNetLiquidityVelocity: netLiquidity.bid.velocityPerSec,
+      askWithdrawalPressure: netLiquidity.ask.withdrawalPressure,
+      bidWithdrawalPressure: netLiquidity.bid.withdrawalPressure,
+      askCancellationShare: netLiquidity.ask.cancellationShare,
+      bidCancellationShare: netLiquidity.bid.cancellationShare,
+      askConsumptionShare: netLiquidity.ask.consumptionShare,
+      bidConsumptionShare: netLiquidity.bid.consumptionShare,
+      liquidityChangeImbalance: netLiquidity.liquidityChangeImbalance,
       bidConsumption: bidMetric.consumedNotional,
       askConsumption: askMetric.consumedNotional,
       bidReplenishment: bidMetric.replenishedNotional,
@@ -503,6 +538,7 @@ export class PassiveLiquidityEngine {
       ask: askMetrics,
       bands,
       imbalanceCuts,
+      netLiquidity,
       profile,
       walls: wallList,
       nearestBidWall,
@@ -605,6 +641,7 @@ export class PassiveLiquidityEngine {
     this.normalizer.observe('upsideEfficiency', efficiency(displacement.upsideBps, buy));
     this.normalizer.observe('downsideEfficiency', efficiency(displacement.downsideBps, sell));
     this.normalizer.observe('spreadBps', this.lastSpreadBps);
+    this.netLiquidityTracker.sample(now, window);
   }
 
   /**
