@@ -517,20 +517,6 @@ export interface PassiveLiquidityContext {
   dataQuality: number;
 }
 
-export interface HeatmapCell {
-  price: number;
-  bidNotional: number;
-  askNotional: number;
-  /** Dominant event in the frame, for state colouring. */
-  event: PassiveLiquidityEventType | 'NONE';
-}
-
-export interface HeatmapFrame {
-  at: number;
-  mid: number;
-  cells: HeatmapCell[];
-}
-
 /** Flat numeric row for the Backtest Lab and signal study. */
 export interface PassiveLiquidityFeatures {
   bidDepth: number;

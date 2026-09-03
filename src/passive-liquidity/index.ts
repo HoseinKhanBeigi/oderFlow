@@ -18,7 +18,6 @@ export { passiveStrength } from './strength.js';
 export { assessDataQuality } from './data-quality.js';
 export { classifyState } from './state.js';
 export { buildWhy as buildPassiveLiquidityWhy } from './why.js';
-export { HeatmapRecorder } from './heatmap.js';
 export { PassiveFeatureRecorder } from './feature-recorder.js';
 export { PassiveMetricNormalizer } from './normalize.js';
 export { NetLiquidityTracker, calculateNetLiquiditySide, emptyNetLiquiditySnapshot } from './net-liquidity.js';

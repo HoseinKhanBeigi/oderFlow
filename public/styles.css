@@ -1467,8 +1467,7 @@ body {
 .pl-lg-mid::before { background: var(--accent); opacity: 0.55; }
 
 .pl-body {
-  display: grid;
-  grid-template-columns: minmax(0, 2.4fr) minmax(230px, 1fr);
+  display: block;
   gap: 0.7rem;
   padding: 0.7rem 0.9rem;
 }
@@ -1497,7 +1496,7 @@ body {
   width: 100%;
   height: 380px;
 }
-.pl-canvas-profile canvas { height: 380px; }
+.pl-canvas-profile canvas { height: 440px; }
 
 .pl-grids {
   display: grid;

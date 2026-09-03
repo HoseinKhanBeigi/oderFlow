@@ -284,9 +284,6 @@ export interface PassiveLiquidityConfig {
   /** Acceptable exchange-vs-local clock drift. */
   maxTimestampDriftMs: number;
 
-  /** Heatmap frame interval and retention. */
-  heatmapFrameMs: number;
-  heatmapFrames: number;
   /** Per-level timeline retention. */
   timelinePoints: number;
   /** Max levels reported in the profile, per side. */

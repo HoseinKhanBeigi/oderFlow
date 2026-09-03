@@ -278,8 +278,6 @@ export const DEFAULT_CONFIG: EngineConfig = {
     bookStaleMs: 3_000,
     maxTimestampDriftMs: 5_000,
 
-    heatmapFrameMs: 1_000,
-    heatmapFrames: 600,
     timelinePoints: 64,
     profileLevelsPerSide: 24,
     eventCapacity: 256,

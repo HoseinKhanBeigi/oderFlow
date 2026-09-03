@@ -132,23 +132,6 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    /**
-     * The heatmap and per-level history are large and only ever needed for the
-     * one symbol on screen, so they are pulled on demand instead of broadcast.
-     */
-    if (req.url?.startsWith('/api/passive-liquidity/heatmap')) {
-      const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
-      const engine = passiveEngineFor(u.searchParams);
-      if (!engine) {
-        json(res, { frames: [] });
-        return;
-      }
-      const limit = Math.max(1, Math.min(600, Number(u.searchParams.get('frames') ?? 240)));
-      const frames = engine.heatmap();
-      json(res, { frames: frames.slice(Math.max(0, frames.length - limit)) });
-      return;
-    }
-
     if (req.url?.startsWith('/api/passive-liquidity/level')) {
       const u = new URL(req.url, `http://127.0.0.1:${PORT}`);
       const engine = passiveEngineFor(u.searchParams);

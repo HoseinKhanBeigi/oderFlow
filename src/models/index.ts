@@ -96,8 +96,6 @@ export type {
   PassiveLiquidityDataQuality,
   PassiveLiquidityMarketState,
   PassiveLiquidityContext,
-  HeatmapCell,
-  HeatmapFrame,
   PassiveLiquidityFeatures,
   PassiveLiquiditySnapshot,
 } from './passive-liquidity.js';

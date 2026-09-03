@@ -4,8 +4,7 @@
  * Book updates arrive far faster than a screen can usefully redraw, so incoming
  * snapshots only mutate state. Painting happens on a requestAnimationFrame loop
  * throttled to RENDER_MS, which keeps the data path and the render path
- * independent. Heavy payloads (heatmap frames, per-level history) are pulled
- * over HTTP for the visible symbol only.
+ * independent. Per-level history is pulled over HTTP for the visible symbol only.
  */
 
 const RENDER_MS = 80;
@@ -24,8 +23,6 @@ const state = {
   coins: [],
   symbol: DEFAULT_SYMBOL,
   market: 'perp',
-  heatmap: [],
-  heatmapSymbol: null,
   selected: null,
   detail: null,
   dirty: false,
@@ -133,8 +130,6 @@ export function setPassiveMarket(market) {
   const next = market === 'spot' ? 'spot' : 'perp';
   if (next === state.market) return;
   state.market = next;
-  state.heatmap = [];
-  state.heatmapSymbol = null;
   state.netLiquidity = null;
   state.dirty = true;
 }
@@ -162,8 +157,6 @@ export function setPassiveSymbol(symbol) {
   state.symbol = symbol;
   state.selected = null;
   state.detail = null;
-  state.heatmap = [];
-  state.heatmapSymbol = null;
   state.netLiquidity = null;
   state.dirty = true;
   renderCoinTabs();
@@ -193,7 +186,6 @@ export function initPassiveLiquidity(hooks = {}) {
   el.quality = $('pl-quality');
   el.symbol = $('pl-symbol');
   el.coinTabs = $('pl-coin-tabs');
-  el.heatmap = $('pl-heatmap');
   el.profile = $('pl-profile');
   el.bands = $('pl-bands');
   el.net = $('pl-net');
@@ -237,7 +229,6 @@ export function initPassiveLiquidity(hooks = {}) {
 
   renderCoinTabs();
   updateSymbolLabel();
-  setInterval(pollHeatmap, HEATMAP_POLL_MS);
   setInterval(pollNetLiquidity, HEATMAP_POLL_MS);
   loop();
 }
@@ -276,21 +267,6 @@ function loop() {
     render();
   } catch (err) {
     console.error('[passive-liquidity] render failed:', err);
-  }
-}
-
-async function pollHeatmap() {
-  if (!state.symbol || !el.panel || el.panel.classList.contains('hidden')) return;
-  try {
-    const res = await fetch(
-      `/api/passive-liquidity/heatmap?symbol=${encodeURIComponent(state.symbol)}&market=${state.market}&frames=240`,
-    );
-    const body = await res.json();
-    state.heatmap = Array.isArray(body.frames) ? body.frames : [];
-    state.heatmapSymbol = state.symbol;
-    state.dirty = true;
-  } catch {
-    // A failed poll just leaves the previous frames on screen.
   }
 }
 
@@ -341,7 +317,6 @@ function render() {
   renderHeader(snap);
   const range = priceRange(snap);
   state.priceRange = range;
-  drawHeatmap(snap, range);
   drawProfile(snap, range);
   renderBands(snap);
   renderNetLiquidity(snap);
@@ -369,13 +344,9 @@ function renderHeader(snap) {
   }
 }
 
-/** One vertical price scale shared by the heatmap and the profile so they align. */
 function priceRange(snap) {
   const prices = [];
   for (const level of snap?.profile ?? []) prices.push(level.price);
-  for (const frame of state.heatmapSymbol === state.symbol ? state.heatmap : []) {
-    for (const cell of frame.cells ?? []) prices.push(cell.price);
-  }
   if (!prices.length) return null;
   let min = Infinity;
   let max = -Infinity;
@@ -407,78 +378,6 @@ function prepCanvas(canvas) {
 function yFor(price, range, height) {
   const t = (price - range.min) / (range.max - range.min);
   return height - t * height;
-}
-
-function drawHeatmap(snap, range) {
-  const surface = prepCanvas(el.heatmap);
-  if (!surface) return;
-  const { ctx, width, height } = surface;
-  const c = palette();
-
-  ctx.fillStyle = c.panel;
-  ctx.fillRect(0, 0, width, height);
-
-  const frames = state.heatmapSymbol === state.symbol ? state.heatmap : [];
-  if (!range || !frames.length) {
-    ctx.fillStyle = c.muted;
-    ctx.font = `11px ${c.mono}`;
-    ctx.fillText('collecting liquidity history…', 10, 18);
-    return;
-  }
-
-  let peak = 0;
-  for (const frame of frames) {
-    for (const cell of frame.cells ?? []) {
-      peak = Math.max(peak, cell.bidNotional, cell.askNotional);
-    }
-  }
-  if (peak <= 0) return;
-
-  const colWidth = Math.max(1, width / frames.length);
-  const rowHeight = Math.max(1.5, height / 120);
-
-  for (let i = 0; i < frames.length; i++) {
-    const frame = frames[i];
-    const x = i * colWidth;
-    for (const cell of frame.cells ?? []) {
-      const notional = Math.max(cell.bidNotional, cell.askNotional);
-      if (notional <= 0) continue;
-      const isBid = cell.bidNotional >= cell.askNotional;
-      // sqrt keeps mid-sized levels visible instead of only the largest wall.
-      const intensity = Math.min(1, Math.sqrt(notional / peak));
-      const y = yFor(cell.price, range, height);
-      ctx.globalAlpha = 0.12 + intensity * 0.78;
-      ctx.fillStyle = eventColor(cell.event) ?? (isBid ? c.bid : c.ask);
-      ctx.fillRect(x, y - rowHeight / 2, colWidth + 0.5, rowHeight);
-    }
-    ctx.globalAlpha = 1;
-    if (frame.mid > 0) {
-      ctx.fillStyle = c.accent;
-      const y = yFor(frame.mid, range, height);
-      ctx.fillRect(x, y - 0.75, colWidth + 0.5, 1.5);
-    }
-  }
-  ctx.globalAlpha = 1;
-
-  ctx.fillStyle = c.muted;
-  ctx.font = `10px ${c.mono}`;
-  ctx.fillText(`${frames.length} frames · time →`, 8, height - 6);
-}
-
-function eventColor(event) {
-  const c = palette();
-  switch (event) {
-    case 'LIQUIDITY_CANCELLED':
-    case 'WALL_DISAPPEARED':
-      return c.warn;
-    case 'LIQUIDITY_REPLENISHED':
-    case 'WALL_DEFENDED':
-      return c.accent;
-    case 'WALL_BROKEN':
-      return c.muted;
-    default:
-      return null;
-  }
 }
 
 /**

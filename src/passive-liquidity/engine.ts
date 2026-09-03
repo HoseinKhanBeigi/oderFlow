@@ -7,7 +7,6 @@ import type { MarketTrade } from '../models/trade.js';
 import type {
   AggressionVsLiquidityPanel,
   EffortVsPassiveResult,
-  HeatmapFrame,
   LiquidityLevelDetail,
   PassiveLiquidityContext,
   PassiveLiquidityEvent,
@@ -22,7 +21,6 @@ import { aggregateDepth, buildBands, buildImbalanceCuts, imbalanceOf } from './b
 import { assessAbsorption } from './absorption.js';
 import { assessDataQuality } from './data-quality.js';
 import { emptyPassiveLiquiditySnapshot } from './empty.js';
-import { HeatmapRecorder } from './heatmap.js';
 import { PriceLevelMemoryStore } from './level-memory.js';
 import { LevelTracker, type SideFlowDelta } from './level-tracker.js';
 import { PassiveMetricNormalizer, type RelativeContext } from './normalize.js';
@@ -77,12 +75,10 @@ export class PassiveLiquidityEngine {
   private readonly normalizer: PassiveMetricNormalizer;
   private readonly walls: WallTracker;
   private readonly memory: PriceLevelMemoryStore;
-  private readonly heatmapRecorder: HeatmapRecorder;
   private readonly prices: RingBuffer<PriceSample>;
   private readonly pendingEvents: RingBuffer<PassiveLiquidityEvent>;
   private readonly netLiquidityTracker: NetLiquidityTracker;
 
-  private lastHeatmapAt = 0;
   private lastBookAt = 0;
   private lastBookTimestamp = 0;
   private lastBestBid = 0;
@@ -107,7 +103,6 @@ export class PassiveLiquidityEngine {
     this.normalizer = new PassiveMetricNormalizer(config.metricSampleSize);
     this.walls = new WallTracker(config);
     this.memory = new PriceLevelMemoryStore(config);
-    this.heatmapRecorder = new HeatmapRecorder(config);
     this.prices = new RingBuffer<PriceSample>(4_096);
     this.pendingEvents = new RingBuffer<PassiveLiquidityEvent>(config.eventCapacity);
     this.netLiquidityTracker = new NetLiquidityTracker(config.metricSampleSize, config.bandEdgesBps);
@@ -146,24 +141,12 @@ export class PassiveLiquidityEngine {
     this.prices.push({ at: now, mid: delta.mid });
     this.observations += 1;
 
-    // Events are drained on the book cadence so the heatmap sees every one of
-    // them, and held here until the next snapshot reports them.
+    // Hold lifecycle events until the next snapshot reports them.
     for (const event of this.tracker.drainEvents()) this.pendingEvents.push(event);
 
     if (now - this.lastSampleAt >= this.config.metricSampleMs) {
       this.lastSampleAt = now;
       this.sampleMetrics(now);
-    }
-
-    /*
-     * The heatmap is a time series of the book, so it has to be driven by book
-     * updates rather than by whoever happens to ask for a snapshot. Building
-     * public levels is the expensive part, so it runs on the frame interval
-     * instead of on every update.
-     */
-    if (now - this.lastHeatmapAt >= this.config.heatmapFrameMs) {
-      this.lastHeatmapAt = now;
-      this.heatmapRecorder.record(now, delta.mid, this.tracker.snapshotLevels(now, delta.mid), this.pendingEvents.toArray());
     }
 
     this.tracker.prune(now);
@@ -176,11 +159,9 @@ export class PassiveLiquidityEngine {
   noteReset(now: number): void {
     this.tracker.reset();
     this.velocity.reset();
-    this.heatmapRecorder.reset();
     this.pendingEvents.clear();
     this.netLiquidityTracker.reset();
     this.observations = 0;
-    this.lastHeatmapAt = 0;
     this.lastSampleAt = 0;
     this.invalidLevels = 0;
     this.crossedBook = false;
@@ -430,7 +411,6 @@ export class PassiveLiquidityEngine {
     });
 
     const profile = this.buildProfile(levels);
-    this.heatmapRecorder.annotate(events);
 
     const nearestBidWall = nearestWall(wallList, 'BID');
     const nearestAskWall = nearestWall(wallList, 'ASK');
@@ -606,10 +586,6 @@ export class PassiveLiquidityEngine {
   netLiquidity(now: number, windowMs: number) {
     const boundedWindow = Math.max(10_000, Math.min(900_000, windowMs));
     return this.netLiquidityTracker.snapshot(now, boundedWindow, this.lastNetLiquidityTrustworthy);
-  }
-
-  heatmap(): HeatmapFrame[] {
-    return this.heatmapRecorder.snapshot();
   }
 
   priceLevelMemory(): PriceLevelMemory[] {
