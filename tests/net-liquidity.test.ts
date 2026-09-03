@@ -107,3 +107,77 @@ describe('net liquidity change', () => {
     expect(result.bands[0]?.rangeMigration.ask).toBe(10_000);
   });
 });
+
+
+describe('net liquidity multi-window', () => {
+  const zero = (): SideFlowDelta => ({
+    addedQuantity: 0, addedNotional: 0, consumedQuantity: 0, consumedNotional: 0,
+    cancelledQuantity: 0, cancelledNotional: 0, replenishedQuantity: 0, replenishedNotional: 0,
+  });
+
+  function feed(tracker: NetLiquidityTracker, seconds: number, startAt = 1_000_000): number {
+    for (let i = 0; i <= seconds; i++) {
+      const at = startAt + i * 1000;
+      const bidNotional = 1_000_000 + i * 2_000;
+      const levels = [{
+        side: 'BID' as const,
+        price: 99.5,
+        quantity: bidNotional / 99.5,
+        notionalValue: bidNotional,
+        distanceBps: 50,
+        outOfView: false,
+      }] as PassiveLiquidityLevel[];
+      const delta: ObservationDelta = {
+        at,
+        mid: 100,
+        bid: { ...zero(), addedNotional: 2_000, addedQuantity: 20, cancelledNotional: 500, cancelledQuantity: 5 },
+        ask: zero(),
+        levels: [{
+          side: 'BID',
+          price: 99.5,
+          distanceBps: 50,
+          ...zero(),
+          addedNotional: 2_000,
+          addedQuantity: 20,
+          cancelledNotional: 500,
+          cancelledQuantity: 5,
+        }],
+        truncatedLevels: 0,
+        invalidLevels: 0,
+        crossedBook: false,
+      };
+      tracker.observe(at, 100, levels, delta);
+    }
+    return startAt + seconds * 1000;
+  }
+
+  it('windows diverge when history covers each lookback', () => {
+    const tracker = new NetLiquidityTracker(64, [0, 5, 10, 25, 50, 100]);
+    const now = feed(tracker, 900);
+    const w1m = tracker.snapshot(now, 60_000, true);
+    const w5m = tracker.snapshot(now, 300_000, true);
+    const w15m = tracker.snapshot(now, 900_000, true);
+
+    expect(w1m.coverageComplete).toBe(true);
+    expect(w5m.coverageComplete).toBe(true);
+    expect(w15m.coverageComplete).toBe(true);
+    expect(w1m.bid.bookNetChange).not.toBe(w5m.bid.bookNetChange);
+    expect(w5m.bid.bookNetChange).not.toBe(w15m.bid.bookNetChange);
+    expect(w15m.bid.cancelled).toBeGreaterThan(w5m.bid.cancelled);
+    expect(w5m.bid.cancelled).toBeGreaterThan(w1m.bid.cancelled);
+  });
+
+  it('long windows collapse when history is short', () => {
+    const tracker = new NetLiquidityTracker(64, [0, 5, 10, 25, 50, 100]);
+    const now = feed(tracker, 90);
+    const w1m = tracker.snapshot(now, 60_000, true);
+    const w5m = tracker.snapshot(now, 300_000, true);
+    const w15m = tracker.snapshot(now, 900_000, true);
+
+    expect(w5m.coverageComplete).toBe(false);
+    expect(w15m.coverageComplete).toBe(false);
+    expect(w5m.bid.bookNetChange).toBe(w15m.bid.bookNetChange);
+    expect(w5m.availableMs).toBe(w15m.availableMs);
+    expect(w1m.bid.bookNetChange).not.toBe(w5m.bid.bookNetChange);
+  });
+});

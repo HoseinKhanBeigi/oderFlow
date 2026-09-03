@@ -1534,6 +1534,13 @@ body {
   font-size: 0.67rem;
   line-height: 1.45;
 }
+.pl-net-coverage {
+  margin: 0 0 0.55rem;
+  color: var(--warn);
+  font-size: 0.62rem;
+  line-height: 1.4;
+}
+.pl-net-coverage.muted { color: var(--muted); }
 .pl-net-flags {
   display: flex;
   flex-wrap: wrap;

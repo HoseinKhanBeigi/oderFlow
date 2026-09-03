@@ -8,11 +8,11 @@
 const RENDER_MS = 80;
 const DEFAULT_SYMBOL = 'BTCUSDT';
 const NA_WINDOWS = [
-  { id: '10s', label: '10s' },
-  { id: '30s', label: '30s' },
-  { id: '1m', label: '1m' },
-  { id: '5m', label: '5m' },
-  { id: '15m', label: '15m' },
+  { id: '10s', label: '10s', ms: 10_000 },
+  { id: '30s', label: '30s', ms: 30_000 },
+  { id: '1m', label: '1m', ms: 60_000 },
+  { id: '5m', label: '5m', ms: 300_000 },
+  { id: '15m', label: '15m', ms: 900_000 },
 ];
 
 const state = {
@@ -116,16 +116,72 @@ export function setNetAggressionSymbol(symbol) {
 }
 
 /**
+ * Build a panel snapshot from raw window aggregates when the server has not
+ * attached netAggression yet (or for older deploys).
+ */
+function fromWindowAggregates(windowId, w) {
+  const meta = NA_WINDOWS.find((x) => x.id === windowId);
+  const windowMs = meta?.ms ?? 60_000;
+  const buyVol = Number(w.aggressiveBuyVolume) || 0;
+  const sellVol = Number(w.aggressiveSellVolume) || 0;
+  const buyCount = Number(w.buyTradeCount) || 0;
+  const sellCount = Number(w.sellTradeCount) || 0;
+  const seconds = Math.max(windowMs / 1000, 0.001);
+  const net = buyVol - sellVol;
+  const total = buyVol + sellVol;
+  const imbalance = total > 0 ? net / total : 0;
+  const buyPct = Number(w.netAggression?.buyPercentile)
+    ?? Number(w.liquidityResponse?.norms?.aggressiveBuy?.percentile)
+    ?? 50;
+  const sellPct = Number(w.netAggression?.sellPercentile)
+    ?? Number(w.liquidityResponse?.norms?.aggressiveSell?.percentile)
+    ?? 50;
+  const netPct = Number(w.netAggression?.netPercentile)
+    ?? Number(w.liquidityResponse?.norms?.delta?.percentile)
+    ?? 50;
+
+  let stateName = 'BALANCED';
+  if (imbalance >= 0.35 && buyPct >= 70) stateName = 'STRONG_BUY_AGGRESSION';
+  else if (imbalance <= -0.35 && sellPct >= 70) stateName = 'STRONG_SELL_AGGRESSION';
+  else if (imbalance >= 0.12 || (imbalance >= 0.06 && buyPct >= 65)) stateName = 'BUY_AGGRESSION';
+  else if (imbalance <= -0.12 || (imbalance <= -0.06 && sellPct >= 65)) stateName = 'SELL_AGGRESSION';
+
+  const side = (executed, tradeCount, largeVolume, percentile) => ({
+    executed,
+    tradeCount,
+    velocityPerSec: executed / seconds,
+    averageTradeSize: tradeCount > 0 ? executed / tradeCount : 0,
+    largeVolume: Number(largeVolume) || 0,
+    percentile,
+  });
+
+  return {
+    window: windowId,
+    windowMs,
+    buy: side(buyVol, buyCount, w.largeBuyVolume, buyPct),
+    sell: side(sellVol, sellCount, w.largeSellVolume, sellPct),
+    net,
+    imbalance,
+    netVelocityPerSec: net / seconds,
+    buyPercentile: buyPct,
+    sellPercentile: sellPct,
+    netPercentile: netPct,
+    state: stateName,
+    interpretation: `Executed flow over ${meta?.label ?? windowId}. Longer windows accumulate more volume — tabs should not match.`,
+  };
+}
+
+/**
  * Ingest from a live summary: pack netAggression from each window.
- * @param {string} symbol
- * @param {Record<string, { netAggression?: object }>} windows
+ * Falls back to aggressiveBuy/Sell volumes so timeframe tabs always diverge.
  */
 export function ingestNetAggression(symbol, windows) {
   if (!symbol || !windows) return;
   const pack = {};
   for (const { id } of NA_WINDOWS) {
-    const snap = windows[id]?.netAggression;
-    if (snap) pack[id] = snap;
+    const w = windows[id];
+    if (!w) continue;
+    pack[id] = w.netAggression ?? fromWindowAggregates(id, w);
   }
   if (!Object.keys(pack).length) return;
   state.bySymbol.set(symbol, pack);

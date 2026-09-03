@@ -3,13 +3,13 @@ import {
   ingestPassiveLiquidity,
   setPassiveCoins,
   setPassiveSymbol,
-} from './passive-liquidity.js?v=net-agg1';
+} from './passive-liquidity.js?v=net-cov1';
 import {
   initNetAggression,
   ingestNetAggression,
   setNetAggressionCoins,
   setNetAggressionSymbol,
-} from './net-aggression.js?v=net-agg1';
+} from './net-aggression.js?v=net-cov1';
 
 const _noopEl = {
   textContent: '',

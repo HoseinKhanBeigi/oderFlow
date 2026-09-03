@@ -316,6 +316,17 @@ function netTone(side) {
   return stateName === 'LOW_CONFIDENCE' ? 'low' : '';
 }
 
+function fmtWindowMs(ms) {
+  const n = Math.max(0, Math.round(Number(ms) || 0));
+  if (n < 60_000) return `${Math.round(n / 1000)}s`;
+  if (n < 3_600_000) {
+    const m = Math.floor(n / 60_000);
+    const s = Math.round((n % 60_000) / 1000);
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
+  return `${(n / 3_600_000).toFixed(1)}h`;
+}
+
 function renderNetLiquidity(snap) {
   if (!el.net) return;
   const net = netForWindow(snap);
@@ -344,12 +355,19 @@ function renderNetLiquidity(snap) {
   const flags = net.flags?.length
     ? `<div class="pl-net-flags">${net.flags.map((flag) => `<span>${label(flag)}</span>`).join('')}</div>`
     : '';
+  const selectedLabel = NET_WINDOWS.find((window) => window.ms === state.netWindowMs)?.label
+    ?? `${Math.round(state.netWindowMs / 1_000)}s`;
+  const truncated = net.coverageComplete === false
+    || (Number(net.availableMs) > 0 && Number(net.availableMs) < state.netWindowMs * 0.95);
+  const coverageNote = truncated
+    ? `<p class="pl-net-coverage">Only ${fmtWindowMs(net.availableMs || 0)} of history so far — 5m/15m will match until the feed has run long enough.</p>`
+    : `<p class="pl-net-coverage muted">Current depth is live book (same on every tab). Starting, net change, cancels and consumes change with the lookback.</p>`;
   const tabs = `<div class="pl-net-windows" aria-label="Net liquidity timeframe">${NET_WINDOWS.map((window) =>
     `<button class="chart-tf-tab${window.ms === state.netWindowMs ? ' active' : ''}" data-net-window="${window.ms}" type="button">${window.label}</button>`,
   ).join('')}</div>`;
   el.net.innerHTML = card(
-    `Net liquidity <span class="muted">${NET_WINDOWS.find((window) => window.ms === net.windowMs)?.label ?? `${Math.round(net.windowMs / 1_000)}s`} change</span>`,
-    `${tabs}<div class="pl-sides">${side(net.bid, 'BID')}${side(net.ask, 'ASK')}</div>
+    `Net liquidity <span class="muted">${selectedLabel}${truncated ? ` · covering ${fmtWindowMs(net.availableMs || 0)}` : ''}</span>`,
+    `${tabs}${coverageNote}<div class="pl-sides">${side(net.bid, 'BID')}${side(net.ask, 'ASK')}</div>
      <div class="pl-net-summary">
        ${metric('Near 10bps bid', signedUsd(near.bid.behavioralNetChange), netTone(near.bid))}
        ${metric('Near 10bps ask', signedUsd(near.ask.behavioralNetChange), netTone(near.ask))}

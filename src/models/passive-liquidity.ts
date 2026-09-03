@@ -213,6 +213,10 @@ export interface NetLiquidityBand {
 
 export interface NetLiquiditySnapshot {
   windowMs: number;
+  /** How much history was actually available for this window (≤ windowMs). */
+  availableMs: number;
+  /** False when the lookback was truncated by cold-start / short history. */
+  coverageComplete: boolean;
   bid: NetLiquiditySide;
   ask: NetLiquiditySide;
   near5Bps: { bid: NetLiquiditySide; ask: NetLiquiditySide };

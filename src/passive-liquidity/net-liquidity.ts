@@ -277,6 +277,8 @@ export class NetLiquidityTracker {
     const starting = [...eligible].reverse().find((point) => point.at <= from) ?? eligible[0] ?? empty;
     const active = eligible.filter((point) => point.at > starting.at && point.at <= now);
     const elapsedMs = Math.max(1, current.at - starting.at);
+    const availableMs = Math.min(windowMs, elapsedMs);
+    const coverageComplete = eligible.length > 0 && starting.at <= from;
 
     const total = (side: PassiveSide) => this.sideFor(
       side, starting, current, active, elapsedMs, trustworthy, normalized,
@@ -317,6 +319,8 @@ export class NetLiquidityTracker {
 
     return {
       windowMs,
+      availableMs,
+      coverageComplete,
       bid,
       ask,
       near5Bps,
@@ -412,6 +416,8 @@ export function emptyNetLiquiditySnapshot(windowMs = 0): NetLiquiditySnapshot {
   });
   return {
     windowMs,
+    availableMs: 0,
+    coverageComplete: false,
     bid: side('BID'),
     ask: side('ASK'),
     near5Bps: { bid: side('BID'), ask: side('ASK') },
