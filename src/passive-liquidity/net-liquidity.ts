@@ -201,7 +201,7 @@ export class NetLiquidityTracker {
       addFlow(flows[level.side][index]!, level);
     }
     const point = { at, mid, depth, flow: flows };
-    if (this.points.size === 0) {
+    if (this.points.length === 0) {
       // The first observation establishes starting depth; its initial population
       // is not new liquidity activity within the measurement window.
       point.flow = { BID: this.emptyFlows(), ASK: this.emptyFlows() };
