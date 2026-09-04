@@ -8,6 +8,7 @@ const BATTLE_TFS = ['10s', '30s', '1m', '5m', '15m'];
 const state = {
   summary: null,
   symbol: null,
+  expectSymbol: null,
   tf: '10s',
   detail: null, // { side: 'buy'|'sell', battle: 'upside'|'downside' }
   numbers: { upside: false, downside: false },
@@ -250,6 +251,7 @@ export function initMarketBattle() {
   el.health = $('mb-health');
   el.tabs = $('mb-tf-tabs');
   el.detail = $('mb-detail');
+  el.symbol = $('mb-symbol');
   if (!el.panel) return;
 
   if (el.tabs) {
@@ -316,15 +318,35 @@ export function ingestMarketBattle(summary) {
     state.summary = null;
     state.symbol = null;
     state.detail = null;
+    if (el.symbol) el.symbol.textContent = '—';
     render();
     return;
   }
+  // Ignore other coins' summaries so this tab stays locked to its URL coin.
+  if (state.expectSymbol && summary.symbol !== state.expectSymbol) return;
   if (state.symbol && state.symbol !== summary.symbol) {
     state.detail = null;
   }
   state.summary = summary;
   state.symbol = summary.symbol;
+  if (el.symbol) {
+    el.symbol.textContent = String(summary.symbol).replace(/USDT$/i, '') || summary.symbol;
+  }
   render();
+}
+
+/** Lock the panel to the dashboard / URL coin. */
+export function setMarketBattleSymbol(symbol) {
+  state.expectSymbol = symbol || null;
+  if (el.symbol) {
+    el.symbol.textContent = symbol ? String(symbol).replace(/USDT$/i, '') : '—';
+  }
+  if (state.summary && symbol && state.summary.symbol !== symbol) {
+    state.summary = null;
+    state.symbol = null;
+    state.detail = null;
+    render();
+  }
 }
 
 function render() {

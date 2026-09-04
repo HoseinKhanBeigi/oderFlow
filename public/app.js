@@ -3,13 +3,14 @@ import {
   ingestPassiveLiquidity,
   setPassiveCoins,
   setPassiveSymbol,
-} from './passive-liquidity.js?v=coin-tab2';
+} from './passive-liquidity.js?v=coin-lock1';
 import {
   initMarketBattle,
   ingestMarketBattle,
   setMarketBattleTf,
+  setMarketBattleSymbol,
   onMarketBattleTf,
-} from './market-battle.js?v=coin-tab2';
+} from './market-battle.js?v=coin-lock1';
 
 const _noopEl = {
   textContent: '',
@@ -361,6 +362,7 @@ function applySymbolFilter() {
   lastSummary = summaries[selectedSymbol] ?? null;
   lastSpotFlow = spotFlowBySymbol[selectedSymbol] ?? null;
   setPassiveSymbol(selectedSymbol);
+  setMarketBattleSymbol(selectedSymbol);
   if (isSpotView()) {
     updateSpotUi();
     ingestMarketBattle(null);
@@ -954,6 +956,7 @@ function applyDataMode(mode) {
   initChart();
   setPassiveCoins(coins);
   setPassiveSymbol(selectedSymbol);
+  setMarketBattleSymbol(selectedSymbol);
   seedFootprintKlines();
   subscribeFootprint();
   scheduleDraw();
@@ -3096,6 +3099,8 @@ async function init() {
   setupCoinRouting();
   initPassiveLiquidity({
     getMarket: () => dataMode,
+    getSymbol: () => selectedSymbol,
+    onSelectSymbol: (symbol) => openCoinBrowserTab(symbol),
   });
   initMarketBattle();
   setMarketBattleTf(selectedTf);

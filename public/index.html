@@ -99,8 +99,8 @@
       <section class="panel mb-panel" id="mb-panel">
         <div class="panel-head">
           <div>
-            <h2>Market Battle</h2>
-            <p class="hint">Two fights at once: buyers attacking the sell wall above, sellers attacking the buy wall below. Attack comes from executed footprint volume, defense from the resting order book.</p>
+            <h2>Market Battle <span id="mb-symbol" class="pl-symbol">—</span></h2>
+            <p class="hint">Two fights at once: buyers attacking the sell wall above, sellers attacking the buy wall below. Attack comes from executed footprint volume, defense from the resting order book. Follows the coin open in this tab.</p>
           </div>
           <div class="tf-tabs" id="mb-tf-tabs" aria-label="Market battle window"></div>
         </div>
@@ -121,14 +121,15 @@
       <section class="panel pl-panel" id="pl-panel">
         <div class="panel-head">
           <div>
-            <h2>Passive liquidity <span id="pl-symbol" class="pl-symbol">BTC</span></h2>
-            <p class="hint">Resting bid/ask behaviour: where liquidity sits, how long it has been there, whether it is consumed, cancelled or replenished, and what it does as price approaches. Click a wall for its full history.</p>
+            <h2>Passive liquidity <span id="pl-symbol" class="pl-symbol">—</span></h2>
+            <p class="hint">Resting bid/ask behaviour for the coin open in this tab: where liquidity sits, how long it has been there, whether it is consumed, cancelled or replenished, and what it does as price approaches. Click a wall for its full history.</p>
           </div>
           <div class="pl-head-meta">
             <span id="pl-state" class="pl-state">—</span>
             <span id="pl-quality" class="pl-quality">—</span>
           </div>
         </div>
+        <div id="pl-coin-tabs" class="pl-coin-tabs" aria-label="Open another coin"></div>
         <div class="pl-legend">
           <span class="legend-item pl-lg-bid">Passive buyers (bids)</span>
           <span class="legend-item pl-lg-ask">Passive sellers (asks)</span>
@@ -148,6 +149,6 @@
     </main>
   </div>
 
-  <script src="/app.js?v=coin-tab2" type="module"></script>
+  <script src="/app.js?v=coin-lock1" type="module"></script>
 </body>
 </html>

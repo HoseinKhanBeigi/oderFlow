@@ -20,6 +20,9 @@ const state = {
   dirty: false,
   lastRender: 0,
   rafId: 0,
+  getMarket: null,
+  getSymbol: null,
+  onSelectSymbol: null,
 };
 
 const el = {};
@@ -83,23 +86,28 @@ export function setPassiveMarket(market) {
 }
 
 /**
- * Replace the coin tabs from the live watchlist. Keeps BTC when still listed,
- * otherwise falls back to the first coin.
+ * Replace the coin tabs from the live watchlist. Keeps the dashboard's
+ * selected coin when possible — never jumps back to BTC on its own.
  */
 export function setPassiveCoins(coins) {
   const list = Array.isArray(coins) ? coins.filter((c) => c?.symbol) : [];
   state.coins = list;
-  const stillThere = list.some((c) => c.symbol === state.symbol);
-  if (!stillThere) {
-    const btc = list.find((c) => c.symbol === DEFAULT_SYMBOL);
-    setPassiveSymbol(btc?.symbol ?? list[0]?.symbol ?? DEFAULT_SYMBOL);
+  const preferred =
+    (typeof state.getSymbol === 'function' && state.getSymbol()) || state.symbol;
+  const stillThere = list.some((c) => c.symbol === preferred);
+  if (stillThere) {
+    setPassiveSymbol(preferred);
+  } else {
+    setPassiveSymbol(list[0]?.symbol ?? preferred ?? DEFAULT_SYMBOL);
   }
   renderCoinTabs();
 }
 
 export function setPassiveSymbol(symbol) {
-  if (!symbol || symbol === state.symbol) {
+  if (!symbol) return;
+  if (symbol === state.symbol) {
     renderCoinTabs();
+    updateSymbolLabel();
     return;
   }
   state.symbol = symbol;
@@ -121,14 +129,20 @@ function current() {
 }
 
 /**
- * @param {{ getMarket?: () => string }} hooks
- *   Market follows the dashboard (perp/spot). Symbol is chosen from the
- *   watchlist tabs on this panel and defaults to BTCUSDT.
+ * @param {{
+ *   getMarket?: () => string,
+ *   getSymbol?: () => string,
+ *   onSelectSymbol?: (symbol: string) => void,
+ * }} hooks
+ *   Market + symbol follow the dashboard coin. Coin tabs open another coin
+ *   (usually a new browser tab) instead of drifting this panel alone.
  */
 export function initPassiveLiquidity(hooks = {}) {
   el.panel = $('pl-panel');
   if (!el.panel) return;
   state.getMarket = typeof hooks.getMarket === 'function' ? hooks.getMarket : null;
+  state.getSymbol = typeof hooks.getSymbol === 'function' ? hooks.getSymbol : null;
+  state.onSelectSymbol = typeof hooks.onSelectSymbol === 'function' ? hooks.onSelectSymbol : null;
   el.state = $('pl-state');
   el.quality = $('pl-quality');
   el.symbol = $('pl-symbol');
@@ -145,7 +159,12 @@ export function initPassiveLiquidity(hooks = {}) {
     el.coinTabs.addEventListener('click', (ev) => {
       const btn = ev.target.closest('[data-pl-symbol]');
       if (!btn) return;
-      setPassiveSymbol(btn.dataset.plSymbol);
+      const symbol = btn.dataset.plSymbol;
+      if (typeof state.onSelectSymbol === 'function') {
+        state.onSelectSymbol(symbol);
+        return;
+      }
+      setPassiveSymbol(symbol);
     });
   }
 
@@ -192,6 +211,11 @@ function renderCoinTabs() {
 function loop() {
   state.rafId = requestAnimationFrame(loop);
   if (state.getMarket) setPassiveMarket(state.getMarket());
+  // Stay locked to the dashboard / URL coin every frame.
+  if (typeof state.getSymbol === 'function') {
+    const sym = state.getSymbol();
+    if (sym && sym !== state.symbol) setPassiveSymbol(sym);
+  }
   const now = performance.now();
   if (!state.dirty || now - state.lastRender < RENDER_MS) return;
   state.lastRender = now;
