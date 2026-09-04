@@ -140,7 +140,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
 
   integrity: {
     maxOutOfOrderMs: 2_000,
-    bookStaleMs: 3_000,
+    bookStaleMs: 5_000,
     maxSpreadBps: 50,
     duplicateWindow: 8_192,
   },
@@ -201,9 +201,9 @@ export const DEFAULT_CONFIG: EngineConfig = {
     },
     imbalanceRatio: 3,
     minImbalanceQuote: 800,
-    tradeStaleMs: 5_000,
-    tradeStaleGapMultiple: 10,
-    maxTradeStaleMs: 60_000,
+    tradeStaleMs: 15_000,
+    tradeStaleGapMultiple: 15,
+    maxTradeStaleMs: 180_000,
   },
 
   liquidityResponse: {
@@ -291,7 +291,7 @@ export const DEFAULT_CONFIG: EngineConfig = {
     },
 
     minTrustedQuality: 45,
-    bookStaleMs: 3_000,
+    bookStaleMs: 5_000,
     maxTimestampDriftMs: 5_000,
 
     timelinePoints: 64,

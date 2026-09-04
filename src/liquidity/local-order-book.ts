@@ -17,6 +17,11 @@ export class LocalOrderBook {
   stale = false;
 
   applySnapshot(snapshot: OrderBookSnapshot): void {
+    // Top-of-book (bookTicker) must never replace a depth ladder.
+    const thin = snapshot.bids.length <= 1 && snapshot.asks.length <= 1;
+    if (thin && this.bids.size + this.asks.size > 2) {
+      return;
+    }
     this.bids.clear();
     this.asks.clear();
     this.symbol = snapshot.symbol;

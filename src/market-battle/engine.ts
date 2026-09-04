@@ -55,15 +55,25 @@ export class MarketBattleEngine {
     const fb = input.flowBattle;
     const pl = input.passiveLiquidity;
     const af = input.aggressiveFlow;
-    const tradeMissing = Boolean(input.tradeDataMissing) || !af?.buy.hasData;
-    const tradeLowConf = Boolean(input.tradeDataLowConfidence) || Boolean(af?.buy.lowConfidence);
+    // Tape missing = no feed at all. Do not key this off buy.hasData — a
+    // sell-only window must still classify the downside battle.
+    const tradeMissing = Boolean(input.tradeDataMissing) || !af;
+    const tradeLowConf = Boolean(input.tradeDataLowConfidence);
 
     const bookReliable = pl
       ? (pl.dataQuality?.trustworthy ?? false) && (pl.dataQuality?.score ?? 0) >= 35
       : lr.dataQuality >= 40 && lr.confidence !== 'LOW';
 
-    const upsideAgg = mapAggressiveSide(af?.buy ?? null, tradeMissing, tradeLowConf);
-    const downsideAgg = mapAggressiveSide(af?.sell ?? null, tradeMissing, tradeLowConf);
+    const upsideAgg = mapAggressiveSide(
+      af?.buy ?? null,
+      tradeMissing,
+      tradeLowConf || Boolean(af?.buy?.lowConfidence),
+    );
+    const downsideAgg = mapAggressiveSide(
+      af?.sell ?? null,
+      tradeMissing,
+      tradeLowConf || Boolean(af?.sell?.lowConfidence),
+    );
 
     const upsidePas = buildPassive({
       currentDepth: pl?.context.askDepth ?? lr.askDepth.current,
@@ -304,7 +314,9 @@ function classifyUpside(p: {
   if (p.tradeMissing) {
     return packUpside(p, battleScore, 'NO_MEANINGFUL_BATTLE', ['FOOTPRINT DATA UNAVAILABLE']);
   }
-  if (p.tradeLowConf || p.aggressive.lowConfidence) {
+  // Quiet tape alone is not enough to refuse a read when this window still has
+  // attack volume — dataHealth already surfaces STALE_TRADES for the banner.
+  if ((p.tradeLowConf || p.aggressive.lowConfidence) && aggI === 'NONE') {
     return packUpside(p, battleScore * 0.5, 'LOW_CONFIDENCE', [
       'Footprint / trade data delayed or incomplete — attack side low confidence',
     ]);
@@ -314,7 +326,7 @@ function classifyUpside(p: {
       'Book data unreliable — passive side marked low confidence',
     ]);
   }
-  if (aggI === 'NONE' || (aggI === 'LOW' && p.aggressive.percentile < 35)) {
+  if (aggI === 'NONE') {
     return packUpside(p, Math.min(battleScore, 25), 'NO_MEANINGFUL_BATTLE', [
       'Aggressive buy flow is not meaningful in this window',
     ]);
@@ -410,7 +422,7 @@ function classifyDownside(p: {
   if (p.tradeMissing) {
     return packDownside(p, battleScore, 'NO_MEANINGFUL_BATTLE', ['FOOTPRINT DATA UNAVAILABLE']);
   }
-  if (p.tradeLowConf || p.aggressive.lowConfidence) {
+  if ((p.tradeLowConf || p.aggressive.lowConfidence) && aggI === 'NONE') {
     return packDownside(p, battleScore * 0.5, 'LOW_CONFIDENCE', [
       'Footprint / trade data delayed or incomplete — attack side low confidence',
     ]);
@@ -420,7 +432,7 @@ function classifyDownside(p: {
       'Book data unreliable — passive side marked low confidence',
     ]);
   }
-  if (aggI === 'NONE' || (aggI === 'LOW' && p.aggressive.percentile < 35)) {
+  if (aggI === 'NONE') {
     return packDownside(p, Math.min(battleScore, 25), 'NO_MEANINGFUL_BATTLE', [
       'Aggressive sell flow is not meaningful in this window',
     ]);

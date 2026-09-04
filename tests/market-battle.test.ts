@@ -161,8 +161,8 @@ describe('MarketBattleEngine with footprint aggression', () => {
     expect(snap.upside.state).toBe('SELLER_ABSORPTION');
   });
 
-  it('marks LOW_CONFIDENCE when footprint is stale', () => {
-    const af = flowFromEngine('buy');
+  it('marks LOW_CONFIDENCE when tape is stale and there is no attack volume', () => {
+    const af = emptyAggressiveFlow('1m', 60_000);
     af.buy.lowConfidence = true;
 
     const lr = emptyLiquidityResponse();
@@ -178,6 +178,36 @@ describe('MarketBattleEngine with footprint aggression', () => {
     );
 
     expect(snap.upside.state).toBe('LOW_CONFIDENCE');
+  });
+
+  it('still classifies when tape is briefly quiet but the window has attack volume', () => {
+    const af = flowFromEngine('buy');
+    af.buy.lowConfidence = true;
+
+    const lr = emptyLiquidityResponse();
+    lr.dataQuality = 80;
+    lr.confidence = 'HIGH';
+    lr.askConsumption = 'HIGH';
+    lr.askReplenishment = 'HIGH';
+    lr.efficiency = 'LOW';
+
+    const fb = emptyFlowBattle();
+    fb.battle.passiveSellerStrength = 70;
+    fb.buyExecutionEfficiency = 0.2;
+
+    const snap = engine.analyze(
+      baseInput({
+        tradeDataLowConfidence: true,
+        priceChangePercent: 0.02,
+        priceImpactEfficiency: 'LOW',
+        flowBattle: fb,
+        liquidityResponse: lr,
+        aggressiveFlow: af,
+      }),
+    );
+
+    expect(snap.upside.state).not.toBe('LOW_CONFIDENCE');
+    expect(snap.upside.state).not.toBe('NO_MEANINGFUL_BATTLE');
   });
 
   it('keeps upside and downside battle scores independent', () => {
