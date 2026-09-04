@@ -3,13 +3,7 @@ import {
   ingestPassiveLiquidity,
   setPassiveCoins,
   setPassiveSymbol,
-} from './passive-liquidity.js?v=net-api1';
-import {
-  initNetAggression,
-  ingestNetAggression,
-  setNetAggressionCoins,
-  setNetAggressionSymbol,
-} from './net-aggression.js?v=net-api1';
+} from './passive-liquidity.js?v=trim-panels1';
 
 const _noopEl = {
   textContent: '',
@@ -848,8 +842,6 @@ function applyDataMode(mode) {
   initChart();
   setPassiveCoins(coins);
   setPassiveSymbol(selectedSymbol);
-  setNetAggressionCoins(coins);
-  setNetAggressionSymbol(selectedSymbol);
   seedFootprintKlines();
   subscribeFootprint();
   scheduleDraw();
@@ -1294,7 +1286,6 @@ function initChart() {
       if (!visibleCoins().some((coin) => coin.symbol === symbol)) return;
       selectedSymbol = symbol;
       setPassiveSymbol(symbol);
-      setNetAggressionSymbol(symbol);
       syncExchangeTabs();
       buildFpGrid();
       seedFootprintKlines();
@@ -2627,7 +2618,6 @@ function openAlertSymbol(symbol) {
   if (!visibleCoins().some((coin) => coin.symbol === symbol)) return;
   selectedSymbol = symbol;
   setPassiveSymbol(symbol);
-  setNetAggressionSymbol(symbol);
   syncExchangeTabs();
   buildFpGrid();
   seedFootprintKlines();
@@ -2689,9 +2679,6 @@ async function init() {
   initPassiveLiquidity({
     getMarket: () => dataMode,
   });
-  initNetAggression({
-    getMarket: () => dataMode,
-  });
   try {
     config = await fetch('/api/config').then((r) => r.json());
     fpHistoryEnabled = Boolean(config.history?.enabled);
@@ -2701,11 +2688,9 @@ async function init() {
     if (config.coins?.length) selectedSymbol = config.coins[0].symbol;
     applyDataMode(config.market === 'spot' ? 'spot' : 'perp');
     setPassiveCoins(visibleCoins());
-    setNetAggressionCoins(visibleCoins());
   } catch {
     initChart();
     setPassiveCoins([{ symbol: 'BTCUSDT', label: 'BTC' }]);
-    setNetAggressionCoins([{ symbol: 'BTCUSDT', label: 'BTC' }]);
   }
   renderAlertList();
 
@@ -2753,12 +2738,6 @@ async function init() {
       case 'summary':
         if (ev.summary && ev.market) ev.summary.market = ev.market;
         updateSummary(ev.summary);
-        if (
-          ev.summary?.windows &&
-          (ev.market === 'spot' ? 'spot' : 'perp') === dataMode
-        ) {
-          ingestNetAggression(ev.summary.symbol, ev.summary.windows);
-        }
         if (ev.summary?.symbol) scheduleDraw(ev.summary.symbol);
         break;
       case 'overview':

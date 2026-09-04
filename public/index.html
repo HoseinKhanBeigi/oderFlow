@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Order Flow — Footprint</title>
-  <link rel="stylesheet" href="/styles.css?v=net-api1" />
+  <link rel="stylesheet" href="/styles.css?v=trim-panels1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -95,19 +95,6 @@
         <div id="fp-grid" class="fp-grid" aria-label="Footprint charts"></div>
       </section>
 
-      <section class="panel na-panel" id="na-panel">
-        <div class="panel-head">
-          <div>
-            <h2>Net aggression <span id="na-symbol" class="pl-symbol">BTC</span></h2>
-            <p class="hint">Executed aggressive buying vs selling only. Cancels and replenishment belong to Passive liquidity. Positive net aggression is not automatically bullish — check Aggression vs liquidity for absorption.</p>
-          </div>
-          <div class="pl-head-meta">
-            <span id="na-state" class="pl-state">—</span>
-          </div>
-        </div>
-        <div id="na-body" class="na-body"></div>
-      </section>
-
       <section class="panel pl-panel" id="pl-panel">
         <div class="panel-head">
           <div>
@@ -138,6 +125,6 @@
     </main>
   </div>
 
-  <script src="/app.js?v=net-api1" type="module"></script>
+  <script src="/app.js?v=trim-panels1" type="module"></script>
 </body>
 </html>

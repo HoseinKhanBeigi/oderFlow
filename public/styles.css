@@ -1413,45 +1413,6 @@ body {
 
 /* ── Passive liquidity ─────────────────────────────────────────────── */
 .pl-panel { margin-top: 0.9rem; }
-
-.na-panel {
-  margin-top: 0.9rem;
-}
-.na-body {
-  padding: 0.7rem 0.9rem 0.9rem;
-}
-.na-head {
-  margin: 0.35rem 0 0.55rem;
-}
-.na-head h3 {
-  margin: 0;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--text);
-}
-.na-note {
-  margin: 0.25rem 0 0;
-  color: var(--muted);
-  font-size: 0.62rem;
-  line-height: 1.4;
-}
-.na-side h4 {
-  margin: 0 0 0.4rem;
-  font-size: 0.68rem;
-  letter-spacing: 0.06em;
-}
-.na-summary {
-  margin-top: 0.65rem;
-  padding-top: 0.55rem;
-  border-top: 1px solid var(--border);
-}
-.na-interpretation {
-  margin: 0.5rem 0 0;
-  color: var(--muted);
-  font-size: 0.67rem;
-  line-height: 1.45;
-}
 .pl-head-meta {
   display: flex;
   align-items: center;
@@ -1517,12 +1478,6 @@ body {
   padding: 0.6rem 0.7rem;
 }
 .pl-net-card { grid-column: span 2; }
-.pl-net-windows {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  margin-bottom: 0.6rem;
-}
 .pl-net-summary {
   margin-top: 0.65rem;
   padding-top: 0.55rem;
@@ -1534,13 +1489,6 @@ body {
   font-size: 0.67rem;
   line-height: 1.45;
 }
-.pl-net-coverage {
-  margin: 0 0 0.55rem;
-  color: var(--warn);
-  font-size: 0.62rem;
-  line-height: 1.4;
-}
-.pl-net-coverage.muted { color: var(--muted); }
 .pl-net-flags {
   display: flex;
   flex-wrap: wrap;
