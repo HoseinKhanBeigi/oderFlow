@@ -172,6 +172,25 @@ export interface FlowBattleConfig {
   minExecutionToVisible: number;
 }
 
+export interface AggressivePowerWeights {
+  /** Default conceptual mix: volume 25%, velocity 20%, imbalance 20%, large 15%, count 10%, delta/CVD 10%. */
+  executedVolume: number;
+  executionVelocity: number;
+  imbalanceStrength: number;
+  largeTradeActivity: number;
+  tradeCountIntensity: number;
+  deltaCvdContribution: number;
+}
+
+export interface MarketBattleConfig {
+  aggressiveWeights: AggressivePowerWeights;
+  /** Same semantics as footprint chart imbalance ratio. */
+  imbalanceRatio: number;
+  minImbalanceQuote: number;
+  /** Soften aggression classification when last trade older than this. */
+  tradeStaleMs: number;
+}
+
 export interface IntegrityConfig {
   maxOutOfOrderMs: number;
   bookStaleMs: number;
@@ -329,6 +348,7 @@ export interface EngineConfig {
   integrity: IntegrityConfig;
   movePotential: MovePotentialConfig;
   flowBattle: FlowBattleConfig;
+  marketBattle: MarketBattleConfig;
   liquidityResponse: LiquidityResponseConfig;
   passiveLiquidity: PassiveLiquidityConfig;
   historicalBaselineSamples: number;

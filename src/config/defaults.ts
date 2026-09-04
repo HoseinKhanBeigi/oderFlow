@@ -190,6 +190,20 @@ export const DEFAULT_CONFIG: EngineConfig = {
     minExecutionToVisible: 4,
   },
 
+  marketBattle: {
+    aggressiveWeights: {
+      executedVolume: 0.25,
+      executionVelocity: 0.2,
+      imbalanceStrength: 0.2,
+      largeTradeActivity: 0.15,
+      tradeCountIntensity: 0.1,
+      deltaCvdContribution: 0.1,
+    },
+    imbalanceRatio: 3,
+    minImbalanceQuote: 800,
+    tradeStaleMs: 5_000,
+  },
+
   liquidityResponse: {
     bandPct: 0.25,
     bands: [0.05, 0.1, 0.25, 0.5, 1.0],

@@ -1,8 +1,9 @@
-import { clamp, safeDiv } from '../core/integrity.js';
+import { clamp } from '../core/integrity.js';
 import type { FlowBattleSnapshot } from '../models/passive.js';
 import type { LiquidityResponseSnapshot, IntensityLabel } from '../models/liquidity-response.js';
 import type { PassiveLiquiditySnapshot } from '../models/passive-liquidity.js';
 import type { NetAggressionSnapshot } from '../models/net-aggression.js';
+import type { AggressiveFlowSnapshot, AggressiveSideFlow } from '../models/aggressive-flow.js';
 import type { PriceImpactEfficiency, WindowId } from '../models/trade.js';
 import type {
   AggressiveSideView,
@@ -17,66 +18,45 @@ import type {
   UpsideBattle,
   UpsideBattleState,
 } from '../models/market-battle.js';
+import { emptyAggressiveSide } from '../models/market-battle.js';
+
 export interface MarketBattleInput {
   window: WindowId;
-  aggressiveBuyVolume: number;
-  aggressiveSellVolume: number;
-  buyTradeCount: number;
-  sellTradeCount: number;
-  largeBuyVolume: number;
-  largeSellVolume: number;
   priceChangePercent: number;
   priceImpactEfficiency: PriceImpactEfficiency;
   /** Window confidence from OrderFlowEngine (0–1). */
   confidence: number;
-  /** True when no usable trade tape in this window. */
+  /** True when no usable footprint / trade tape in this window. */
   tradeDataMissing?: boolean;
+  /** True when trade tape is stale / incomplete. */
+  tradeDataLowConfidence?: boolean;
   flowBattle: FlowBattleSnapshot;
   liquidityResponse: LiquidityResponseSnapshot;
   passiveLiquidity: PassiveLiquiditySnapshot | null;
   netAggression: NetAggressionSnapshot | null;
+  /** Footprint-derived ASK/BID executed aggression (required for attack scores). */
+  aggressiveFlow: AggressiveFlowSnapshot | null;
 }
 
 /**
- * Composes existing OrderFlow / PassiveLiquidity / LiquidityResponse /
- * PriceResponse outputs into the two microstructure battles.
- * Does not invent independent volume or depth signals.
+ * Composes Footprint aggression + PassiveLiquidity defense + PriceResponse
+ * into the two microstructure battles.
  */
 export class MarketBattleEngine {
   analyze(input: MarketBattleInput): MarketBattleSnapshot {
     const lr = input.liquidityResponse;
     const fb = input.flowBattle;
     const pl = input.passiveLiquidity;
-    const na = input.netAggression;
-    const tradeMissing = Boolean(input.tradeDataMissing);
+    const af = input.aggressiveFlow;
+    const tradeMissing = Boolean(input.tradeDataMissing) || !af?.buy.hasData;
+    const tradeLowConf = Boolean(input.tradeDataLowConfidence) || Boolean(af?.buy.lowConfidence);
 
     const bookReliable = pl
       ? (pl.dataQuality?.trustworthy ?? false) && (pl.dataQuality?.score ?? 0) >= 35
       : lr.dataQuality >= 40 && lr.confidence !== 'LOW';
 
-
-    const buyPct = na?.buy.percentile ?? lr.norms.aggressiveBuy.percentile ?? 50;
-    const sellPct = na?.sell.percentile ?? lr.norms.aggressiveSell.percentile ?? 50;
-
-    const upsideAgg = buildAggressive({
-      volume: input.aggressiveBuyVolume,
-      percentile: buyPct,
-      velocityPerSec: na?.buy.velocityPerSec ?? safeDiv(input.aggressiveBuyVolume, Math.max(na?.windowMs ?? 10_000, 1) / 1000),
-      tradeCount: input.buyTradeCount,
-      largeVolume: input.largeBuyVolume,
-      hasData: !tradeMissing,
-      baseScore: fb.battle.aggressiveBuyerStrength,
-    });
-
-    const downsideAgg = buildAggressive({
-      volume: input.aggressiveSellVolume,
-      percentile: sellPct,
-      velocityPerSec: na?.sell.velocityPerSec ?? safeDiv(input.aggressiveSellVolume, Math.max(na?.windowMs ?? 10_000, 1) / 1000),
-      tradeCount: input.sellTradeCount,
-      largeVolume: input.largeSellVolume,
-      hasData: !tradeMissing,
-      baseScore: fb.battle.aggressiveSellerStrength,
-    });
+    const upsideAgg = mapAggressiveSide(af?.buy ?? null, tradeMissing, tradeLowConf);
+    const downsideAgg = mapAggressiveSide(af?.sell ?? null, tradeMissing, tradeLowConf);
 
     const upsidePas = buildPassive({
       currentDepth: pl?.context.askDepth ?? lr.askDepth.current,
@@ -128,8 +108,9 @@ export class MarketBattleEngine {
       price: upsidePrice,
       lr,
       vacuum: lr.vacuum === 'UPSIDE_LIQUIDITY_VACUUM' || (pl?.upsideVacuum.detected ?? false),
-      absorption: lr.absorption.kind === 'BUY_ABSORPTION' || (pl?.sellerAbsorption.type === 'SELLER_ABSORPTION'),
+      absorption: lr.absorption.kind === 'BUY_ABSORPTION' || pl?.sellerAbsorption.type === 'SELLER_ABSORPTION',
       tradeMissing,
+      tradeLowConf,
       bookReliable,
     });
 
@@ -139,8 +120,9 @@ export class MarketBattleEngine {
       price: downsidePrice,
       lr,
       vacuum: lr.vacuum === 'DOWNSIDE_LIQUIDITY_VACUUM' || (pl?.downsideVacuum.detected ?? false),
-      absorption: lr.absorption.kind === 'SELL_ABSORPTION' || (pl?.buyerAbsorption.type === 'BUYER_ABSORPTION'),
+      absorption: lr.absorption.kind === 'SELL_ABSORPTION' || pl?.buyerAbsorption.type === 'BUYER_ABSORPTION',
       tradeMissing,
+      tradeLowConf,
       bookReliable,
     });
 
@@ -157,44 +139,32 @@ export class MarketBattleEngine {
   }
 }
 
-function buildAggressive(p: {
-  volume: number;
-  percentile: number;
-  velocityPerSec: number;
-  tradeCount: number;
-  largeVolume: number;
-  hasData: boolean;
-  baseScore: number;
-}): AggressiveSideView {
-  if (!p.hasData) {
-    return {
-      volume: 0,
-      percentile: 0,
-      velocityPerSec: 0,
-      tradeCount: 0,
-      largeVolume: 0,
-      hasData: false,
-      score: 0,
-    };
+function mapAggressiveSide(
+  side: AggressiveSideFlow | null,
+  tradeMissing: boolean,
+  tradeLowConf: boolean,
+): AggressiveSideView {
+  if (tradeMissing || !side || !side.hasData) {
+    return emptyAggressiveSide();
   }
-  const pctScore = clamp(p.percentile, 0, 100);
-  const largeShare = clamp(safeDiv(p.largeVolume, Math.max(p.volume, 1e-9)), 0, 1);
-  const velocityBoost = clamp(Math.log10(1 + Math.max(p.velocityPerSec, 0) / 50_000) * 25, 0, 20);
-  const countBoost = clamp(Math.log10(1 + p.tradeCount) * 8, 0, 15);
-  const composed =
-    0.55 * p.baseScore +
-    0.25 * pctScore +
-    0.1 * (largeShare * 100) +
-    0.05 * velocityBoost +
-    0.05 * countBoost;
   return {
-    volume: p.volume,
-    percentile: pctScore,
-    velocityPerSec: p.velocityPerSec,
-    tradeCount: p.tradeCount,
-    largeVolume: p.largeVolume,
+    volume: side.executedVolume,
+    percentile: side.activityPercentile,
+    velocityPerSec: side.velocityPerSec,
+    tradeCount: side.tradeCount,
+    averageTradeSize: side.averageTradeSize,
+    largeVolume: side.largeVolume,
+    imbalanceCount: side.imbalanceCount,
+    imbalanceStrength: side.imbalanceStrength,
+    deltaContribution: side.deltaContribution,
+    cvdContribution: side.cvdContribution,
+    consecutiveImbalances: side.consecutiveImbalances,
+    power: side.power,
+    contributions: side.contributions,
+    topLevels: side.topLevels,
     hasData: true,
-    score: clamp(composed, 0, 100),
+    lowConfidence: tradeLowConf || side.lowConfidence,
+    score: side.power,
   };
 }
 
@@ -221,6 +191,7 @@ function buildPassive(p: {
     0.15 * survivalN +
     0.1 * depthN -
     0.08 * withdrawN;
+  const defensePower = clamp(composed, 0, 100);
   return {
     currentDepth: p.currentDepth,
     nearDepth: p.nearDepth,
@@ -228,9 +199,11 @@ function buildPassive(p: {
     replenishment: p.replenishment,
     withdrawal: p.withdrawal,
     survival: survivalN,
+    survivalLabel: survivalN >= 65 ? 'STRONG' : survivalN >= 35 ? 'MODERATE' : 'WEAK',
     strength: clamp(p.strength, 0, 100),
+    defensePower,
     reliable: p.reliable,
-    score: clamp(composed, 0, 100),
+    score: defensePower,
   };
 }
 
@@ -271,6 +244,7 @@ function classifyUpside(p: {
   vacuum: boolean;
   absorption: boolean;
   tradeMissing: boolean;
+  tradeLowConf: boolean;
   bookReliable: boolean;
 }): UpsideBattle {
   const aggI = aggressionIntensity(p.aggressive);
@@ -279,10 +253,15 @@ function classifyUpside(p: {
   const withI = toBattleIntensity(p.passive.withdrawal);
   const effI = toBattleIntensity(p.price.efficiency);
   const survivalLow = p.passive.survival < 35;
-  const battleScore = battleIntensityScore(p.aggressive.score, p.passive.score, aggI);
+  const battleScore = battleIntensityScore(p.aggressive.power, p.passive.defensePower, aggI);
 
   if (p.tradeMissing) {
-    return packUpside(p, battleScore, 'NO_MEANINGFUL_BATTLE', ['Trade data unavailable']);
+    return packUpside(p, battleScore, 'NO_MEANINGFUL_BATTLE', ['FOOTPRINT DATA UNAVAILABLE']);
+  }
+  if (p.tradeLowConf || p.aggressive.lowConfidence) {
+    return packUpside(p, battleScore * 0.5, 'LOW_CONFIDENCE', [
+      'Footprint / trade data delayed or incomplete — attack side low confidence',
+    ]);
   }
   if (!p.bookReliable && aggI !== 'NONE') {
     return packUpside(p, battleScore * 0.5, 'LOW_CONFIDENCE', [
@@ -295,7 +274,7 @@ function classifyUpside(p: {
     ]);
   }
 
-  // Aggressive Buy HIGH + consumption HIGH + replenishment HIGH + efficiency LOW → SELLER ABSORPTION
+  // High Aggressive Buy Power + High Ask Replenishment + Low Upward Efficiency → SELLER ABSORPTION
   if (
     (aggI === 'HIGH' || aggI === 'MODERATE') &&
     (consI === 'HIGH' || consI === 'MODERATE') &&
@@ -303,27 +282,26 @@ function classifyUpside(p: {
     (effI === 'LOW' || p.absorption)
   ) {
     return packUpside(p, battleScore, 'SELLER_ABSORPTION', [
-      'Aggressive buying is being absorbed',
-      'Ask consumption high with replenishment holding',
+      'High aggressive buy power with ask replenishment holding',
       'Upward price efficiency remains low',
     ]);
   }
 
-  // Aggressive Buy HIGH + consumption HIGH + replenishment LOW + efficiency HIGH → BUYERS WINNING
+  // High Aggressive Buy Power + High Ask Consumption + Low Ask Replenishment + High Efficiency → BUYERS WINNING
   if (
     aggI === 'HIGH' &&
     (consI === 'HIGH' || consI === 'MODERATE') &&
-    (replI === 'LOW' || p.passive.score + 8 < p.aggressive.score) &&
+    (replI === 'LOW' || p.passive.defensePower + 8 < p.aggressive.power) &&
     (effI === 'HIGH' || p.price.efficiencyScore >= 55)
   ) {
     return packUpside(p, battleScore, 'BUYERS_WINNING', [
-      'Aggressive buyers consuming ask liquidity',
+      'Footprint aggression consuming ask liquidity',
       'Ask replenishment weak relative to consumption',
       'Upward price displacement is efficient',
     ]);
   }
 
-  // Moderate agg + withdrawal HIGH + survival LOW + efficiency HIGH → UPSIDE VACUUM
+  // Moderate Aggressive Buy Power + High Ask Withdrawal + Low Ask Survival + High Efficiency → UPSIDE VACUUM
   if (
     (aggI === 'MODERATE' || aggI === 'HIGH') &&
     (withI === 'HIGH' || p.vacuum || survivalLow) &&
@@ -335,32 +313,30 @@ function classifyUpside(p: {
     ]);
   }
 
-  // Defense holding
   if (
     (aggI === 'HIGH' || aggI === 'MODERATE') &&
     (effI === 'LOW' || p.price.displacementPercent < 0.06) &&
-    (replI === 'HIGH' || p.passive.survival >= 50 || p.passive.score >= p.aggressive.score)
+    (replI === 'HIGH' || p.passive.survival >= 50 || p.passive.defensePower >= p.aggressive.power)
   ) {
     return packUpside(p, battleScore, 'SELLERS_DEFENDING', [
       'Passive sellers defending the ask',
-      'Aggressive buy effort is not producing upside',
+      'Footprint buy attack is not producing upside',
     ]);
   }
 
-  // Buyers winning via score gap + price
-  if (p.aggressive.score >= p.passive.score + 12 && p.price.efficiencyScore >= 45 && p.price.displacementPercent > 0.05) {
+  if (p.aggressive.power >= p.passive.defensePower + 12 && p.price.efficiencyScore >= 45 && p.price.displacementPercent > 0.05) {
     return packUpside(p, battleScore, 'BUYERS_WINNING', [
-      'Aggressive buyers outscoring passive sellers',
+      'Aggressive buy power outscoring passive seller defense',
       'Price responding to the upside attack',
     ]);
   }
 
-  if (Math.abs(p.aggressive.score - p.passive.score) < 10) {
+  if (Math.abs(p.aggressive.power - p.passive.defensePower) < 10) {
     return packUpside(p, battleScore, 'BALANCED', ['Upside attack and ask defense are evenly matched']);
   }
 
-  if (p.passive.score > p.aggressive.score) {
-    return packUpside(p, battleScore, 'SELLERS_DEFENDING', ['Passive seller strength exceeds aggressive buy pressure']);
+  if (p.passive.defensePower > p.aggressive.power) {
+    return packUpside(p, battleScore, 'SELLERS_DEFENDING', ['Passive seller defense exceeds footprint buy pressure']);
   }
 
   return packUpside(p, battleScore, 'BALANCED', ['No clear upside winner from liquidity and price response']);
@@ -374,6 +350,7 @@ function classifyDownside(p: {
   vacuum: boolean;
   absorption: boolean;
   tradeMissing: boolean;
+  tradeLowConf: boolean;
   bookReliable: boolean;
 }): DownsideBattle {
   const aggI = aggressionIntensity(p.aggressive);
@@ -382,10 +359,15 @@ function classifyDownside(p: {
   const withI = toBattleIntensity(p.passive.withdrawal);
   const effI = toBattleIntensity(p.price.efficiency);
   const survivalLow = p.passive.survival < 35;
-  const battleScore = battleIntensityScore(p.aggressive.score, p.passive.score, aggI);
+  const battleScore = battleIntensityScore(p.aggressive.power, p.passive.defensePower, aggI);
 
   if (p.tradeMissing) {
-    return packDownside(p, battleScore, 'NO_MEANINGFUL_BATTLE', ['Trade data unavailable']);
+    return packDownside(p, battleScore, 'NO_MEANINGFUL_BATTLE', ['FOOTPRINT DATA UNAVAILABLE']);
+  }
+  if (p.tradeLowConf || p.aggressive.lowConfidence) {
+    return packDownside(p, battleScore * 0.5, 'LOW_CONFIDENCE', [
+      'Footprint / trade data delayed or incomplete — attack side low confidence',
+    ]);
   }
   if (!p.bookReliable && aggI !== 'NONE') {
     return packDownside(p, battleScore * 0.5, 'LOW_CONFIDENCE', [
@@ -405,8 +387,7 @@ function classifyDownside(p: {
     (effI === 'LOW' || p.absorption)
   ) {
     return packDownside(p, battleScore, 'BUYER_ABSORPTION', [
-      'Aggressive selling is being absorbed',
-      'Bid consumption high with replenishment holding',
+      'High aggressive sell power with bid replenishment holding',
       'Downward price efficiency remains low',
     ]);
   }
@@ -414,11 +395,11 @@ function classifyDownside(p: {
   if (
     aggI === 'HIGH' &&
     (consI === 'HIGH' || consI === 'MODERATE') &&
-    (replI === 'LOW' || p.passive.score + 8 < p.aggressive.score) &&
+    (replI === 'LOW' || p.passive.defensePower + 8 < p.aggressive.power) &&
     (effI === 'HIGH' || p.price.efficiencyScore >= 55)
   ) {
     return packDownside(p, battleScore, 'SELLERS_WINNING', [
-      'Aggressive sellers consuming bid liquidity',
+      'Footprint aggression consuming bid liquidity',
       'Bid replenishment weak relative to consumption',
       'Downward price displacement is efficient',
     ]);
@@ -438,27 +419,27 @@ function classifyDownside(p: {
   if (
     (aggI === 'HIGH' || aggI === 'MODERATE') &&
     (effI === 'LOW' || p.price.displacementPercent < 0.06) &&
-    (replI === 'HIGH' || p.passive.survival >= 50 || p.passive.score >= p.aggressive.score)
+    (replI === 'HIGH' || p.passive.survival >= 50 || p.passive.defensePower >= p.aggressive.power)
   ) {
     return packDownside(p, battleScore, 'BUYERS_DEFENDING', [
       'Passive buyers defending the bid',
-      'Aggressive sell effort is not producing downside',
+      'Footprint sell attack is not producing downside',
     ]);
   }
 
-  if (p.aggressive.score >= p.passive.score + 12 && p.price.efficiencyScore >= 45 && p.price.displacementPercent > 0.05) {
+  if (p.aggressive.power >= p.passive.defensePower + 12 && p.price.efficiencyScore >= 45 && p.price.displacementPercent > 0.05) {
     return packDownside(p, battleScore, 'SELLERS_WINNING', [
-      'Aggressive sellers outscoring passive buyers',
+      'Aggressive sell power outscoring passive buyer defense',
       'Price responding to the downside attack',
     ]);
   }
 
-  if (Math.abs(p.aggressive.score - p.passive.score) < 10) {
+  if (Math.abs(p.aggressive.power - p.passive.defensePower) < 10) {
     return packDownside(p, battleScore, 'BALANCED', ['Downside attack and bid defense are evenly matched']);
   }
 
-  if (p.passive.score > p.aggressive.score) {
-    return packDownside(p, battleScore, 'BUYERS_DEFENDING', ['Passive buyer strength exceeds aggressive sell pressure']);
+  if (p.passive.defensePower > p.aggressive.power) {
+    return packDownside(p, battleScore, 'BUYERS_DEFENDING', ['Passive buyer defense exceeds footprint sell pressure']);
   }
 
   return packDownside(p, battleScore, 'BALANCED', ['No clear downside winner from liquidity and price response']);
@@ -577,9 +558,9 @@ function packDownside(
 
 function aggressionIntensity(agg: AggressiveSideView): BattleIntensity {
   if (!agg.hasData) return 'NONE';
-  if (agg.percentile >= 70 || agg.score >= 65) return 'HIGH';
-  if (agg.percentile >= 40 || agg.score >= 35) return 'MODERATE';
-  if (agg.volume > 0 && (agg.percentile >= 20 || agg.score >= 15)) return 'LOW';
+  if (agg.percentile >= 70 || agg.power >= 65) return 'HIGH';
+  if (agg.percentile >= 40 || agg.power >= 35) return 'MODERATE';
+  if (agg.volume > 0 && (agg.percentile >= 20 || agg.power >= 15)) return 'LOW';
   return 'NONE';
 }
 

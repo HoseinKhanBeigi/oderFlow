@@ -1,6 +1,6 @@
 /**
- * Market Battle panel — aggressive vs passive microstructure battles.
- * Renders from window.marketBattle on each summary; TF tabs share selectedTf.
+ * Market Battle panel — footprint attack vs passive defense.
+ * Renders from window.marketBattle; TF tabs control the footprint window.
  */
 
 const BATTLE_TFS = ['10s', '30s', '1m', '5m', '15m'];
@@ -9,6 +9,7 @@ const state = {
   summary: null,
   symbol: null,
   tf: '10s',
+  detail: null, // { side: 'buy'|'sell', battle: 'upside'|'downside' }
 };
 
 const el = {};
@@ -27,6 +28,13 @@ function fmtUsd(value) {
   return `${sign}$${abs.toFixed(0)}`;
 }
 
+function fmtVel(value) {
+  const n = Number(value) || 0;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M/s`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K/s`;
+  return `$${n.toFixed(0)}/s`;
+}
+
 function label(value) {
   return String(value ?? '—').replace(/_/g, ' ');
 }
@@ -34,7 +42,7 @@ function label(value) {
 function intensityClass(v) {
   const s = String(v ?? '');
   if (s === 'EXTREME' || s === 'HIGH') return 'high';
-  if (s === 'LOW') return 'low';
+  if (s === 'LOW' || s === 'WEAK') return 'low';
   return '';
 }
 
@@ -64,13 +72,6 @@ function summaryTone(s) {
   return '';
 }
 
-function survivalLabel(n) {
-  const v = Number(n) || 0;
-  if (v >= 65) return 'HIGH';
-  if (v >= 35) return 'MODERATE';
-  return 'LOW';
-}
-
 function windowData(summary, tf) {
   return summary?.windows?.[tf] ?? summary?.windows?.['10s'] ?? null;
 }
@@ -82,6 +83,7 @@ export function initMarketBattle() {
   el.summaryState = $('mb-summary-state');
   el.summaryWhy = $('mb-summary-why');
   el.tabs = $('mb-tf-tabs');
+  el.detail = $('mb-detail');
   if (!el.panel) return;
 
   if (el.tabs) {
@@ -93,11 +95,32 @@ export function initMarketBattle() {
       const btn = e.target.closest('.tf-tab');
       if (!btn) return;
       state.tf = btn.dataset.tf;
+      state.detail = null;
       el.tabs.querySelectorAll('.tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
       if (typeof state.onTf === 'function') state.onTf(state.tf);
       render();
     });
   }
+
+  el.grid?.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-mb-attack]');
+    if (!btn) return;
+    const side = btn.dataset.mbAttack;
+    const battle = btn.dataset.mbBattle;
+    if (state.detail?.side === side && state.detail?.battle === battle) {
+      state.detail = null;
+    } else {
+      state.detail = { side, battle };
+    }
+    render();
+  });
+
+  el.detail?.addEventListener('click', (e) => {
+    if (e.target.closest('[data-mb-close]')) {
+      state.detail = null;
+      render();
+    }
+  });
 }
 
 export function setMarketBattleTf(tf) {
@@ -130,6 +153,7 @@ function render() {
     el.grid.innerHTML = `<div class="mb-empty">Waiting for market battle data…</div>`;
     if (el.summaryState) el.summaryState.textContent = '—';
     if (el.summaryWhy) el.summaryWhy.textContent = '';
+    if (el.detail) el.detail.innerHTML = '';
     return;
   }
 
@@ -142,45 +166,45 @@ function render() {
   if (el.summaryWhy) {
     el.summaryWhy.textContent = mb.summary?.why ?? '';
   }
+  renderDetail(mb);
 }
 
 function renderUpsideCard(up) {
   const agg = up.aggressive;
   const pas = up.passive;
-  const aggVol = agg.hasData ? fmtUsd(agg.volume) : 'NO DATA';
-  const aggPct = agg.hasData ? `${Math.round(agg.percentile)}th percentile` : '—';
-  const pasDepth = pas.reliable ? `${fmtUsd(pas.nearDepth)} near liquidity` : 'LOW CONFIDENCE';
   const resultTone = stateTone(up.state);
+  const attackOpen = state.detail?.battle === 'upside' && state.detail?.side === 'buy' ? ' open' : '';
 
   return `
   <div class="mb-card mb-upside">
     <div class="mb-card-head">
       <span>UPSIDE BATTLE</span>
-      <span class="mb-battle-score" title="Upside battle intensity (independent of downside)">${Math.round(up.battleScore)}</span>
+      <span class="mb-battle-score" title="Upside battle intensity">${Math.round(up.battleScore)}</span>
     </div>
-    <div class="mb-side mb-pas">
-      <div class="mb-side-row">
-        <span class="mb-side-label">Passive Sellers</span>
-        <span class="mb-side-score sell">${pas.reliable ? Math.round(pas.score) : '—'}</span>
-      </div>
-      <div class="mb-side-meta sell">${pasDepth}</div>
-      <div class="mb-side-sub">Seller Strength: ${pas.reliable ? `${Math.round(pas.strength)}/100` : 'LOW CONFIDENCE'}</div>
-    </div>
-    <div class="mb-vs">VS</div>
-    <div class="mb-side mb-agg">
+
+    <button type="button" class="mb-block mb-attack${attackOpen}" data-mb-attack="buy" data-mb-battle="upside">
+      <div class="mb-block-tag buy">ATTACK · Footprint</div>
       <div class="mb-side-row">
         <span class="mb-side-label">Aggressive Buyers</span>
-        <span class="mb-side-score buy">${agg.hasData ? Math.round(agg.score) : '—'}</span>
+        <span class="mb-side-score buy">${agg.hasData ? `${Math.round(agg.power)} / 100` : '—'}</span>
       </div>
-      <div class="mb-side-meta buy">${aggVol}</div>
-      <div class="mb-side-sub">${aggPct}</div>
+      ${renderAttackMetrics(agg, 'buy')}
+    </button>
+
+    <div class="mb-vs">VS</div>
+
+    <div class="mb-block mb-defense">
+      <div class="mb-block-tag sell">DEFENSE · Order book</div>
+      <div class="mb-side-row">
+        <span class="mb-side-label">Passive Sellers</span>
+        <span class="mb-side-score sell">${pas.reliable ? `${Math.round(pas.defensePower)} / 100` : '—'}</span>
+      </div>
+      ${renderDefenseMetrics(pas, 'ask')}
     </div>
+
     <div class="mb-result ${resultTone}">${label(up.state)}</div>
     <div class="mb-metrics">
-      <div class="mb-metric"><span class="k">Price Efficiency</span><span class="v ${intensityClass(up.price.efficiency)}">${Math.round(up.price.efficiencyScore)}</span></div>
-      <div class="mb-metric"><span class="k">Ask Consumption</span><span class="v ${intensityClass(pas.consumption)}">${pas.consumption}</span></div>
-      <div class="mb-metric"><span class="k">Ask Replenishment</span><span class="v ${intensityClass(pas.replenishment)}">${pas.replenishment}</span></div>
-      <div class="mb-metric"><span class="k">Ask Survival</span><span class="v">${survivalLabel(pas.survival)}</span></div>
+      <div class="mb-metric"><span class="k">Price Efficiency</span><span class="v ${intensityClass(up.price.efficiency)}">${Math.round(up.price.efficiencyScore)} / 100</span></div>
     </div>
   </div>`;
 }
@@ -188,40 +212,148 @@ function renderUpsideCard(up) {
 function renderDownsideCard(dn) {
   const agg = dn.aggressive;
   const pas = dn.passive;
-  const aggVol = agg.hasData ? fmtUsd(agg.volume) : 'NO DATA';
-  const aggPct = agg.hasData ? `${Math.round(agg.percentile)}th percentile` : '—';
-  const pasDepth = pas.reliable ? `${fmtUsd(pas.nearDepth)} near liquidity` : 'LOW CONFIDENCE';
   const resultTone = downsideStateTone(dn.state);
+  const attackOpen = state.detail?.battle === 'downside' && state.detail?.side === 'sell' ? ' open' : '';
 
   return `
   <div class="mb-card mb-downside">
     <div class="mb-card-head">
       <span>DOWNSIDE BATTLE</span>
-      <span class="mb-battle-score" title="Downside battle intensity (independent of upside)">${Math.round(dn.battleScore)}</span>
+      <span class="mb-battle-score" title="Downside battle intensity">${Math.round(dn.battleScore)}</span>
     </div>
-    <div class="mb-side mb-agg">
+
+    <button type="button" class="mb-block mb-attack${attackOpen}" data-mb-attack="sell" data-mb-battle="downside">
+      <div class="mb-block-tag sell">ATTACK · Footprint</div>
       <div class="mb-side-row">
         <span class="mb-side-label">Aggressive Sellers</span>
-        <span class="mb-side-score sell">${agg.hasData ? Math.round(agg.score) : '—'}</span>
+        <span class="mb-side-score sell">${agg.hasData ? `${Math.round(agg.power)} / 100` : '—'}</span>
       </div>
-      <div class="mb-side-meta sell">${aggVol}</div>
-      <div class="mb-side-sub">${aggPct}</div>
-    </div>
+      ${renderAttackMetrics(agg, 'sell')}
+    </button>
+
     <div class="mb-vs">VS</div>
-    <div class="mb-side mb-pas">
+
+    <div class="mb-block mb-defense">
+      <div class="mb-block-tag buy">DEFENSE · Order book</div>
       <div class="mb-side-row">
         <span class="mb-side-label">Passive Buyers</span>
-        <span class="mb-side-score buy">${pas.reliable ? Math.round(pas.score) : '—'}</span>
+        <span class="mb-side-score buy">${pas.reliable ? `${Math.round(pas.defensePower)} / 100` : '—'}</span>
       </div>
-      <div class="mb-side-meta buy">${pasDepth}</div>
-      <div class="mb-side-sub">Buyer Strength: ${pas.reliable ? `${Math.round(pas.strength)}/100` : 'LOW CONFIDENCE'}</div>
+      ${renderDefenseMetrics(pas, 'bid')}
     </div>
+
     <div class="mb-result ${resultTone}">${label(dn.state)}</div>
     <div class="mb-metrics">
-      <div class="mb-metric"><span class="k">Price Efficiency</span><span class="v ${intensityClass(dn.price.efficiency)}">${Math.round(dn.price.efficiencyScore)}</span></div>
-      <div class="mb-metric"><span class="k">Bid Replenishment</span><span class="v ${intensityClass(pas.replenishment)}">${pas.replenishment}</span></div>
-      <div class="mb-metric"><span class="k">Bid Survival</span><span class="v">${survivalLabel(pas.survival)}</span></div>
-      <div class="mb-metric"><span class="k">Bid Consumption</span><span class="v ${intensityClass(pas.consumption)}">${pas.consumption}</span></div>
+      <div class="mb-metric"><span class="k">Downside Efficiency</span><span class="v ${intensityClass(dn.price.efficiency)}">${Math.round(dn.price.efficiencyScore)} / 100</span></div>
     </div>
   </div>`;
+}
+
+function renderAttackMetrics(agg, side) {
+  if (!agg.hasData) {
+    return `<div class="mb-side-meta warn">FOOTPRINT DATA UNAVAILABLE</div>
+            <div class="mb-side-sub">Click disabled · no executed tape</div>`;
+  }
+  if (agg.lowConfidence) {
+    return `<div class="mb-side-meta warn">LOW CONFIDENCE</div>
+            <div class="mb-side-sub">Footprint delayed or incomplete</div>`;
+  }
+  const delta = side === 'buy'
+    ? `+${fmtUsd(agg.deltaContribution)}`
+    : fmtUsd(agg.deltaContribution);
+  const imbLabel = side === 'buy' ? 'Buy Imbalances' : 'Sell Imbalances';
+  const largeLabel = side === 'buy' ? 'Large Buy Volume' : 'Large Sell Volume';
+  return `
+    <div class="mb-mini">
+      <div class="mb-metric"><span class="k">Executed</span><span class="v">${fmtUsd(agg.volume)}</span></div>
+      <div class="mb-metric"><span class="k">Percentile</span><span class="v">${Math.round(agg.percentile)}th</span></div>
+      <div class="mb-metric"><span class="k">Delta Contribution</span><span class="v">${delta}</span></div>
+      <div class="mb-metric"><span class="k">Execution Velocity</span><span class="v">${fmtVel(agg.velocityPerSec)}</span></div>
+      <div class="mb-metric"><span class="k">${imbLabel}</span><span class="v">${agg.imbalanceCount}</span></div>
+      <div class="mb-metric"><span class="k">${largeLabel}</span><span class="v">${fmtUsd(agg.largeVolume)}</span></div>
+    </div>
+    <div class="mb-side-sub">Click for power contributions · footprint levels</div>`;
+}
+
+function renderDefenseMetrics(pas, side) {
+  if (!pas.reliable) {
+    return `<div class="mb-side-meta warn">LOW CONFIDENCE</div>
+            <div class="mb-side-sub">Order book unreliable</div>`;
+  }
+  const nearLabel = side === 'ask' ? 'Near Ask Depth' : 'Near Bid Depth';
+  const cons = side === 'ask' ? 'Ask Consumption' : 'Bid Consumption';
+  const repl = side === 'ask' ? 'Ask Replenishment' : 'Bid Replenishment';
+  const surv = side === 'ask' ? 'Ask Survival' : 'Bid Survival';
+  const withd = side === 'ask' ? 'Ask Withdrawal' : 'Bid Withdrawal';
+  return `
+    <div class="mb-mini">
+      <div class="mb-metric"><span class="k">${nearLabel}</span><span class="v">${fmtUsd(pas.nearDepth)}</span></div>
+      <div class="mb-metric"><span class="k">${cons}</span><span class="v ${intensityClass(pas.consumption)}">${pas.consumption}</span></div>
+      <div class="mb-metric"><span class="k">${repl}</span><span class="v ${intensityClass(pas.replenishment)}">${pas.replenishment}</span></div>
+      <div class="mb-metric"><span class="k">${surv}</span><span class="v ${intensityClass(pas.survivalLabel)}">${pas.survivalLabel}</span></div>
+      <div class="mb-metric"><span class="k">${withd}</span><span class="v ${intensityClass(pas.withdrawal)}">${pas.withdrawal}</span></div>
+    </div>`;
+}
+
+function renderDetail(mb) {
+  if (!el.detail) return;
+  if (!state.detail) {
+    el.detail.innerHTML = '';
+    el.detail.classList.add('hidden');
+    return;
+  }
+  const battle = state.detail.battle === 'upside' ? mb.upside : mb.downside;
+  const agg = battle.aggressive;
+  const title = state.detail.side === 'buy' ? 'Aggressive Buyers' : 'Aggressive Sellers';
+  const powerLabel = state.detail.side === 'buy' ? 'Aggressive Buy Power' : 'Aggressive Sell Power';
+
+  if (!agg.hasData) {
+    el.detail.classList.remove('hidden');
+    el.detail.innerHTML = `
+      <div class="mb-detail-head">
+        <strong>${title}</strong>
+        <button type="button" class="mb-detail-close" data-mb-close>Close</button>
+      </div>
+      <p class="mb-detail-empty">FOOTPRINT DATA UNAVAILABLE</p>`;
+    return;
+  }
+
+  const contribRows = (agg.contributions ?? [])
+    .map(
+      (c) => `
+      <div class="mb-metric">
+        <span class="k">${c.label}</span>
+        <span class="v">+${Math.round(c.points)} <span class="muted">(${Math.round(c.normalized)} × ${(c.weight * 100).toFixed(0)}%)</span></span>
+      </div>`,
+    )
+    .join('');
+
+  const levelRows = (agg.topLevels ?? [])
+    .slice(0, 10)
+    .map((lv) => {
+      const executed = state.detail.side === 'buy' ? lv.buyExecuted : lv.sellExecuted;
+      const ratio = lv.imbalanceRatio >= 99 ? '∞' : `${lv.imbalanceRatio.toFixed(1)}x`;
+      return `<tr><td>${lv.price}</td><td>${fmtUsd(executed)}</td><td>${ratio}</td></tr>`;
+    })
+    .join('');
+
+  el.detail.classList.remove('hidden');
+  el.detail.innerHTML = `
+    <div class="mb-detail-head">
+      <strong>${title}</strong>
+      <button type="button" class="mb-detail-close" data-mb-close>Close</button>
+    </div>
+    <div class="mb-detail-power">${powerLabel}: <span>${Math.round(agg.power)}</span></div>
+    <div class="mb-detail-section">
+      <div class="mb-detail-label">Contributions</div>
+      ${contribRows || '<div class="muted">No contribution breakdown</div>'}
+    </div>
+    <div class="mb-detail-section">
+      <div class="mb-detail-label">Footprint price levels</div>
+      ${
+        levelRows
+          ? `<table class="mb-level-table"><thead><tr><th>Price</th><th>${state.detail.side === 'buy' ? 'Buy Executed' : 'Sell Executed'}</th><th>Imbalance</th></tr></thead><tbody>${levelRows}</tbody></table>`
+          : '<div class="muted">No imbalanced levels in this window</div>'
+      }
+    </div>`;
 }

@@ -3,13 +3,13 @@ import {
   ingestPassiveLiquidity,
   setPassiveCoins,
   setPassiveSymbol,
-} from './passive-liquidity.js?v=market-battle1';
+} from './passive-liquidity.js?v=market-battle2';
 import {
   initMarketBattle,
   ingestMarketBattle,
   setMarketBattleTf,
   onMarketBattleTf,
-} from './market-battle.js?v=market-battle1';
+} from './market-battle.js?v=market-battle2';
 
 const _noopEl = {
   textContent: '',

@@ -1,5 +1,9 @@
 import type { WindowId } from './trade.js';
 import type { IntensityLabel } from './liquidity-response.js';
+import type {
+  AggressivePowerContribution,
+  FootprintAggressionLevel,
+} from './aggressive-flow.js';
 
 /** Aggressive buyers vs passive sellers. */
 export type UpsideBattleState =
@@ -34,13 +38,26 @@ export type MarketBattleSummaryState =
 export type BattleIntensity = 'HIGH' | 'MODERATE' | 'LOW' | 'NONE';
 
 export interface AggressiveSideView {
+  /** Footprint ASK-executed (buys) or BID-executed (sells) volume. */
   volume: number;
   percentile: number;
   velocityPerSec: number;
   tradeCount: number;
+  averageTradeSize: number;
   largeVolume: number;
-  /** False when trade tape is unavailable — UI must show NO DATA, not 0. */
+  imbalanceCount: number;
+  imbalanceStrength: number;
+  deltaContribution: number;
+  cvdContribution: number;
+  consecutiveImbalances: number;
+  /** AggressiveBuyPower / AggressiveSellPower (0–100). */
+  power: number;
+  contributions: AggressivePowerContribution[];
+  topLevels: FootprintAggressionLevel[];
+  /** False when footprint / trade tape is unavailable — UI must show NO DATA, not 0. */
   hasData: boolean;
+  lowConfidence: boolean;
+  /** @deprecated Prefer `power`. Kept for older UI bindings. */
   score: number;
 }
 
@@ -51,7 +68,10 @@ export interface PassiveSideView {
   replenishment: IntensityLabel;
   withdrawal: IntensityLabel;
   survival: number;
+  survivalLabel: 'STRONG' | 'MODERATE' | 'WEAK';
   strength: number;
+  /** Defense power 0–100 from order book / passive liquidity. */
+  defensePower: number;
   /** False / low when book is unreliable — UI marks LOW CONFIDENCE. */
   reliable: boolean;
   score: number;
@@ -105,8 +125,18 @@ export function emptyAggressiveSide(): AggressiveSideView {
     percentile: 0,
     velocityPerSec: 0,
     tradeCount: 0,
+    averageTradeSize: 0,
     largeVolume: 0,
+    imbalanceCount: 0,
+    imbalanceStrength: 0,
+    deltaContribution: 0,
+    cvdContribution: 0,
+    consecutiveImbalances: 0,
+    power: 0,
+    contributions: [],
+    topLevels: [],
     hasData: false,
+    lowConfidence: false,
     score: 0,
   };
 }
@@ -119,7 +149,9 @@ export function emptyPassiveSide(): PassiveSideView {
     replenishment: 'NORMAL',
     withdrawal: 'NORMAL',
     survival: 0,
+    survivalLabel: 'WEAK',
     strength: 0,
+    defensePower: 0,
     reliable: false,
     score: 0,
   };

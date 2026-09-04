@@ -86,6 +86,13 @@ export type {
 } from './market-battle.js';
 export { emptyMarketBattle } from './market-battle.js';
 export type {
+  AggressiveFlowSnapshot,
+  AggressiveSideFlow,
+  AggressivePowerContribution,
+  FootprintAggressionLevel,
+} from './aggressive-flow.js';
+export { emptyAggressiveFlow, emptyAggressiveSideFlow } from './aggressive-flow.js';
+export type {
   PassiveSide,
   PassiveLiquidityState,
   PassiveLiquidityEventType,

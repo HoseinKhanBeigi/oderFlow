@@ -24,6 +24,7 @@ import { MovePotentialEngine } from '../movement/move-potential-engine.js';
 import { PassiveFlowEngine } from '../passive-flow/passive-flow-engine.js';
 import { FlowWinnerEngine } from '../flow-battle/flow-winner-engine.js';
 import { MarketBattleEngine } from '../market-battle/engine.js';
+import { AggressiveFlowEngine } from '../aggressive-flow/engine.js';
 import { emptyPassiveMetrics } from '../models/passive.js';
 import { LiquidityResponseEngine } from '../liquidity-response/engine.js';
 import { PassiveLiquidityEngine } from '../passive-liquidity/engine.js';
@@ -89,6 +90,7 @@ export class SymbolEngine {
   readonly liquidityResponse: LiquidityResponseEngine;
   readonly passiveLiquidity: PassiveLiquidityEngine;
   readonly marketBattle: MarketBattleEngine;
+  readonly aggressiveFlow: AggressiveFlowEngine;
 
   private readonly listeners = new Set<EngineListener>();
   /**
@@ -147,6 +149,11 @@ export class SymbolEngine {
       config.liquidityResponse.percentileBands,
     );
     this.marketBattle = new MarketBattleEngine();
+    this.aggressiveFlow = new AggressiveFlowEngine(
+      config.marketBattle,
+      60_000,
+      config.historicalBaselineSamples,
+    );
   }
 
   on(listener: EngineListener): () => void {
@@ -207,6 +214,7 @@ export class SymbolEngine {
 
     this.liquidityResponse.onTrade(trade, isLarge);
     this.passiveLiquidity.onTrade(trade);
+    this.aggressiveFlow.onTrade(trade.timestamp, trade.side, trade.quoteValue, trade.price, isLarge);
 
     if (!this.book.empty()) {
       const flag = this.iceberg.onTrade(trade, this.book);
@@ -499,23 +507,27 @@ export class SymbolEngine {
     const tradeDataMissing =
       this.integrity.lastTradeTimestamp === 0 ||
       this.integrity.flags.has('missingData');
+    const tradeDataLowConfidence =
+      Boolean(this.integrity.lastTradeTimestamp) &&
+      now - this.integrity.lastTradeTimestamp > this.config.marketBattle.tradeStaleMs;
+
+    const aggressiveFlow = this.aggressiveFlow.snapshot(window, now, {
+      tradeDataMissing,
+      tradeStale: tradeDataLowConfidence,
+    });
 
     const marketBattle = this.marketBattle.analyze({
       window,
-      aggressiveBuyVolume: agg.buyVolume,
-      aggressiveSellVolume: agg.sellVolume,
-      buyTradeCount: agg.buyCount,
-      sellTradeCount: agg.sellCount,
-      largeBuyVolume: agg.largeBuyVolume,
-      largeSellVolume: agg.largeSellVolume,
       priceChangePercent: impact.percentagePriceChange,
       priceImpactEfficiency: impact.efficiency,
       confidence: conf,
       tradeDataMissing,
+      tradeDataLowConfidence,
       flowBattle,
       liquidityResponse,
       passiveLiquidity,
       netAggression,
+      aggressiveFlow,
     });
 
     const snap: WindowSnapshot = {
