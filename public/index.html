@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Order Flow — Footprint</title>
-  <link rel="stylesheet" href="/styles.css?v=trim-panels1" />
+  <link rel="stylesheet" href="/styles.css?v=market-battle1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -95,6 +95,22 @@
         <div id="fp-grid" class="fp-grid" aria-label="Footprint charts"></div>
       </section>
 
+      <section class="panel mb-panel" id="mb-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Market Battle</h2>
+            <p class="hint">Who is attacking, who is defending, whether defense is holding, and who is actually moving price — from liquidity response and price response, not dollar size alone.</p>
+          </div>
+          <div class="tf-tabs" id="mb-tf-tabs" aria-label="Market battle window"></div>
+        </div>
+        <div class="mb-grid" id="mb-grid"></div>
+        <div class="mb-summary" id="mb-summary">
+          <div class="mb-summary-label">BATTLE SUMMARY</div>
+          <div class="mb-summary-state" id="mb-summary-state">—</div>
+          <p class="mb-summary-why" id="mb-summary-why"></p>
+        </div>
+      </section>
+
       <section class="panel pl-panel" id="pl-panel">
         <div class="panel-head">
           <div>
@@ -125,6 +141,6 @@
     </main>
   </div>
 
-  <script src="/app.js?v=trim-panels1" type="module"></script>
+  <script src="/app.js?v=market-battle1" type="module"></script>
 </body>
 </html>

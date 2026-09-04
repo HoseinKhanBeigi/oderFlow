@@ -21,6 +21,8 @@ export { LiquidityVacuumDetector } from './liquidity/liquidity-vacuum-detector.j
 export { DefenseEngine } from './liquidity/defense-engine.js';
 export { PassiveFlowEngine } from './passive-flow/passive-flow-engine.js';
 export { FlowWinnerEngine } from './flow-battle/flow-winner-engine.js';
+export { MarketBattleEngine, analyzeMarketBattle, emptyMarketBattle } from './market-battle/index.js';
+export type { MarketBattleInput } from './market-battle/index.js';
 export { MovePotentialEngine } from './movement/move-potential-engine.js';
 export { LiquidityTargetGenerator } from './movement/liquidity-target-generator.js';
 export { FlowLiquidityRatio } from './movement/flow-liquidity-ratio.js';

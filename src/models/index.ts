@@ -72,6 +72,20 @@ export type {
   FlowBattleSnapshot,
 } from './passive.js';
 export type {
+  UpsideBattleState,
+  DownsideBattleState,
+  MarketBattleSummaryState,
+  BattleIntensity,
+  AggressiveSideView,
+  PassiveSideView,
+  PriceResponseView,
+  UpsideBattle,
+  DownsideBattle,
+  MarketBattleSummary,
+  MarketBattleSnapshot,
+} from './market-battle.js';
+export { emptyMarketBattle } from './market-battle.js';
+export type {
   PassiveSide,
   PassiveLiquidityState,
   PassiveLiquidityEventType,

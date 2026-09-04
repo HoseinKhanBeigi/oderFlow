@@ -3,7 +3,13 @@ import {
   ingestPassiveLiquidity,
   setPassiveCoins,
   setPassiveSymbol,
-} from './passive-liquidity.js?v=trim-panels1';
+} from './passive-liquidity.js?v=market-battle1';
+import {
+  initMarketBattle,
+  ingestMarketBattle,
+  setMarketBattleTf,
+  onMarketBattleTf,
+} from './market-battle.js?v=market-battle1';
 
 const _noopEl = {
   textContent: '',
@@ -554,6 +560,7 @@ function updateUi() {
   renderFlowBattle(w);
   renderCompare(lastSummary);
   renderLiquidityResponse();
+  ingestMarketBattle(lastSummary);
 }
 
 function battleLabel(s) {
@@ -797,6 +804,7 @@ function updateSummary(s) {
     if (s.symbol === selectedSymbol && !isSpotView()) {
       lastSummary = s;
       updateUi();
+      ingestMarketBattle(s);
     }
   }
 }
@@ -1048,6 +1056,7 @@ function setupTabs() {
     if (!btn) return;
     selectedTf = btn.dataset.tf;
     document.querySelectorAll('#tf-tabs .tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
+    setMarketBattleTf(selectedTf);
     if (isSpotView()) updateSpotUi();
     else updateUi();
   });
@@ -2678,6 +2687,13 @@ async function init() {
   setupAlertUi();
   initPassiveLiquidity({
     getMarket: () => dataMode,
+  });
+  initMarketBattle();
+  setMarketBattleTf(selectedTf);
+  onMarketBattleTf((tf) => {
+    selectedTf = tf;
+    if (isSpotView()) updateSpotUi();
+    else updateUi();
   });
   try {
     config = await fetch('/api/config').then((r) => r.json());

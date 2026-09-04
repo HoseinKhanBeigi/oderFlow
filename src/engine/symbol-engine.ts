@@ -23,6 +23,7 @@ import { LocalOrderBook } from '../liquidity/local-order-book.js';
 import { MovePotentialEngine } from '../movement/move-potential-engine.js';
 import { PassiveFlowEngine } from '../passive-flow/passive-flow-engine.js';
 import { FlowWinnerEngine } from '../flow-battle/flow-winner-engine.js';
+import { MarketBattleEngine } from '../market-battle/engine.js';
 import { emptyPassiveMetrics } from '../models/passive.js';
 import { LiquidityResponseEngine } from '../liquidity-response/engine.js';
 import { PassiveLiquidityEngine } from '../passive-liquidity/engine.js';
@@ -87,6 +88,7 @@ export class SymbolEngine {
   readonly flowWinner: FlowWinnerEngine;
   readonly liquidityResponse: LiquidityResponseEngine;
   readonly passiveLiquidity: PassiveLiquidityEngine;
+  readonly marketBattle: MarketBattleEngine;
 
   private readonly listeners = new Set<EngineListener>();
   /**
@@ -144,6 +146,7 @@ export class SymbolEngine {
       config.passiveLiquidity,
       config.liquidityResponse.percentileBands,
     );
+    this.marketBattle = new MarketBattleEngine();
   }
 
   on(listener: EngineListener): () => void {
@@ -492,6 +495,29 @@ export class SymbolEngine {
       netMagnitudePercentile: liquidityResponse.norms.delta.percentile,
     });
 
+    const passiveLiquidity = this.passiveLiquiditySnapshot(now);
+    const tradeDataMissing =
+      this.integrity.lastTradeTimestamp === 0 ||
+      this.integrity.flags.has('missingData');
+
+    const marketBattle = this.marketBattle.analyze({
+      window,
+      aggressiveBuyVolume: agg.buyVolume,
+      aggressiveSellVolume: agg.sellVolume,
+      buyTradeCount: agg.buyCount,
+      sellTradeCount: agg.sellCount,
+      largeBuyVolume: agg.largeBuyVolume,
+      largeSellVolume: agg.largeSellVolume,
+      priceChangePercent: impact.percentagePriceChange,
+      priceImpactEfficiency: impact.efficiency,
+      confidence: conf,
+      tradeDataMissing,
+      flowBattle,
+      liquidityResponse,
+      passiveLiquidity,
+      netAggression,
+    });
+
     const snap: WindowSnapshot = {
       symbol: this.symbol,
       marketType: this.marketType,
@@ -539,8 +565,9 @@ export class SymbolEngine {
       state,
       flowBattle,
       liquidityResponse,
-      passiveLiquidity: this.passiveLiquiditySnapshot(now),
+      passiveLiquidity,
       netAggression,
+      marketBattle,
       movePotential: this.movePotential.evaluate({
         symbol: this.symbol,
         book: this.book,
