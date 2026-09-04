@@ -318,7 +318,11 @@ export function ingestMarketBattle(summary) {
     state.summary = null;
     state.symbol = null;
     state.detail = null;
-    if (el.symbol) el.symbol.textContent = '—';
+    if (el.symbol) {
+      el.symbol.textContent = state.expectSymbol
+        ? String(state.expectSymbol).replace(/USDT$/i, '')
+        : '—';
+    }
     render();
     return;
   }
@@ -330,7 +334,8 @@ export function ingestMarketBattle(summary) {
   state.summary = summary;
   state.symbol = summary.symbol;
   if (el.symbol) {
-    el.symbol.textContent = String(summary.symbol).replace(/USDT$/i, '') || summary.symbol;
+    const labelSym = state.expectSymbol || summary.symbol;
+    el.symbol.textContent = String(labelSym).replace(/USDT$/i, '') || labelSym;
   }
   render();
 }

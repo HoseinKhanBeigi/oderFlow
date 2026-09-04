@@ -3,14 +3,14 @@ import {
   ingestPassiveLiquidity,
   setPassiveCoins,
   setPassiveSymbol,
-} from './passive-liquidity.js?v=coin-lock1';
+} from './passive-liquidity.js?v=coin-lock2';
 import {
   initMarketBattle,
   ingestMarketBattle,
   setMarketBattleTf,
   setMarketBattleSymbol,
   onMarketBattleTf,
-} from './market-battle.js?v=coin-lock1';
+} from './market-battle.js?v=coin-lock2';
 
 const _noopEl = {
   textContent: '',
@@ -900,9 +900,11 @@ function updateSummary(s) {
   summariesByMarket[market][s.symbol] = s;
   if (market === 'perp') {
     summaries[s.symbol] = s;
+    // Never paint Market Battle for a different coin (stops BTC flash on /sol).
     if (s.symbol === selectedSymbol && !isSpotView()) {
       lastSummary = s;
       updateUi();
+      setMarketBattleSymbol(selectedSymbol);
       ingestMarketBattle(s);
     }
   }
@@ -3115,8 +3117,15 @@ async function init() {
     fpRetentionDays = Number(config.history?.retentionDays) || 30;
     imbalanceRatio = Number(config.imbalanceRatio) || 3;
     if ($('imb-ratio') !== _noopEl) $('imb-ratio').value = String(imbalanceRatio);
-    if (config.coins?.length) selectedSymbol = config.coins[0].symbol;
+
+    // Resolve URL coin BEFORE any panel defaults to BTC (was flashing Market Battle as BTC on /sol).
     const route = parseCoinRoute();
+    const routeCoin = findCoinBySlug(route.slug);
+    selectedSymbol =
+      routeCoin?.symbol ?? config.coins?.[0]?.symbol ?? selectedSymbol;
+    setMarketBattleSymbol(selectedSymbol);
+    setPassiveSymbol(selectedSymbol);
+
     const initialMode =
       route.mode === 'spot' || route.mode === 'perp'
         ? route.mode
