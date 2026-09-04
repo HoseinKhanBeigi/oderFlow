@@ -293,11 +293,22 @@ const server = createServer(async (req, res) => {
 
 const wss = new WebSocketServer({ server, path: '/ws' });
 
+/** Drop clients whose outbound buffer grows unbounded (slow consumer / sleep). */
+const WS_MAX_BUFFERED = Number(process.env.WS_MAX_BUFFERED ?? 1_000_000);
+const WS_PING_MS = Number(process.env.WS_PING_MS ?? 30_000);
+
+type AliveSocket = WebSocket & { isAlive?: boolean };
+
+function sendSafe(client: WebSocket, raw: string): boolean {
+  if (client.readyState !== WebSocket.OPEN) return false;
+  if (client.bufferedAmount > WS_MAX_BUFFERED) return false;
+  client.send(raw);
+  return true;
+}
+
 function broadcast(ev: object): void {
   const raw = JSON.stringify(ev);
-  for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN) client.send(raw);
-  }
+  for (const client of wss.clients) sendSafe(client, raw);
 }
 
 /**
@@ -313,6 +324,12 @@ interface FootprintSub {
 const footprintSubs = new Map<WebSocket, FootprintSub>();
 
 wss.on('connection', (socket) => {
+  const alive = socket as AliveSocket;
+  alive.isAlive = true;
+  alive.on('pong', () => {
+    alive.isAlive = true;
+  });
+
   socket.on('message', (raw) => {
     let msg: { type?: string; symbol?: unknown; exchange?: unknown; market?: unknown };
     try {
@@ -336,6 +353,26 @@ wss.on('connection', (socket) => {
   });
 });
 
+/** Terminate half-open sockets (laptop sleep, proxy idle, etc.). */
+const wsPingTimer = setInterval(() => {
+  for (const client of wss.clients) {
+    const alive = client as AliveSocket;
+    if (alive.isAlive === false) {
+      footprintSubs.delete(client);
+      client.terminate();
+      continue;
+    }
+    alive.isAlive = false;
+    try {
+      client.ping();
+    } catch {
+      footprintSubs.delete(client);
+      client.terminate();
+    }
+  }
+}, WS_PING_MS);
+wsPingTimer.unref?.();
+
 function sendLiveFootprint(socket: WebSocket): void {
   const sub = footprintSubs.get(socket);
   if (!sub || socket.readyState !== WebSocket.OPEN) return;
@@ -346,7 +383,7 @@ function sendLiveFootprint(socket: WebSocket): void {
     if (bar) bars.push({ exchange, bar: toWire(bar) });
   }
   if (!bars.length) return;
-  socket.send(JSON.stringify({ type: 'footprint_live', symbol: sub.symbol, market: sub.market, bars }));
+  sendSafe(socket, JSON.stringify({ type: 'footprint_live', symbol: sub.symbol, market: sub.market, bars }));
 }
 
 const liveFootprintTimer = setInterval(() => {

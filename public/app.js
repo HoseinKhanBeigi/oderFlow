@@ -812,10 +812,16 @@ function updateSummary(s) {
 function setStatus(connected, message) {
   const el = $('status');
   el.textContent = connected ? (message || 'Live') : message;
-  el.className = `status ${connected ? 'live' : message.includes('Connect') || message.includes('Reconnect') ? 'connecting' : 'offline'}`;
+  // Match Connecting / Reconnecting / Connection error (case-insensitive).
+  const connecting = !connected && /connect/i.test(message || '');
+  el.className = `status ${connected ? 'live' : connecting ? 'connecting' : 'offline'}`;
 }
 
 function refreshStatus() {
+  if (fpLiveSocket?.readyState !== WebSocket.OPEN) {
+    setStatus(false, 'Reconnecting…');
+    return;
+  }
   const s = feedStatus[footprintMarket()] ?? feedStatus.perp;
   setStatus(s.connected, s.message || (s.connected ? 'Live' : 'Connecting…'));
 }
@@ -3027,16 +3033,38 @@ async function init() {
     setPassiveCoins([{ symbol: 'BTCUSDT', label: 'BTC' }]);
   }
   renderAlertList();
+  connectLiveSocket();
+}
+
+/** Browser↔server WS: reconnect with backoff so one drop is not terminal. */
+const WS_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000];
+let wsRetryAttempt = 0;
+let wsRetryTimer = null;
+
+function connectLiveSocket() {
+  if (wsRetryTimer) {
+    clearTimeout(wsRetryTimer);
+    wsRetryTimer = null;
+  }
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
   fpLiveSocket = ws;
 
   ws.onopen = () => {
+    wsRetryAttempt = 0;
     setStatus(true, 'Live');
     subscribeFootprint();
   };
-  ws.onclose = () => setStatus(false, 'Reconnecting…');
+
+  ws.onclose = () => {
+    if (fpLiveSocket === ws) fpLiveSocket = null;
+    setStatus(false, 'Reconnecting…');
+    const delay = WS_BACKOFF_MS[Math.min(wsRetryAttempt, WS_BACKOFF_MS.length - 1)];
+    wsRetryAttempt += 1;
+    wsRetryTimer = setTimeout(connectLiveSocket, delay);
+  };
+
   ws.onerror = () => setStatus(false, 'Connection error');
 
   ws.onmessage = (msg) => {
