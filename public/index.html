@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Order Flow — Footprint</title>
-  <link rel="stylesheet" href="/styles.css?v=market-battle2" />
+  <link rel="stylesheet" href="/styles.css?v=fp-passive1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -85,12 +85,14 @@
         <div class="chart-legend">
           <span id="fp-lev-now" class="fp-lev-now">—</span>
           <span class="legend-item fp-live">Live price</span>
-          <span class="legend-item fp-rest-bid">Asks pulled · price ran up</span>
-          <span class="legend-item fp-rest-ask">Bids pulled · price dumped</span>
-          <span class="legend-item fp-pbuy">Sellers absorbed · reversed up</span>
-          <span class="legend-item fp-psell">Buyers absorbed · reversed down</span>
-          <span class="legend-item fp-dist">Distribution at highs · liq grabbed · reverse</span>
-          <span class="legend-item fp-hunt">Stop hunt · sweep high/low · reverse</span>
+          <span class="legend-item fp-psell">Passive sellers</span>
+          <span class="legend-item fp-pbuy">Passive buyers</span>
+          <span class="legend-item fp-rest-bid">Resting bid</span>
+          <span class="legend-item fp-rest-ask">Resting ask</span>
+          <span class="legend-item fp-withdraw">Cancelled (C)</span>
+          <span class="legend-item fp-replenish">Replenished</span>
+          <span class="legend-item fp-dist">Distribution at highs</span>
+          <span class="legend-item fp-hunt">Stop hunt</span>
         </div>
         <div id="fp-grid" class="fp-grid" aria-label="Footprint charts"></div>
       </section>
@@ -142,6 +144,6 @@
     </main>
   </div>
 
-  <script src="/app.js?v=market-battle3" type="module"></script>
+  <script src="/app.js?v=fp-passive1" type="module"></script>
 </body>
 </html>

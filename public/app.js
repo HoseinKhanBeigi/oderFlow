@@ -2136,6 +2136,11 @@ function drawFootprint(symbol = selectedSymbol) {
     const rh = Math.max(1, rowH - 1);
     const sellBox = half - 2;
     const buyBox = cellW - half - 2;
+    const barWin = fpBarWinner(bar);
+    const engineAbs =
+      lastSummary?.windows?.[selectedTf]?.absorption?.type ??
+      lastSummary?.windows?.['10s']?.absorption?.type ??
+      lastSummary?.windows?.['1m']?.absorption?.type;
     for (const lv of levels) {
       const y = yForPrice(lv.price);
       const total = lv.buy + lv.sell;
@@ -2150,8 +2155,46 @@ function drawFootprint(symbol = selectedSymbol) {
         ctx.fillStyle = `rgba(34, 197, 94, ${a})`;
         ctx.fillRect(cellX + half + 1, y - rh / 2, buyBox, rh);
       }
+
+      // Passive sellers absorbing aggressive buys (gold on ask/buy half)
+      const pasSell =
+        (barWin.id === 'PASSIVE_SELLERS' || engineAbs === 'BUYER_ABSORPTION') &&
+        lv.buy >= lv.sell * 1.4 &&
+        lv.buy > maxSide * 0.12;
+      // Passive buyers absorbing aggressive sells (blue on bid/sell half)
+      const pasBuy =
+        (barWin.id === 'PASSIVE_BUYERS' || engineAbs === 'SELLER_ABSORPTION') &&
+        lv.sell >= lv.buy * 1.4 &&
+        lv.sell > maxSide * 0.12;
+      if (pasSell) {
+        ctx.fillStyle = 'rgba(251, 191, 36, 0.28)';
+        ctx.fillRect(cellX + half + 1, y - rh / 2, buyBox, rh);
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 1.25;
+        ctx.strokeRect(cellX + half + 1, y - rh / 2 + 0.5, buyBox - 0.5, rh - 1);
+      } else if (pasBuy) {
+        ctx.fillStyle = 'rgba(96, 165, 250, 0.28)';
+        ctx.fillRect(cellX + 1, y - rh / 2, sellBox, rh);
+        ctx.strokeStyle = '#60a5fa';
+        ctx.lineWidth = 1.25;
+        ctx.strokeRect(cellX + 1, y - rh / 2 + 0.5, sellBox - 0.5, rh - 1);
+      }
+
+      const imbBuy = lv.buy >= lv.sell * imbalanceRatio && lv.buy > maxSide * 0.15;
+      const imbSell = lv.sell >= lv.buy * imbalanceRatio && lv.sell > maxSide * 0.15;
+      if (imbBuy && !pasSell) {
+        ctx.strokeStyle = '#22c55e';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cellX + half + 1, y - rh / 2 + 0.5, buyBox - 0.5, rh - 1);
+      } else if (imbSell && !pasBuy) {
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cellX + 1, y - rh / 2 + 0.5, sellBox - 0.5, rh - 1);
+      }
+
       if (poc.vol > 0 && lv.price === poc.price) {
         ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 1;
         ctx.strokeRect(cellX + 1, y - rh / 2 + 0.5, cellW - 2, rh - 1);
       }
       if (lv.sell > 0) {
@@ -2160,6 +2203,11 @@ function drawFootprint(symbol = selectedSymbol) {
       if (lv.buy > 0) {
         drawFpCellText(ctx, fmtVolShort(lv.buy), cellX + half + 1, y, buyBox, rh, 'left', '#ecfdf5');
       }
+    }
+
+    // Live bar: resting liquidity, replenishment, cancellation (withdraw), absorption
+    if (i === visible.length - 1 && pan < 0.15) {
+      drawLiveLiquidityMarks(ctx, { cellX, half, cellW, yForPrice, rh, topPad, chartH });
     }
 
     ctx.font = 'bold 11px JetBrains Mono, monospace';
@@ -2247,6 +2295,9 @@ function drawLiveLiquidityMarks(ctx, { cellX, half, cellW, yForPrice, rh, topPad
   for (const mark of marks) {
     const y = yForPrice(mark.price);
     if (y < topPad + 1 || y > topPad + chartH - 1) continue;
+    const event = String(mark.event || '');
+
+    // Resting passive liquidity still on the book
     if (mark.restingBid > 0) {
       ctx.setLineDash([3, 2]);
       ctx.strokeStyle = '#22d3ee';
@@ -2258,24 +2309,49 @@ function drawLiveLiquidityMarks(ctx, { cellX, half, cellW, yForPrice, rh, topPad
       ctx.strokeRect(cellX + half, y - rh / 2 + 0.5, half - 2, Math.max(2, rh - 1));
     }
     ctx.setLineDash([]);
-    if (String(mark.event).startsWith('REPLENISH')) {
+
+    // Passive orders added / replenished
+    if (event.startsWith('REPLENISH')) {
       ctx.setLineDash([1, 2]);
       ctx.strokeStyle = '#a78bfa';
       ctx.strokeRect(cellX + 3, y - rh / 2 + 2, cellW - 6, Math.max(1, rh - 4));
       ctx.setLineDash([]);
     }
-    if (String(mark.event).startsWith('WITHDRAW')) {
+
+    // Cancelled / withdrawn passive orders (not consumed by trades)
+    if (event.startsWith('WITHDRAW')) {
+      const askSide = event.includes('ASK');
+      const x0 = askSide ? cellX + half + 2 : cellX + 2;
+      const w = half - 4;
+      const h = Math.max(3, rh - 2);
+      const y0 = y - h / 2;
       ctx.strokeStyle = '#94a3b8';
-      ctx.globalAlpha = 0.75;
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.18)';
+      ctx.fillRect(x0, y0, w, h);
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(cellX + 4, y - Math.min(4, rh / 2));
-      ctx.lineTo(cellX + cellW - 4, y + Math.min(4, rh / 2));
+      ctx.moveTo(x0 + 2, y0 + 2);
+      ctx.lineTo(x0 + w - 2, y0 + h - 2);
+      ctx.moveTo(x0 + w - 2, y0 + 2);
+      ctx.lineTo(x0 + 2, y0 + h - 2);
       ctx.stroke();
-      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1;
+      // Tiny "C" for cancel when row is tall enough
+      if (rh >= 12) {
+        ctx.font = 'bold 8px JetBrains Mono, monospace';
+        ctx.fillStyle = '#cbd5e1';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('C', x0 + w / 2, y);
+      }
     }
-    if (String(mark.event).startsWith('ABSORPTION')) {
-      ctx.strokeStyle = mark.event === 'ABSORPTION_ASK' ? '#fbbf24' : '#60a5fa';
+
+    // Absorption at this level
+    if (event.startsWith('ABSORPTION')) {
+      ctx.strokeStyle = event === 'ABSORPTION_ASK' ? '#fbbf24' : '#60a5fa';
+      ctx.lineWidth = 1.5;
       ctx.strokeRect(cellX + 2, y - rh / 2 + 1, cellW - 4, Math.max(2, rh - 2));
+      ctx.lineWidth = 1;
     }
   }
   ctx.restore();
