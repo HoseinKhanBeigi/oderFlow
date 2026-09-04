@@ -2059,6 +2059,31 @@ body {
   .mb-numbers { grid-template-columns: 1fr; }
 }
 
+/* Feed-health banner — names the specific data problem */
+.mb-health {
+  margin: 0.7rem 0.9rem 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+.mb-health.hidden { display: none; }
+.mb-health.bad { border-left-color: var(--sell); background: rgba(239, 68, 68, 0.08); }
+.mb-health.warn { border-left-color: var(--warn); background: rgba(251, 191, 36, 0.08); }
+.mb-health-icon { font-size: 1rem; line-height: 1.2; }
+.mb-health-title { font-size: 0.85rem; font-weight: 700; color: var(--text); }
+.mb-health-detail { font-size: 0.76rem; color: var(--muted); margin-top: 0.15rem; line-height: 1.45; }
+.mb-health-facts {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--muted);
+  opacity: 0.85;
+  margin-top: 0.25rem;
+}
+
 /* Market Battle attack/defense blocks */
 .mb-block {
   display: block;

@@ -103,6 +103,25 @@ export interface DownsideBattle {
   why: string[];
 }
 
+/**
+ * Why a battle read is untrustworthy, so the UI can say "the feed is down" or
+ * "the market is quiet" instead of collapsing both into one vague warning.
+ */
+export type BattleDataStatus = 'OK' | 'NO_TRADES' | 'STALE_TRADES' | 'BOOK_UNRELIABLE';
+
+export interface BattleDataHealth {
+  status: BattleDataStatus;
+  /** Milliseconds since the last trade actually arrived (local clock). */
+  tradeAgeMs: number;
+  /** Age at which this symbol is considered stale — adapts to its own cadence. */
+  staleAfterMs: number;
+  /** Typical gap between prints for this symbol; 0 until enough samples. */
+  medianTradeGapMs: number;
+  bookReliable: boolean;
+  /** Human-readable reason, empty when status is OK. */
+  detail: string;
+}
+
 export interface MarketBattleSummary {
   state: MarketBattleSummaryState;
   why: string;
@@ -117,6 +136,8 @@ export interface MarketBattleSnapshot {
   /** Alias of downside.battleScore (0–100, independent of upside). */
   downsideBattleScore: number;
   summary: MarketBattleSummary;
+  /** Feed health behind this read — drives the UI's data warnings. */
+  dataHealth: BattleDataHealth;
 }
 
 export function emptyAggressiveSide(): AggressiveSideView {
@@ -191,6 +212,14 @@ export function emptyMarketBattle(window: WindowId = '10s'): MarketBattleSnapsho
     summary: {
       state: 'NO_CLEAR_WINNER',
       why: 'No meaningful battle in this window.',
+    },
+    dataHealth: {
+      status: 'NO_TRADES',
+      tradeAgeMs: 0,
+      staleAfterMs: 0,
+      medianTradeGapMs: 0,
+      bookReliable: false,
+      detail: 'No trades received yet.',
     },
   };
 }

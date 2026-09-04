@@ -202,6 +202,8 @@ export const DEFAULT_CONFIG: EngineConfig = {
     imbalanceRatio: 3,
     minImbalanceQuote: 800,
     tradeStaleMs: 5_000,
+    tradeStaleGapMultiple: 10,
+    maxTradeStaleMs: 60_000,
   },
 
   liquidityResponse: {

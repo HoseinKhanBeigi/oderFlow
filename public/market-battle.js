@@ -157,6 +157,20 @@ const SUMMARY_COPY = {
   },
 };
 
+/** Feed-health banner copy — says which failure it is, not just "untrusted". */
+const HEALTH_COPY = {
+  NO_TRADES: { icon: '⛔', tone: 'bad', title: 'No trades reaching the engine' },
+  STALE_TRADES: { icon: '⏳', tone: 'warn', title: 'Trade feed has gone quiet' },
+  BOOK_UNRELIABLE: { icon: '📖', tone: 'warn', title: 'Order book incomplete' },
+};
+
+function fmtAge(ms) {
+  const n = Number(ms) || 0;
+  if (n < 1000) return `${Math.round(n)}ms`;
+  if (n < 60_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}s`;
+  return `${Math.floor(n / 60_000)}m ${Math.round((n % 60_000) / 1000)}s`;
+}
+
 function copyFor(map, key) {
   return map[String(key ?? '')] ?? map.NO_MEANINGFUL_BATTLE ?? map.NO_CLEAR_WINNER;
 }
@@ -233,6 +247,7 @@ export function initMarketBattle() {
   el.summaryPlain = $('mb-summary-plain');
   el.summaryBias = $('mb-summary-bias');
   el.summaryWhy = $('mb-summary-why');
+  el.health = $('mb-health');
   el.tabs = $('mb-tf-tabs');
   el.detail = $('mb-detail');
   if (!el.panel) return;
@@ -317,6 +332,7 @@ function render() {
       el.summaryBias.className = 'mb-bias';
     }
     if (el.detail) el.detail.innerHTML = '';
+    renderHealth(null);
     return;
   }
 
@@ -333,7 +349,37 @@ function render() {
   }
   if (el.summaryPlain) el.summaryPlain.textContent = summaryCopy.plain;
   if (el.summaryWhy) el.summaryWhy.textContent = mb.summary?.why ?? '';
+  renderHealth(mb.dataHealth);
   renderDetail(mb);
+}
+
+/**
+ * Feed-health banner. The engine already knows whether trades are absent, merely
+ * stale, or fine-but-the-book-is-thin; showing which one turns a vague warning
+ * into something actionable.
+ */
+function renderHealth(health) {
+  if (!el.health) return;
+  const status = String(health?.status ?? 'OK');
+  if (!health || status === 'OK') {
+    el.health.className = 'mb-health hidden';
+    el.health.innerHTML = '';
+    return;
+  }
+  const copy = HEALTH_COPY[status] ?? HEALTH_COPY.STALE_TRADES;
+  const facts = [];
+  if (health.tradeAgeMs > 0) facts.push(`last trade ${fmtAge(health.tradeAgeMs)} ago`);
+  if (health.staleAfterMs > 0) facts.push(`stale after ${fmtAge(health.staleAfterMs)}`);
+  if (health.medianTradeGapMs > 0) facts.push(`typical gap ${fmtAge(health.medianTradeGapMs)}`);
+  if (!health.bookReliable) facts.push('book unreliable');
+  el.health.className = `mb-health ${copy.tone}`;
+  el.health.innerHTML = `
+    <span class="mb-health-icon">${copy.icon}</span>
+    <div>
+      <div class="mb-health-title">${copy.title}</div>
+      <div class="mb-health-detail">${health.detail ?? ''}</div>
+      ${facts.length ? `<div class="mb-health-facts">${facts.join(' · ')}</div>` : ''}
+    </div>`;
 }
 
 /**

@@ -164,7 +164,7 @@ export class SymbolEngine {
   ingestTrade(trade: MarketTrade): void {
     if (trade.symbol !== this.symbol) return;
     this.integrity.clearTransient();
-    if (!this.integrity.acceptTradeId(trade.tradeId, trade.timestamp)) return;
+    if (!this.integrity.acceptTradeId(trade.tradeId, trade.timestamp, Date.now())) return;
 
     this.lastNow = trade.timestamp;
 
@@ -231,6 +231,7 @@ export class SymbolEngine {
   ingestBookSnapshot(snapshot: OrderBookSnapshot): void {
     this.book.applySnapshot(snapshot);
     this.integrity.lastBookTimestamp = snapshot.timestamp;
+    this.integrity.lastBookReceivedAt = Date.now();
     this.integrity.flags.delete('staleBook');
     this.integrity.flags.delete('missingData');
     this.checkSpread();
@@ -241,6 +242,11 @@ export class SymbolEngine {
   ingestBookDelta(delta: OrderBookDelta): void {
     const result = this.book.applyDelta(delta);
     this.integrity.lastBookTimestamp = delta.timestamp;
+    this.integrity.lastBookReceivedAt = Date.now();
+    // A delta that lands on a populated book proves data is flowing again.
+    // Without this the flag set by one empty-book moment never clears on
+    // symbols that are fed by deltas rather than repeated snapshots.
+    if (!this.book.empty()) this.integrity.flags.delete('missingData');
     if (result.gap) {
       this.integrity.noteSequenceGap(delta.timestamp);
       // Incremental state is no longer trustworthy: stop attributing book
@@ -479,11 +485,14 @@ export class SymbolEngine {
       longLiquidationUsd: agg.forcedSellVolume,
       flags: this.integrity.flags,
       bookEmpty: this.book.empty(),
-      lastTradeAgeMs: this.integrity.lastTradeTimestamp
-        ? Math.max(0, now - this.integrity.lastTradeTimestamp)
+      // Ages are measured against local receive time. Exchange event time comes
+      // from a different clock, so subtracting it from Date.now() reports skew
+      // as staleness.
+      lastTradeAgeMs: this.integrity.lastTradeReceivedAt
+        ? Math.max(0, now - this.integrity.lastTradeReceivedAt)
         : 0,
-      lastBookAgeMs: this.integrity.lastBookTimestamp
-        ? Math.max(0, now - this.integrity.lastBookTimestamp)
+      lastBookAgeMs: this.integrity.lastBookReceivedAt
+        ? Math.max(0, now - this.integrity.lastBookReceivedAt)
         : 0,
       exchangeCount: 1,
       oiExpected: this.marketType === 'perp',
@@ -505,11 +514,11 @@ export class SymbolEngine {
 
     const passiveLiquidity = this.passiveLiquiditySnapshot(now);
     const tradeDataMissing =
-      this.integrity.lastTradeTimestamp === 0 ||
+      this.integrity.lastTradeReceivedAt === 0 ||
       this.integrity.flags.has('missingData');
-    const tradeDataLowConfidence =
-      Boolean(this.integrity.lastTradeTimestamp) &&
-      now - this.integrity.lastTradeTimestamp > this.config.marketBattle.tradeStaleMs;
+    const tradeAgeMs = this.integrity.tradeAgeMs(now);
+    const staleAfterMs = this.tradeStaleThresholdMs();
+    const tradeDataLowConfidence = !tradeDataMissing && tradeAgeMs > staleAfterMs;
 
     const aggressiveFlow = this.aggressiveFlow.snapshot(window, now, {
       tradeDataMissing,
@@ -523,6 +532,9 @@ export class SymbolEngine {
       confidence: conf,
       tradeDataMissing,
       tradeDataLowConfidence,
+      tradeAgeMs: Number.isFinite(tradeAgeMs) ? tradeAgeMs : 0,
+      staleAfterMs,
+      medianTradeGapMs: this.integrity.medianTradeGapMs(),
       flowBattle,
       liquidityResponse,
       passiveLiquidity,
@@ -724,6 +736,23 @@ export class SymbolEngine {
       this.recentFlip = false;
     }
     if (sign !== 0) this.lastDeltaSign = sign;
+  }
+
+  /**
+   * How long a symbol may go without a print before its flow read is stale.
+   *
+   * A flat threshold assumes every symbol trades like BTC. Thin books can
+   * legitimately go tens of seconds between prints, so scale off the symbol's
+   * own observed cadence and keep the configured value as the floor.
+   */
+  private tradeStaleThresholdMs(): number {
+    const floor = this.config.marketBattle.tradeStaleMs;
+    const median = this.integrity.medianTradeGapMs();
+    if (median <= 0) return floor;
+    return Math.min(
+      this.config.marketBattle.maxTradeStaleMs,
+      Math.max(floor, median * this.config.marketBattle.tradeStaleGapMultiple),
+    );
   }
 
   private refreshIntegrity(now: number): void {

@@ -22,6 +22,23 @@ export interface LiveFeedConfig {
   market: MarketType;
   summaryMs: number;
   exchanges?: ExchangeId[];
+  /**
+   * Venues whose trades feed the analysis engine (flow, footprint aggression,
+   * market battle). Defaults to Binance alone.
+   *
+   * Caveat before widening this: the order book is Binance-only, so adding
+   * venues here scales the *attack* side without scaling *defense*, which
+   * inflates attack-vs-defense ratios. Prefer `engineTradeFallback` unless you
+   * also have depth for the extra venues.
+   */
+  engineTradeVenues?: ExchangeId[];
+  /**
+   * Venue to fall back to when the primary stops delivering trades for this
+   * long. Keeps flow analysis alive through a Binance outage or geo-block.
+   * Set to 0 to disable.
+   */
+  engineTradeFallbackMs?: number;
+  engineTradeFallback?: ExchangeId;
 }
 
 export interface TapeItem {
@@ -158,11 +175,17 @@ export class LiveBinanceFeed {
   private readonly futures = new BinanceFuturesAdapter();
   private readonly venueUp: Partial<Record<ExchangeId, boolean>> = {};
   private venues: VenueTradeFan | null = null;
+  /** Venues whose trades reach the analysis engine. */
+  private readonly engineTradeVenues: ExchangeId[];
+  private readonly lastEngineTradeAt = new Map<ExchangeId, number>();
+  private readonly startedAt = Date.now();
+  private fallbackAnnounced = false;
 
   constructor(readonly config: LiveFeedConfig) {
     this.engine = new OrderFlowEngine();
     this.coins = config.coins;
     this.exchanges = config.exchanges?.length ? config.exchanges : parseExchangesEnv();
+    this.engineTradeVenues = config.engineTradeVenues?.length ? config.engineTradeVenues : ['binance'];
     for (const coin of this.coins) {
       this.engine.getSymbol(coin.symbol, config.market);
       this.tradeCount.set(coin.symbol, 0);
@@ -392,6 +415,35 @@ export class LiveBinanceFeed {
     }
   }
 
+  /**
+   * Whether this venue's trades should reach the analysis engine.
+   *
+   * Normally only the configured venues do. If the primary has gone silent for
+   * longer than the fallback window, the fallback venue is admitted too, so a
+   * blocked or broken primary degrades the read instead of blanking it.
+   */
+  private feedsEngine(exchange: ExchangeId): boolean {
+    if (this.engineTradeVenues.includes(exchange)) return true;
+    const fallback = this.config.engineTradeFallback;
+    const windowMs = this.config.engineTradeFallbackMs ?? 0;
+    if (!fallback || windowMs <= 0 || exchange !== fallback) return false;
+    const primaryAt = Math.max(
+      0,
+      ...this.engineTradeVenues.map((id) => this.lastEngineTradeAt.get(id) ?? 0),
+    );
+    // Never seen a primary trade, or it stopped: let the fallback through.
+    const silent = primaryAt === 0 ? this.startedAt : primaryAt;
+    if (Date.now() - silent <= windowMs) return false;
+    if (!this.fallbackAnnounced) {
+      this.fallbackAnnounced = true;
+      console.warn(
+        `[feed] ${this.config.market}: no trades from ${this.engineTradeVenues.join('/')} for ` +
+          `${Math.round(windowMs / 1000)}s — feeding the engine from ${fallback} instead.`,
+      );
+    }
+    return true;
+  }
+
   private handleDepth(symbol: string, data: Record<string, unknown>, market: MarketType): void {
     if (!symbol || !this.coins.some((c) => c.symbol === symbol)) return;
     const bids = parseBookLevels(data.bids ?? data.b);
@@ -430,7 +482,10 @@ export class LiveBinanceFeed {
 
   private handleTrade(trade: MarketTrade, exchange: ExchangeId = 'binance'): void {
     if (!this.coins.some((c) => c.symbol === trade.symbol)) return;
-    if (exchange === 'binance') this.engine.ingestTrade(trade);
+    if (this.feedsEngine(exchange)) {
+      this.engine.ingestTrade(trade);
+      this.lastEngineTradeAt.set(exchange, Date.now());
+    }
     const seqKey = `${exchange}:${trade.symbol}`;
     const next = (this.tradeCount.get(seqKey) ?? 0) + 1;
     this.tradeCount.set(seqKey, next);

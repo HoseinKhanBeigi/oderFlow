@@ -60,6 +60,16 @@ const coins = extra.length
 
 const EXCHANGES = parseExchangesEnv();
 const SPOT_EXCHANGES = parseSpotExchangesEnv();
+
+// Binance normally feeds the analysis engine on its own. Where Binance is
+// unreachable (geo-block, outage) the engine would otherwise see no trades at
+// all, so fall back to another venue's tape after a silence.
+const ENGINE_TRADE_VENUES = (process.env.ENGINE_TRADE_VENUES ?? 'binance')
+  .split(',')
+  .map((s) => s.trim().toLowerCase())
+  .filter((id): id is ExchangeId => isExchangeId(id));
+const ENGINE_TRADE_FALLBACK = (process.env.ENGINE_TRADE_FALLBACK ?? 'bybit').trim().toLowerCase();
+const ENGINE_TRADE_FALLBACK_MS = Number(process.env.ENGINE_TRADE_FALLBACK_MS ?? 20_000);
 const cryptoCoins = coins.filter((c) => c.venue === 'crypto');
 const IMBALANCE_RATIO = Number(process.env.SPOT_IMBALANCE_RATIO ?? DEFAULT_IMBALANCE_RATIO) || DEFAULT_IMBALANCE_RATIO;
 
@@ -78,6 +88,9 @@ const perpFeed = new LiveBinanceFeed({
   market: 'perp',
   summaryMs: 2_000,
   exchanges: EXCHANGES,
+  engineTradeVenues: ENGINE_TRADE_VENUES,
+  engineTradeFallback: isExchangeId(ENGINE_TRADE_FALLBACK) ? ENGINE_TRADE_FALLBACK : undefined,
+  engineTradeFallbackMs: ENGINE_TRADE_FALLBACK_MS,
 });
 
 const spotFeed = new LiveBinanceFeed({
@@ -85,6 +98,9 @@ const spotFeed = new LiveBinanceFeed({
   market: 'spot',
   summaryMs: 2_000,
   exchanges: SPOT_EXCHANGES,
+  engineTradeVenues: ENGINE_TRADE_VENUES,
+  engineTradeFallback: isExchangeId(ENGINE_TRADE_FALLBACK) ? ENGINE_TRADE_FALLBACK : undefined,
+  engineTradeFallbackMs: ENGINE_TRADE_FALLBACK_MS,
 });
 
 const perpRecorder = new FootprintRecorder({

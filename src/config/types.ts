@@ -187,8 +187,15 @@ export interface MarketBattleConfig {
   /** Same semantics as footprint chart imbalance ratio. */
   imbalanceRatio: number;
   minImbalanceQuote: number;
-  /** Soften aggression classification when last trade older than this. */
+  /**
+   * Floor for the trade-staleness threshold. Measured against local receive
+   * time, never exchange event time — the two use different clocks.
+   */
   tradeStaleMs: number;
+  /** Threshold scales to this multiple of the symbol's median inter-trade gap. */
+  tradeStaleGapMultiple: number;
+  /** Ceiling for the scaled threshold, so a dead feed is still caught. */
+  maxTradeStaleMs: number;
 }
 
 export interface IntegrityConfig {

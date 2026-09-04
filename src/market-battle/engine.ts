@@ -7,6 +7,7 @@ import type { AggressiveFlowSnapshot, AggressiveSideFlow } from '../models/aggre
 import type { PriceImpactEfficiency, WindowId } from '../models/trade.js';
 import type {
   AggressiveSideView,
+  BattleDataHealth,
   BattleIntensity,
   DownsideBattle,
   DownsideBattleState,
@@ -30,6 +31,12 @@ export interface MarketBattleInput {
   tradeDataMissing?: boolean;
   /** True when trade tape is stale / incomplete. */
   tradeDataLowConfidence?: boolean;
+  /** Milliseconds since the last trade arrived (local clock, not exchange time). */
+  tradeAgeMs?: number;
+  /** Age at which this symbol counts as stale — scaled to its own trade cadence. */
+  staleAfterMs?: number;
+  /** Typical gap between prints for this symbol; 0 until enough samples. */
+  medianTradeGapMs?: number;
   flowBattle: FlowBattleSnapshot;
   liquidityResponse: LiquidityResponseSnapshot;
   passiveLiquidity: PassiveLiquiditySnapshot | null;
@@ -135,8 +142,47 @@ export class MarketBattleEngine {
       upsideBattleScore: upside.battleScore,
       downsideBattleScore: downside.battleScore,
       summary,
+      dataHealth: buildDataHealth(input, tradeMissing, tradeLowConf, bookReliable),
     };
   }
+}
+
+/** Names the specific reason a read is degraded, so the UI never has to guess. */
+function buildDataHealth(
+  input: MarketBattleInput,
+  tradeMissing: boolean,
+  tradeLowConf: boolean,
+  bookReliable: boolean,
+): BattleDataHealth {
+  const tradeAgeMs = Number.isFinite(input.tradeAgeMs ?? NaN) ? (input.tradeAgeMs as number) : 0;
+  const staleAfterMs = input.staleAfterMs ?? 0;
+  const medianTradeGapMs = input.medianTradeGapMs ?? 0;
+  const base = { tradeAgeMs, staleAfterMs, medianTradeGapMs, bookReliable };
+
+  if (tradeMissing) {
+    return {
+      ...base,
+      status: 'NO_TRADES',
+      detail: 'No trades are reaching the engine — the trade feed is down or not subscribed.',
+    };
+  }
+  if (tradeLowConf) {
+    const age = Math.round(tradeAgeMs / 1000);
+    const limit = Math.round(staleAfterMs / 1000);
+    return {
+      ...base,
+      status: 'STALE_TRADES',
+      detail: `Last trade ${age}s ago, over this symbol's ${limit}s staleness limit — quiet market or a lagging feed.`,
+    };
+  }
+  if (!bookReliable) {
+    return {
+      ...base,
+      status: 'BOOK_UNRELIABLE',
+      detail: 'Trades are live but the order book is incomplete, so defense scores are unreliable.',
+    };
+  }
+  return { ...base, status: 'OK', detail: '' };
 }
 
 function mapAggressiveSide(
