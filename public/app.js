@@ -3,13 +3,13 @@ import {
   ingestPassiveLiquidity,
   setPassiveCoins,
   setPassiveSymbol,
-} from './passive-liquidity.js?v=market-battle3';
+} from './passive-liquidity.js?v=coin-tab2';
 import {
   initMarketBattle,
   ingestMarketBattle,
   setMarketBattleTf,
   onMarketBattleTf,
-} from './market-battle.js?v=market-battle3';
+} from './market-battle.js?v=coin-tab2';
 
 const _noopEl = {
   textContent: '',
@@ -336,6 +336,7 @@ function clearMainPanels() {
   if ($('battle-pas-sell')) $('battle-pas-sell').textContent = '0';
   if ($('battle-agg-sell')) $('battle-agg-sell').textContent = '0';
   if ($('battle-pas-buy')) $('battle-pas-buy').textContent = '0';
+  ingestMarketBattle(null);
 }
 
 function syncExchangeTabs() {
@@ -359,9 +360,16 @@ function applySymbolFilter() {
   });
   lastSummary = summaries[selectedSymbol] ?? null;
   lastSpotFlow = spotFlowBySymbol[selectedSymbol] ?? null;
-  if (isSpotView()) updateSpotUi();
-  else if (lastSummary) updateUi();
-  else clearMainPanels();
+  setPassiveSymbol(selectedSymbol);
+  if (isSpotView()) {
+    updateSpotUi();
+    ingestMarketBattle(null);
+  } else if (lastSummary) {
+    updateUi();
+  } else {
+    clearMainPanels();
+  }
+  if (!isSpotView()) ingestMarketBattle(lastSummary);
   syncExchangeTabs();
   renderTape();
   renderEvents();
@@ -392,14 +400,29 @@ function renderCoinBar(assets) {
       const chip = e.target.closest('.coin-chip');
       if (!chip) return;
       const sym = chip.dataset.symbol;
-      const coin = config?.coins?.find((c) => c.symbol === sym);
-      openTab(sym, coin?.label ?? sym.replace('USDT', ''));
+      openCoinBrowserTab(sym);
       chip.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     });
   }
 }
 
-function openTab(symbol, label, { fromRoute = false } = {}) {
+/**
+ * Open another coin in a new Chrome tab at /btc, /eth, …
+ * This tab stays on its own coin from the URL.
+ */
+function openCoinBrowserTab(symbol) {
+  if (!symbol || !config?.coins?.some((c) => c.symbol === symbol)) return;
+  const path = pathForSymbol(symbol);
+  if (symbol === selectedSymbol && location.pathname === path) return;
+  window.open(`${path}${location.search}`, '_blank', 'noopener,noreferrer');
+}
+
+function openTab(symbol, label, { fromRoute = false, newBrowserTab = true } = {}) {
+  // From the UI: open a real browser tab for a different coin.
+  if (!fromRoute && newBrowserTab && symbol !== selectedSymbol) {
+    openCoinBrowserTab(symbol);
+    return;
+  }
   if (isSpotView() && config?.coins?.find((c) => c.symbol === symbol)?.venue === 'equity') {
     applyDataMode('perp');
   }
@@ -411,7 +434,7 @@ function openTab(symbol, label, { fromRoute = false } = {}) {
   liveLastPriceAt = 0;
   renderOpenTabs();
   applySymbolFilter();
-  if (!fromRoute) syncCoinRoute();
+  if (!fromRoute) syncCoinRoute(true);
 }
 
 function closeTab(symbol) {
@@ -419,20 +442,24 @@ function closeTab(symbol) {
   if (idx < 0) return;
   openTabs.splice(idx, 1);
   if (selectedSymbol === symbol) {
-    if (openTabs.length > 0) {
-      const next = openTabs[Math.min(idx, openTabs.length - 1)];
-      selectedSymbol = next.symbol;
-    } else {
-      const first = config?.coins?.[0];
-      if (first) {
-        openTabs.push({ symbol: first.symbol, label: first.label });
-        selectedSymbol = first.symbol;
+    // Closing the active coin tab — leave this browser tab on the same coin
+    // (URL is the source of truth). Re-add the tab chip if emptied.
+    if (!openTabs.length) {
+      const coin = config?.coins?.find((c) => c.symbol === selectedSymbol) ?? config?.coins?.[0];
+      if (coin) {
+        openTabs.push({ symbol: coin.symbol, label: coin.label });
+        selectedSymbol = coin.symbol;
       }
+    } else {
+      // Switch UI highlight only if user closed a non-route tab; keep URL coin.
+      const routeCoin = findCoinBySlug(parseCoinRoute().slug);
+      if (routeCoin) selectedSymbol = routeCoin.symbol;
+      else selectedSymbol = openTabs[Math.min(idx, openTabs.length - 1)].symbol;
     }
   }
   renderOpenTabs();
   applySymbolFilter();
-  syncCoinRoute();
+  syncCoinRoute(true);
 }
 
 function renderOpenTabs() {
@@ -455,13 +482,9 @@ function renderOpenTabs() {
       return;
     }
     const tab = e.target.closest('.open-tab');
-    if (tab) {
-      const coin = config?.coins?.find((c) => c.symbol === tab.dataset.symbol);
-      openTab(tab.dataset.symbol, coin?.label ?? tab.dataset.symbol.replace(/USDT$/i, ''));
-    }
+    if (tab) openCoinBrowserTab(tab.dataset.symbol);
   };
 }
-
 /** URL slug for a coin — /btc, /eth, /aapl */
 function coinSlug(coin) {
   if (!coin) return '';
@@ -499,17 +522,12 @@ let syncingFromRoute = false;
 function syncCoinRoute(replace = false) {
   if (syncingFromRoute || !selectedSymbol) return;
   const path = pathForSymbol(selectedSymbol);
-  if (location.pathname === path) {
-    const coin = config?.coins?.find((c) => c.symbol === selectedSymbol);
-    if (coin) document.title = `${coin.label} — Order Flow`;
-    return;
-  }
-  const url = `${path}${location.search}${location.hash}`;
-  const state = { symbol: selectedSymbol, mode: dataMode };
-  if (replace) history.replaceState(state, '', url);
-  else history.pushState(state, '', url);
   const coin = config?.coins?.find((c) => c.symbol === selectedSymbol);
-  document.title = coin ? `${coin.label} — Order Flow` : 'Order Flow — Footprint';
+  if (coin) document.title = `${coin.label} — Order Flow`;
+  if (location.pathname === path) return;
+  // Keep the address bar aligned with this tab's coin (no in-page coin hopping).
+  const url = `${path}${location.search}${location.hash}`;
+  history.replaceState({ symbol: selectedSymbol, mode: dataMode }, '', url);
 }
 
 function applyRouteFromLocation({ replace = false } = {}) {
@@ -521,9 +539,8 @@ function applyRouteFromLocation({ replace = false } = {}) {
     }
     const coin = findCoinBySlug(route.slug);
     if (coin) {
-      if (!openTabs.find((t) => t.symbol === coin.symbol)) {
-        openTabs.push({ symbol: coin.symbol, label: coin.label });
-      }
+      openTabs.length = 0;
+      openTabs.push({ symbol: coin.symbol, label: coin.label });
       selectedSymbol = coin.symbol;
       liveLastPrice = 0;
       liveLastPriceAt = 0;
@@ -533,10 +550,11 @@ function applyRouteFromLocation({ replace = false } = {}) {
   } finally {
     syncingFromRoute = false;
   }
-  syncCoinRoute(replace || !route.slug);
+  syncCoinRoute(true);
 }
 
 function setupCoinRouting() {
+  // Browser back/forward: reload-style apply of the path coin in this tab.
   window.addEventListener('popstate', () => applyRouteFromLocation({ replace: true }));
 }
 
@@ -1466,9 +1484,10 @@ function initChart() {
     document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
     document.getElementById('chart-symbol-select')?.addEventListener('change', (e) => {
       const symbol = e.target.value;
-      const coin = visibleCoins().find((c) => c.symbol === symbol);
-      if (!coin) return;
-      openTab(symbol, coin.label);
+      if (!visibleCoins().some((c) => c.symbol === symbol)) return;
+      // Restore select to this tab's coin; other coins open in a new Chrome tab.
+      e.target.value = selectedSymbol;
+      openCoinBrowserTab(symbol);
     });
   }
   buildFpGrid();
@@ -3024,15 +3043,8 @@ function setupAlertUi() {
 
 function openAlertSymbol(symbol) {
   if (!symbol) return;
-  const coin = visibleCoins().find((c) => c.symbol === symbol);
-  if (!coin) return;
-  openTab(symbol, coin.label);
-  const card = document.getElementById(`fp-card-${symbol}`);
-  if (card) {
-    document.querySelectorAll('.fp-card.focus').forEach((el) => el.classList.remove('focus'));
-    card.classList.add('focus');
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
+  if (!visibleCoins().some((c) => c.symbol === symbol)) return;
+  openCoinBrowserTab(symbol);
   document.getElementById('alert-panel')?.classList.add('hidden');
 }
 
