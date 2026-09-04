@@ -3,13 +3,13 @@ import {
   ingestPassiveLiquidity,
   setPassiveCoins,
   setPassiveSymbol,
-} from './passive-liquidity.js?v=market-battle4';
+} from './passive-liquidity.js?v=market-battle3';
 import {
   initMarketBattle,
   ingestMarketBattle,
   setMarketBattleTf,
   onMarketBattleTf,
-} from './market-battle.js?v=market-battle4';
+} from './market-battle.js?v=market-battle3';
 
 const _noopEl = {
   textContent: '',
@@ -336,7 +336,6 @@ function clearMainPanels() {
   if ($('battle-pas-sell')) $('battle-pas-sell').textContent = '0';
   if ($('battle-agg-sell')) $('battle-agg-sell').textContent = '0';
   if ($('battle-pas-buy')) $('battle-pas-buy').textContent = '0';
-  ingestMarketBattle(null);
 }
 
 function syncExchangeTabs() {
@@ -360,19 +359,9 @@ function applySymbolFilter() {
   });
   lastSummary = summaries[selectedSymbol] ?? null;
   lastSpotFlow = spotFlowBySymbol[selectedSymbol] ?? null;
-  setPassiveSymbol(selectedSymbol);
-  if (isSpotView()) {
-    updateSpotUi();
-    // Market battle is perp-summary driven — don't leave the previous coin's card up.
-    ingestMarketBattle(null);
-  } else if (lastSummary) {
-    updateUi();
-  } else {
-    clearMainPanels();
-  }
-  // Always sync battle to this coin (cached summary or empty). updateUi also
-  // ingests when data exists; this covers clear/spot and guarantees a re-render.
-  if (!isSpotView()) ingestMarketBattle(lastSummary);
+  if (isSpotView()) updateSpotUi();
+  else if (lastSummary) updateUi();
+  else clearMainPanels();
   syncExchangeTabs();
   renderTape();
   renderEvents();
@@ -1397,9 +1386,13 @@ function initChart() {
     document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
     document.getElementById('chart-symbol-select')?.addEventListener('change', (e) => {
       const symbol = e.target.value;
-      const coin = visibleCoins().find((c) => c.symbol === symbol);
-      if (!coin) return;
-      openTab(symbol, coin.label);
+      if (!visibleCoins().some((coin) => coin.symbol === symbol)) return;
+      selectedSymbol = symbol;
+      setPassiveSymbol(symbol);
+      syncExchangeTabs();
+      buildFpGrid();
+      seedFootprintKlines();
+      subscribeFootprint();
     });
   }
   buildFpGrid();
@@ -2955,9 +2948,13 @@ function setupAlertUi() {
 
 function openAlertSymbol(symbol) {
   if (!symbol) return;
-  const coin = visibleCoins().find((c) => c.symbol === symbol);
-  if (!coin) return;
-  openTab(symbol, coin.label);
+  if (!visibleCoins().some((coin) => coin.symbol === symbol)) return;
+  selectedSymbol = symbol;
+  setPassiveSymbol(symbol);
+  syncExchangeTabs();
+  buildFpGrid();
+  seedFootprintKlines();
+  subscribeFootprint();
   const card = document.getElementById(`fp-card-${symbol}`);
   if (card) {
     document.querySelectorAll('.fp-card.focus').forEach((el) => el.classList.remove('focus'));
