@@ -158,15 +158,6 @@ function renderUpsideCard(up) {
       <span>UPSIDE BATTLE</span>
       <span class="mb-battle-score" title="Upside battle intensity (independent of downside)">${Math.round(up.battleScore)}</span>
     </div>
-    <div class="mb-side mb-agg">
-      <div class="mb-side-row">
-        <span class="mb-side-label">Aggressive Buyers</span>
-        <span class="mb-side-score buy">${agg.hasData ? Math.round(agg.score) : '—'}</span>
-      </div>
-      <div class="mb-side-meta buy">${aggVol}</div>
-      <div class="mb-side-sub">${aggPct}</div>
-    </div>
-    <div class="mb-vs">VS</div>
     <div class="mb-side mb-pas">
       <div class="mb-side-row">
         <span class="mb-side-label">Passive Sellers</span>
@@ -174,6 +165,15 @@ function renderUpsideCard(up) {
       </div>
       <div class="mb-side-meta sell">${pasDepth}</div>
       <div class="mb-side-sub">Seller Strength: ${pas.reliable ? `${Math.round(pas.strength)}/100` : 'LOW CONFIDENCE'}</div>
+    </div>
+    <div class="mb-vs">VS</div>
+    <div class="mb-side mb-agg">
+      <div class="mb-side-row">
+        <span class="mb-side-label">Aggressive Buyers</span>
+        <span class="mb-side-score buy">${agg.hasData ? Math.round(agg.score) : '—'}</span>
+      </div>
+      <div class="mb-side-meta buy">${aggVol}</div>
+      <div class="mb-side-sub">${aggPct}</div>
     </div>
     <div class="mb-result ${resultTone}">${label(up.state)}</div>
     <div class="mb-metrics">
