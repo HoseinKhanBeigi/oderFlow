@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Order Flow — Footprint</title>
-  <link rel="stylesheet" href="/styles.css?v=fp-passive1" />
+  <link rel="stylesheet" href="/styles.css?v=fp-passive2" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -47,7 +47,7 @@
         <div class="panel-head">
           <div>
             <h2 id="chart-title">Order flow footprint</h2>
-            <p class="hint" id="chart-hint">Stop hunt: sweep high/low then reverse. Distribution at highs: liquidity grabbed then reverse. Vacuum: asks/bids pulled and price ran. Blue = live price.</p>
+            <p class="hint" id="chart-hint">Cells = executed volume (aggressive). Ladder on the right = passive orders resting on the book, bids left, asks right; hatched pink is size cancelled rather than filled.</p>
           </div>
           <div class="chart-toolbar">
             <label class="chart-symbol-picker" for="chart-symbol-select">
@@ -85,12 +85,11 @@
         <div class="chart-legend">
           <span id="fp-lev-now" class="fp-lev-now">—</span>
           <span class="legend-item fp-live">Live price</span>
-          <span class="legend-item fp-psell">Passive sellers</span>
-          <span class="legend-item fp-pbuy">Passive buyers</span>
-          <span class="legend-item fp-rest-bid">Resting bid</span>
-          <span class="legend-item fp-rest-ask">Resting ask</span>
-          <span class="legend-item fp-withdraw">Cancelled (C)</span>
-          <span class="legend-item fp-replenish">Replenished</span>
+          <span class="legend-item fp-psell" title="Aggressive buying soaked up by resting sellers — price stalls">Passive sellers absorbing</span>
+          <span class="legend-item fp-pbuy" title="Aggressive selling soaked up by resting buyers — price holds">Passive buyers absorbing</span>
+          <span class="legend-item fp-rest-bid" title="Resting bids on the ladder — passive buy orders waiting">Passive buy (resting bids)</span>
+          <span class="legend-item fp-rest-ask" title="Resting asks on the ladder — passive sell orders waiting">Passive sell (resting asks)</span>
+          <span class="legend-item fp-withdraw" title="Passive orders pulled from the book without being traded against">Cancelled / pulled ✕</span>
           <span class="legend-item fp-dist">Distribution at highs</span>
           <span class="legend-item fp-hunt">Stop hunt</span>
         </div>
@@ -101,17 +100,21 @@
         <div class="panel-head">
           <div>
             <h2>Market Battle</h2>
-            <p class="hint">Who is attacking, who is defending, whether defense is holding, and who is actually moving price — from liquidity response and price response, not dollar size alone.</p>
+            <p class="hint">Two fights at once: buyers attacking the sell wall above, sellers attacking the buy wall below. Attack comes from executed footprint volume, defense from the resting order book.</p>
           </div>
           <div class="tf-tabs" id="mb-tf-tabs" aria-label="Market battle window"></div>
         </div>
-        <div class="mb-grid" id="mb-grid"></div>
-        <div class="mb-detail hidden" id="mb-detail"></div>
         <div class="mb-summary" id="mb-summary">
-          <div class="mb-summary-label">BATTLE SUMMARY</div>
+          <div class="mb-summary-top">
+            <span class="mb-summary-label">RIGHT NOW</span>
+            <span class="mb-bias" id="mb-summary-bias">—</span>
+          </div>
           <div class="mb-summary-state" id="mb-summary-state">—</div>
+          <p class="mb-summary-plain" id="mb-summary-plain"></p>
           <p class="mb-summary-why" id="mb-summary-why"></p>
         </div>
+        <div class="mb-grid" id="mb-grid"></div>
+        <div class="mb-detail hidden" id="mb-detail"></div>
       </section>
 
       <section class="panel pl-panel" id="pl-panel">
@@ -144,6 +147,6 @@
     </main>
   </div>
 
-  <script src="/app.js?v=fp-passive1" type="module"></script>
+  <script src="/app.js?v=fp-passive2" type="module"></script>
 </body>
 </html>

@@ -10,7 +10,156 @@ const state = {
   symbol: null,
   tf: '10s',
   detail: null, // { side: 'buy'|'sell', battle: 'upside'|'downside' }
+  numbers: { upside: false, downside: false },
 };
+
+/**
+ * Plain-English reading for every battle state. `headline` is the answer, `plain`
+ * says what is physically happening, `watch` says what it implies next. The raw
+ * enum stays visible as a small tag so it still ties back to the engine.
+ */
+const UPSIDE_COPY = {
+  BUYERS_WINNING: {
+    icon: '▲',
+    tone: 'buy',
+    headline: 'Buyers are breaking through',
+    plain: 'Aggressive buying is eating the sell orders faster than sellers can replace them, and price is following.',
+    watch: 'Upside continuation while the sell wall keeps thinning.',
+  },
+  SELLERS_DEFENDING: {
+    icon: '🛡',
+    tone: 'abs',
+    headline: 'Sellers are holding the line',
+    plain: 'Buyers keep lifting the offer but sellers refill it every time. Price is capped here.',
+    watch: 'Rejection unless buy pressure steps up — the wall is winning for now.',
+  },
+  SELLER_ABSORPTION: {
+    icon: '⚠',
+    tone: 'abs',
+    headline: 'Buying is being absorbed',
+    plain: 'Heavy buying is going in, but price is not moving. Someone large is quietly selling into it.',
+    watch: 'Reversal risk — effort without result usually resolves downward.',
+  },
+  UPSIDE_VACUUM: {
+    icon: '⇗',
+    tone: 'vac',
+    headline: 'Sellers stepped away',
+    plain: 'Asks are being cancelled rather than traded. There is little left above to stop price.',
+    watch: 'Price can slip up fast on small volume — moves here are thin, not strong.',
+  },
+  BALANCED: {
+    icon: '·',
+    tone: '',
+    headline: 'Even fight above',
+    plain: 'Buy pressure and the sell wall are roughly matched.',
+    watch: 'No edge upside — wait for one side to break.',
+  },
+  NO_MEANINGFUL_BATTLE: {
+    icon: '·',
+    tone: '',
+    headline: 'Nothing happening above',
+    plain: 'Not enough aggressive buying to test the sell side.',
+    watch: 'Ignore the upside until volume shows up.',
+  },
+  LOW_CONFIDENCE: {
+    icon: '?',
+    tone: 'warn',
+    headline: 'Not enough clean data',
+    plain: 'The footprint or the order book is delayed, so this read is not trustworthy.',
+    watch: 'Do not trade this card right now.',
+  },
+};
+
+const DOWNSIDE_COPY = {
+  SELLERS_WINNING: {
+    icon: '▼',
+    tone: 'sell',
+    headline: 'Sellers are breaking through',
+    plain: 'Aggressive selling is eating the bids faster than buyers can replace them, and price is following.',
+    watch: 'Downside continuation while the buy wall keeps thinning.',
+  },
+  BUYERS_DEFENDING: {
+    icon: '🛡',
+    tone: 'buy',
+    headline: 'Buyers are holding the line',
+    plain: 'Sellers keep hitting the bid but buyers refill it every time. Price has a floor here.',
+    watch: 'Bounce risk for shorts — the wall is winning for now.',
+  },
+  BUYER_ABSORPTION: {
+    icon: '⚠',
+    tone: 'buy',
+    headline: 'Selling is being absorbed',
+    plain: 'Heavy selling is going in, but price is not dropping. Someone large is quietly buying it.',
+    watch: 'Reversal risk upward — effort without result usually resolves the other way.',
+  },
+  DOWNSIDE_VACUUM: {
+    icon: '⇘',
+    tone: 'sell',
+    headline: 'Buyers stepped away',
+    plain: 'Bids are being cancelled rather than traded. There is little left below to catch price.',
+    watch: 'Price can drop fast on small volume — air pocket, not real selling.',
+  },
+  BALANCED: {
+    icon: '·',
+    tone: '',
+    headline: 'Even fight below',
+    plain: 'Sell pressure and the buy wall are roughly matched.',
+    watch: 'No edge downside — wait for one side to break.',
+  },
+  NO_MEANINGFUL_BATTLE: {
+    icon: '·',
+    tone: '',
+    headline: 'Nothing happening below',
+    plain: 'Not enough aggressive selling to test the buy side.',
+    watch: 'Ignore the downside until volume shows up.',
+  },
+  LOW_CONFIDENCE: {
+    icon: '?',
+    tone: 'warn',
+    headline: 'Not enough clean data',
+    plain: 'The footprint or the order book is delayed, so this read is not trustworthy.',
+    watch: 'Do not trade this card right now.',
+  },
+};
+
+const SUMMARY_COPY = {
+  BUYERS_IN_CONTROL: {
+    bias: 'LONG',
+    plain: 'Buyers are the ones moving price. They are taking offers and sellers are not standing in the way.',
+  },
+  SELLERS_IN_CONTROL: {
+    bias: 'SHORT',
+    plain: 'Sellers are the ones moving price. They are hitting bids and buyers are not standing in the way.',
+  },
+  PASSIVE_BUYERS_DEFENDING: {
+    bias: 'LONG',
+    plain: 'Sellers are pushing, but resting buy orders keep absorbing it. The floor is holding.',
+  },
+  PASSIVE_SELLERS_DEFENDING: {
+    bias: 'SHORT',
+    plain: 'Buyers are pushing, but resting sell orders keep absorbing it. The ceiling is holding.',
+  },
+  TWO_SIDED_DEFENSE: {
+    bias: 'WAIT',
+    plain: 'Both walls are holding. Price is being squeezed between them.',
+  },
+  TWO_SIDED_AGGRESSION: {
+    bias: 'WAIT',
+    plain: 'Both sides are hitting hard at once. Choppy and expensive — no clean edge.',
+  },
+  COMPRESSION: {
+    bias: 'WAIT',
+    plain: 'Volume is going in but price is not moving. Pressure is building for a break.',
+  },
+  NO_CLEAR_WINNER: {
+    bias: 'WAIT',
+    plain: 'Neither side has the upper hand right now.',
+  },
+};
+
+function copyFor(map, key) {
+  return map[String(key ?? '')] ?? map.NO_MEANINGFUL_BATTLE ?? map.NO_CLEAR_WINNER;
+}
 
 const el = {};
 
@@ -81,6 +230,8 @@ export function initMarketBattle() {
   el.grid = $('mb-grid');
   el.summary = $('mb-summary');
   el.summaryState = $('mb-summary-state');
+  el.summaryPlain = $('mb-summary-plain');
+  el.summaryBias = $('mb-summary-bias');
   el.summaryWhy = $('mb-summary-why');
   el.tabs = $('mb-tf-tabs');
   el.detail = $('mb-detail');
@@ -103,6 +254,13 @@ export function initMarketBattle() {
   }
 
   el.grid?.addEventListener('click', (e) => {
+    const toggle = e.target.closest('[data-mb-numbers]');
+    if (toggle) {
+      const key = toggle.dataset.mbNumbers;
+      state.numbers[key] = !state.numbers[key];
+      render();
+      return;
+    }
     const btn = e.target.closest('[data-mb-attack]');
     if (!btn) return;
     const side = btn.dataset.mbAttack;
@@ -152,105 +310,133 @@ function render() {
   if (!mb) {
     el.grid.innerHTML = `<div class="mb-empty">Waiting for market battle data…</div>`;
     if (el.summaryState) el.summaryState.textContent = '—';
+    if (el.summaryPlain) el.summaryPlain.textContent = '';
     if (el.summaryWhy) el.summaryWhy.textContent = '';
+    if (el.summaryBias) {
+      el.summaryBias.textContent = '—';
+      el.summaryBias.className = 'mb-bias';
+    }
     if (el.detail) el.detail.innerHTML = '';
     return;
   }
 
-  el.grid.innerHTML = `${renderUpsideCard(mb.upside)}${renderDownsideCard(mb.downside)}`;
+  el.grid.innerHTML = `${renderBattleCard('upside', mb.upside)}${renderBattleCard('downside', mb.downside)}`;
 
+  const summaryCopy = SUMMARY_COPY[String(mb.summary?.state ?? '')] ?? SUMMARY_COPY.NO_CLEAR_WINNER;
   if (el.summaryState) {
     el.summaryState.textContent = label(mb.summary?.state);
     el.summaryState.className = `mb-summary-state ${summaryTone(mb.summary?.state)}`;
   }
-  if (el.summaryWhy) {
-    el.summaryWhy.textContent = mb.summary?.why ?? '';
+  if (el.summaryBias) {
+    el.summaryBias.textContent = summaryCopy.bias;
+    el.summaryBias.className = `mb-bias ${summaryCopy.bias.toLowerCase()}`;
   }
+  if (el.summaryPlain) el.summaryPlain.textContent = summaryCopy.plain;
+  if (el.summaryWhy) el.summaryWhy.textContent = mb.summary?.why ?? '';
   renderDetail(mb);
 }
 
-function renderUpsideCard(up) {
-  const agg = up.aggressive;
-  const pas = up.passive;
-  const resultTone = stateTone(up.state);
-  const attackOpen = state.detail?.battle === 'upside' && state.detail?.side === 'buy' ? ' open' : '';
+/**
+ * One battle card. Reads top-down: what happened → the attack-vs-defense meter
+ * that shows why → what to expect. Raw metrics only appear when asked for.
+ */
+function renderBattleCard(battle, data) {
+  const upside = battle === 'upside';
+  const agg = data.aggressive;
+  const pas = data.passive;
+  const side = upside ? 'buy' : 'sell';
+  const attackSide = upside ? 'buy' : 'sell';
+  const defenseSide = upside ? 'sell' : 'buy';
+  const copy = copyFor(upside ? UPSIDE_COPY : DOWNSIDE_COPY, data.state);
+  const resultTone = upside ? stateTone(data.state) : downsideStateTone(data.state);
+  const attackOpen = state.detail?.battle === battle && state.detail?.side === side ? ' open' : '';
+  const numbersOpen = state.numbers[battle];
+
+  const attackPower = agg.hasData ? Math.round(agg.power) : null;
+  const defensePower = pas.reliable ? Math.round(pas.defensePower) : null;
+  const attackName = upside ? 'Aggressive buyers' : 'Aggressive sellers';
+  const defenseName = upside ? 'Passive sellers' : 'Passive buyers';
 
   return `
-  <div class="mb-card mb-upside">
+  <div class="mb-card mb-${battle}">
     <div class="mb-card-head">
-      <span>UPSIDE BATTLE</span>
-      <span class="mb-battle-score" title="Upside battle intensity">${Math.round(up.battleScore)}</span>
+      <span class="mb-card-title">${upside ? 'ABOVE PRICE' : 'BELOW PRICE'}
+        <em>${upside ? 'buyers attacking the sell wall' : 'sellers attacking the buy wall'}</em></span>
+      <span class="mb-battle-score" title="How much is actually happening in this battle (0–100)">Intensity ${Math.round(data.battleScore)}</span>
     </div>
 
-    <button type="button" class="mb-block mb-attack${attackOpen}" data-mb-attack="buy" data-mb-battle="upside">
-      <div class="mb-block-tag buy">ATTACK · Footprint</div>
-      <div class="mb-side-row">
-        <span class="mb-side-label">Aggressive Buyers</span>
-        <span class="mb-side-score buy">${agg.hasData ? Math.round(agg.power) : '—'}</span>
+    <div class="mb-verdict ${copy.tone || resultTone}">
+      <span class="mb-verdict-icon">${copy.icon}</span>
+      <div class="mb-verdict-body">
+        <div class="mb-verdict-headline">${copy.headline}</div>
+        <p class="mb-verdict-plain">${copy.plain}</p>
       </div>
-      <div class="mb-side-meta buy">${agg.hasData ? fmtUsd(agg.volume) : 'NO DATA'}</div>
-      ${renderAttackMetrics(agg, 'buy')}
-    </button>
+    </div>
 
-    <div class="mb-vs">VS</div>
+    ${renderMeter(attackPower, defensePower, attackSide, defenseSide, attackName, defenseName, agg, pas, String(data.state) === 'LOW_CONFIDENCE')}
 
-    <div class="mb-block mb-defense">
-      <div class="mb-block-tag sell">DEFENSE · Order book</div>
-      <div class="mb-side-row">
-        <span class="mb-side-label">Passive Sellers</span>
-        <span class="mb-side-score sell">${pas.reliable ? Math.round(pas.defensePower) : '—'}</span>
+    <div class="mb-watch"><span>What it means</span>${copy.watch}</div>
+
+    <div class="mb-card-foot">
+      <span class="mb-state-tag ${resultTone}" title="Engine state">${label(data.state)}</span>
+      <div class="mb-toggles">
+        <button type="button" class="mb-toggle${numbersOpen ? ' open' : ''}" data-mb-numbers="${battle}">${numbersOpen ? 'Hide numbers' : 'Numbers'}</button>
+        <button type="button" class="mb-toggle${attackOpen}" data-mb-attack="${side}" data-mb-battle="${battle}">Attack detail</button>
       </div>
-      <div class="mb-side-meta sell">${pas.reliable ? fmtUsd(pas.nearDepth) : 'LOW CONFIDENCE'}</div>
-      ${renderDefenseMetrics(pas, 'ask')}
     </div>
 
-    <div class="mb-result ${resultTone}">${label(up.state)}</div>
-    <div class="mb-metrics">
-      <div class="mb-metric"><span class="k">Price Efficiency</span><span class="v ${intensityClass(up.price.efficiency)}">${Math.round(up.price.efficiencyScore)} / 100</span></div>
-    </div>
+    ${
+      numbersOpen
+        ? `<div class="mb-numbers">
+            <div class="mb-numbers-col">
+              <div class="mb-block-tag ${attackSide}">ATTACK · footprint</div>
+              ${renderAttackMetrics(agg, side)}
+            </div>
+            <div class="mb-numbers-col">
+              <div class="mb-block-tag ${defenseSide}">DEFENSE · order book</div>
+              ${renderDefenseMetrics(pas, upside ? 'ask' : 'bid')}
+            </div>
+            <div class="mb-metrics mb-numbers-wide">
+              <div class="mb-metric"><span class="k">${upside ? 'Upside' : 'Downside'} price efficiency</span><span class="v ${intensityClass(data.price.efficiency)}">${Math.round(data.price.efficiencyScore)} / 100</span></div>
+            </div>
+          </div>`
+        : ''
+    }
   </div>`;
 }
 
-function renderDownsideCard(dn) {
-  const agg = dn.aggressive;
-  const pas = dn.passive;
-  const resultTone = downsideStateTone(dn.state);
-  const attackOpen = state.detail?.battle === 'downside' && state.detail?.side === 'sell' ? ' open' : '';
-
+/**
+ * Two-sided bar: attack power against defense power. Width is the share of the
+ * fight each side holds, so the wider half is the side currently winning.
+ */
+function renderMeter(attack, defense, attackSide, defenseSide, attackName, defenseName, agg, pas, untrusted = false) {
+  const a = attack ?? 0;
+  const d = defense ?? 0;
+  const total = a + d;
+  const attackPct = total > 0 ? (a / total) * 100 : 50;
+  const attackVal = attack == null ? 'NO DATA' : `${attack}`;
+  const defenseVal = defense == null ? 'LOW CONF' : `${defense}`;
+  const attackSub = agg.hasData ? `${fmtUsd(agg.volume)} executed` : 'footprint unavailable';
+  const defenseSub = pas.reliable ? `${fmtUsd(pas.nearDepth)} resting near price` : 'order book unreliable';
   return `
-  <div class="mb-card mb-downside">
-    <div class="mb-card-head">
-      <span>DOWNSIDE BATTLE</span>
-      <span class="mb-battle-score" title="Downside battle intensity">${Math.round(dn.battleScore)}</span>
-    </div>
-
-    <button type="button" class="mb-block mb-attack${attackOpen}" data-mb-attack="sell" data-mb-battle="downside">
-      <div class="mb-block-tag sell">ATTACK · Footprint</div>
-      <div class="mb-side-row">
-        <span class="mb-side-label">Aggressive Sellers</span>
-        <span class="mb-side-score sell">${agg.hasData ? Math.round(agg.power) : '—'}</span>
+    <div class="mb-meter${untrusted ? ' untrusted' : ''}">
+      <div class="mb-meter-heads">
+        <span class="${attackSide}">${attackName}</span>
+        <span class="${defenseSide}">${defenseName}</span>
       </div>
-      <div class="mb-side-meta sell">${agg.hasData ? fmtUsd(agg.volume) : 'NO DATA'}</div>
-      ${renderAttackMetrics(agg, 'sell')}
-    </button>
-
-    <div class="mb-vs">VS</div>
-
-    <div class="mb-block mb-defense">
-      <div class="mb-block-tag buy">DEFENSE · Order book</div>
-      <div class="mb-side-row">
-        <span class="mb-side-label">Passive Buyers</span>
-        <span class="mb-side-score buy">${pas.reliable ? Math.round(pas.defensePower) : '—'}</span>
+      <div class="mb-meter-track" title="Attack ${attackVal} vs defense ${defenseVal} — the wider half is winning">
+        <i class="${attackSide}" style="width:${attackPct.toFixed(1)}%"></i>
+        <i class="${defenseSide}" style="width:${(100 - attackPct).toFixed(1)}%"></i>
       </div>
-      <div class="mb-side-meta buy">${pas.reliable ? fmtUsd(pas.nearDepth) : 'LOW CONFIDENCE'}</div>
-      ${renderDefenseMetrics(pas, 'bid')}
-    </div>
-
-    <div class="mb-result ${resultTone}">${label(dn.state)}</div>
-    <div class="mb-metrics">
-      <div class="mb-metric"><span class="k">Downside Efficiency</span><span class="v ${intensityClass(dn.price.efficiency)}">${Math.round(dn.price.efficiencyScore)} / 100</span></div>
-    </div>
-  </div>`;
+      <div class="mb-meter-vals">
+        <span class="${attackSide}">${attackVal}<em>attack</em></span>
+        <span class="${defenseSide}">${defenseVal}<em>defense</em></span>
+      </div>
+      <div class="mb-meter-subs">
+        <span>${attackSub}</span>
+        <span>${defenseSub}</span>
+      </div>
+    </div>`;
 }
 
 function renderAttackMetrics(agg, side) {
@@ -264,7 +450,7 @@ function renderAttackMetrics(agg, side) {
   const largeLabel = side === 'buy' ? 'Large Buy Volume' : 'Large Sell Volume';
   const confNote = agg.lowConfidence
     ? `<div class="mb-side-sub warn">LOW CONFIDENCE · footprint delayed</div>`
-    : `<div class="mb-side-sub">Power ${Math.round(agg.power)}/100 · click for contributions</div>`;
+    : `<div class="mb-side-sub">Power ${Math.round(agg.power)}/100 · open “Attack detail” for the breakdown</div>`;
   return `
     <div class="mb-mini">
       <div class="mb-metric"><span class="k">Percentile</span><span class="v">${Math.round(agg.percentile)}th</span></div>

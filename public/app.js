@@ -842,7 +842,7 @@ function applyDataMode(mode) {
   const spot = isSpotView();
   $('chart-title').textContent = mode === 'perp' ? 'Order flow footprint' : 'Spot order flow footprint';
   $('chart-hint').textContent =
-    'Stop hunt: sweep high/low then reverse. Distribution at highs: liquidity grabbed then reverse. Vacuum: asks/bids pulled and price ran. Blue = live price.';
+    'Cells = executed volume (aggressive). Ladder on the right = passive orders resting on the book, bids left, asks right; hatched pink is size cancelled rather than filled.';
   $('imb-cfg').classList.toggle('hidden', !spot);
   refreshStatus();
   const coins = visibleCoins();
@@ -1084,6 +1084,91 @@ const fpDirty = new Set();
 let fpDirtyAll = false;
 let fpGridBound = false;
 
+/** Width of the resting-liquidity ladder drawn beside the newest footprint bar. */
+const PASSIVE_RAIL_W = 128;
+/** Cancelled/added notional per level decays with this half-life so the rail shows recent behaviour. */
+const PASSIVE_DECAY_HALFLIFE_MS = 45_000;
+/** @type {Map<string, { at: number, levels: Map<string, object> }>} */
+const fpPassiveLedgers = new Map();
+
+/**
+ * Turns the stream of resting book marks into per-level passive accounting:
+ * how much size is resting, how much was pulled (cancelled) and how much was
+ * added back. The book snapshot only carries current size and the last event,
+ * so magnitudes are accumulated here from successive snapshots.
+ *
+ * Idempotent: redrawing with the same marks produces zero deltas.
+ */
+function updatePassiveLedger(symbol, marks) {
+  const now = Date.now();
+  let led = fpPassiveLedgers.get(symbol);
+  if (!led) {
+    led = { at: now, levels: new Map() };
+    fpPassiveLedgers.set(symbol, led);
+  }
+  const decay = Math.pow(0.5, Math.max(0, now - led.at) / PASSIVE_DECAY_HALFLIFE_MS);
+  led.at = now;
+  for (const lv of led.levels.values()) {
+    lv.cancelBid *= decay;
+    lv.cancelAsk *= decay;
+    lv.addBid *= decay;
+    lv.addAsk *= decay;
+    lv.live = false;
+  }
+
+  for (const mark of marks) {
+    const price = Number(mark.price);
+    if (!Number.isFinite(price)) continue;
+    const key = price.toFixed(6);
+    let lv = led.levels.get(key);
+    if (!lv) {
+      lv = { price, bid: 0, ask: 0, cancelBid: 0, cancelAsk: 0, addBid: 0, addAsk: 0, event: 'NONE', live: false };
+      led.levels.set(key, lv);
+    }
+    const event = String(mark.event ?? '');
+    const restingBid = Number(mark.restingBid) || 0;
+    const restingAsk = Number(mark.restingAsk) || 0;
+    const dBid = restingBid - lv.bid;
+    const dAsk = restingAsk - lv.ask;
+    // A drop that no trade can account for is a pulled order, not a fill.
+    if (dBid > 0) lv.addBid += dBid;
+    else if (dBid < 0 && event !== 'CONSUME_BID') lv.cancelBid += -dBid;
+    if (dAsk > 0) lv.addAsk += dAsk;
+    else if (dAsk < 0 && event !== 'CONSUME_ASK') lv.cancelAsk += -dAsk;
+    lv.bid = restingBid;
+    lv.ask = restingAsk;
+    lv.event = event;
+    lv.live = restingBid > 0 || restingAsk > 0;
+  }
+
+  for (const [key, lv] of led.levels) {
+    const residue = lv.cancelBid + lv.cancelAsk + lv.addBid + lv.addAsk;
+    if (!lv.live && residue < 1) led.levels.delete(key);
+  }
+  return led;
+}
+
+/** Rolls the ledger up to the chart's display bucket so rows line up with footprint rows. */
+function bucketPassiveLedger(led, bucket) {
+  const out = new Map();
+  for (const lv of led.levels.values()) {
+    const p = priceToTick(lv.price, bucket);
+    const key = p.toFixed(8);
+    let row = out.get(key);
+    if (!row) {
+      row = { price: p, bid: 0, ask: 0, cancelBid: 0, cancelAsk: 0, addBid: 0, addAsk: 0 };
+      out.set(key, row);
+    }
+    row.bid += lv.bid;
+    row.ask += lv.ask;
+    row.cancelBid += lv.cancelBid;
+    row.cancelAsk += lv.cancelAsk;
+    row.addBid += lv.addBid;
+    row.addAsk += lv.addAsk;
+  }
+  return [...out.values()];
+}
+
 function visibleCoins() {
   const coins = config?.coins ?? [];
   if (isSpotView()) return coins.filter((c) => c.venue !== 'equity');
@@ -1127,11 +1212,14 @@ function fpLayout(cssWidth) {
   const candleW = 6;
   const cellW = 88;
   const gap = 6;
+  // Resting book ladder sits between the newest bar and the price axis. It is
+  // dropped on narrow charts so the footprint itself always keeps its columns.
+  const railW = cssWidth >= 560 ? PASSIVE_RAIL_W : 0;
   const barWidth = candleW + cellW;
   const stride = barWidth + gap;
-  const availW = Math.max(1, cssWidth - priceAxisWidth - leftPad);
+  const availW = Math.max(1, cssWidth - priceAxisWidth - railW - leftPad);
   const visibleBars = Math.max(1, Math.floor(availW / stride));
-  return { leftPad, priceAxisWidth, candleW, cellW, barWidth, gap, stride, visibleBars };
+  return { leftPad, priceAxisWidth, railW, candleW, cellW, barWidth, gap, stride, visibleBars };
 }
 
 function clampFpPan(view, storeSize, cssWidth) {
@@ -2010,7 +2098,7 @@ function drawFootprint(symbol = selectedSymbol) {
     return;
   }
 
-  const { leftPad, priceAxisWidth, candleW, cellW, barWidth, stride, visibleBars } = fpLayout(W);
+  const { leftPad, priceAxisWidth, railW, candleW, cellW, barWidth, stride, visibleBars } = fpLayout(W);
   const topPad = 72;
   const bottomPad = 36;
   const chartH = H - topPad - bottomPad;
@@ -2065,7 +2153,7 @@ function drawFootprint(symbol = selectedSymbol) {
 
   ctx.textBaseline = 'middle';
 
-  const plotRight = W - priceAxisWidth;
+  const plotRight = W - priceAxisWidth - railW;
   const steps = Math.floor(priceRange / bucket);
   const labelEvery = Math.max(1, Math.floor(steps / 16));
   ctx.font = 'bold 11px JetBrains Mono, monospace';
@@ -2077,7 +2165,7 @@ function drawFootprint(symbol = selectedSymbol) {
     ctx.strokeStyle = '#1c2128';
     ctx.beginPath();
     ctx.moveTo(leftPad, y);
-    ctx.lineTo(plotRight, y);
+    ctx.lineTo(plotRight + railW, y);
     ctx.stroke();
     ctx.fillStyle = '#d0d7e2';
     ctx.fillText(fmtPriceAxis(p), W - 4, y);
@@ -2207,7 +2295,7 @@ function drawFootprint(symbol = selectedSymbol) {
 
     // Live bar: resting liquidity, replenishment, cancellation (withdraw), absorption
     if (i === visible.length - 1 && pan < 0.15) {
-      drawLiveLiquidityMarks(ctx, { cellX, half, cellW, yForPrice, rh, topPad, chartH });
+      drawLiveLiquidityMarks(ctx, { cellX, cellW, yForPrice, rh, topPad, chartH });
     }
 
     ctx.font = 'bold 11px JetBrains Mono, monospace';
@@ -2231,8 +2319,21 @@ function drawFootprint(symbol = selectedSymbol) {
     }
   }
 
+  if (railW > 0 && symbol === selectedSymbol) {
+    drawPassiveRail(ctx, symbol, {
+      x0: plotRight,
+      railW,
+      yForPrice,
+      rh: Math.max(1, rowH - 1),
+      topPad,
+      chartH,
+      bucket,
+      livePx,
+    });
+  }
+
   if (livePx) {
-    drawChartPriceLine(ctx, yForPrice(livePx), '#60a5fa', `LIVE ${fmtPriceAxis(livePx)}`, leftPad, plotRight);
+    drawChartPriceLine(ctx, yForPrice(livePx), '#60a5fa', `LIVE ${fmtPriceAxis(livePx)}`, leftPad, plotRight + railW);
   }
 
   const storyIdx = Math.max(0, bars.length - (lastIsLive && bars.length > 1 ? 2 : 1));
@@ -2287,7 +2388,12 @@ function drawChartPriceLine(ctx, y, color, label, leftPad, plotRight, labelOffse
   ctx.restore();
 }
 
-function drawLiveLiquidityMarks(ctx, { cellX, half, cellW, yForPrice, rh, topPad, chartH }) {
+/**
+ * Live-bar overlay. The resting sizes themselves live in the passive rail, so
+ * this only marks the two things that belong on the executed cells: which side
+ * is absorbing, and where passive orders were pulled instead of filled.
+ */
+function drawLiveLiquidityMarks(ctx, { cellX, cellW, yForPrice, rh, topPad, chartH }) {
   const marks = currentLiquidityResponse()?.levels ?? [];
   if (!marks.length) return;
   ctx.save();
@@ -2297,53 +2403,31 @@ function drawLiveLiquidityMarks(ctx, { cellX, half, cellW, yForPrice, rh, topPad
     if (y < topPad + 1 || y > topPad + chartH - 1) continue;
     const event = String(mark.event || '');
 
-    // Resting passive liquidity still on the book
+    // Thin edge strip: passive size still resting on this side of the level.
     if (mark.restingBid > 0) {
-      ctx.setLineDash([3, 2]);
-      ctx.strokeStyle = '#22d3ee';
-      ctx.strokeRect(cellX + 1, y - rh / 2 + 0.5, half - 2, Math.max(2, rh - 1));
+      ctx.fillStyle = 'rgba(34, 211, 238, 0.55)';
+      ctx.fillRect(cellX + 1, y - rh / 2 + 1, 2, Math.max(2, rh - 2));
     }
     if (mark.restingAsk > 0) {
-      ctx.setLineDash([3, 2]);
-      ctx.strokeStyle = '#fb923c';
-      ctx.strokeRect(cellX + half, y - rh / 2 + 0.5, half - 2, Math.max(2, rh - 1));
-    }
-    ctx.setLineDash([]);
-
-    // Passive orders added / replenished
-    if (event.startsWith('REPLENISH')) {
-      ctx.setLineDash([1, 2]);
-      ctx.strokeStyle = '#a78bfa';
-      ctx.strokeRect(cellX + 3, y - rh / 2 + 2, cellW - 6, Math.max(1, rh - 4));
-      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(251, 146, 60, 0.55)';
+      ctx.fillRect(cellX + cellW - 3, y - rh / 2 + 1, 2, Math.max(2, rh - 2));
     }
 
-    // Cancelled / withdrawn passive orders (not consumed by trades)
-    if (event.startsWith('WITHDRAW')) {
+    // Passive orders pulled from the book without being traded against.
+    if (event.startsWith('WITHDRAW') && rh >= 7) {
       const askSide = event.includes('ASK');
-      const x0 = askSide ? cellX + half + 2 : cellX + 2;
-      const w = half - 4;
-      const h = Math.max(3, rh - 2);
-      const y0 = y - h / 2;
-      ctx.strokeStyle = '#94a3b8';
-      ctx.fillStyle = 'rgba(148, 163, 184, 0.18)';
-      ctx.fillRect(x0, y0, w, h);
-      ctx.lineWidth = 1.5;
+      const x0 = askSide ? cellX + cellW - 12 : cellX + 4;
+      const s = Math.min(7, Math.max(4, rh - 3));
+      const y0 = y - s / 2;
+      ctx.strokeStyle = '#f472b6';
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.moveTo(x0 + 2, y0 + 2);
-      ctx.lineTo(x0 + w - 2, y0 + h - 2);
-      ctx.moveTo(x0 + w - 2, y0 + 2);
-      ctx.lineTo(x0 + 2, y0 + h - 2);
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x0 + s, y0 + s);
+      ctx.moveTo(x0 + s, y0);
+      ctx.lineTo(x0, y0 + s);
       ctx.stroke();
       ctx.lineWidth = 1;
-      // Tiny "C" for cancel when row is tall enough
-      if (rh >= 12) {
-        ctx.font = 'bold 8px JetBrains Mono, monospace';
-        ctx.fillStyle = '#cbd5e1';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('C', x0 + w / 2, y);
-      }
     }
 
     // Absorption at this level
@@ -2354,6 +2438,164 @@ function drawLiveLiquidityMarks(ctx, { cellX, half, cellW, yForPrice, rh, topPad
       ctx.lineWidth = 1;
     }
   }
+  ctx.restore();
+}
+
+/**
+ * Resting book ladder pinned to the price axis: passive buyers (bids) grow left
+ * from the centre, passive sellers (asks) grow right. Behind each resting bar a
+ * hatched extension shows how much size was cancelled at that price recently,
+ * so a level that looks thick but keeps getting pulled reads as fake.
+ */
+function drawPassiveRail(ctx, symbol, { x0, railW, yForPrice, rh, topPad, chartH, bucket, livePx }) {
+  const marks = currentLiquidityResponse()?.levels ?? [];
+  const led = updatePassiveLedger(symbol, marks);
+  const rows = bucketPassiveLedger(led, bucket);
+
+  ctx.save();
+  ctx.fillStyle = '#0b0f15';
+  ctx.fillRect(x0, topPad, railW, chartH);
+  ctx.strokeStyle = '#1c2128';
+  ctx.beginPath();
+  ctx.moveTo(x0 + 0.5, topPad);
+  ctx.lineTo(x0 + 0.5, topPad + chartH);
+  ctx.stroke();
+
+  const mid = x0 + railW / 2;
+  const halfW = railW / 2 - 4;
+
+  // Header
+  ctx.font = 'bold 8px Inter, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#22d3ee';
+  ctx.fillText('BID', mid - 3, topPad - 20);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#fb923c';
+  ctx.fillText('ASK', mid + 3, topPad - 20);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#7d8794';
+  ctx.fillText('RESTING BOOK', mid, topPad - 32);
+  ctx.fillStyle = '#f472b6';
+  ctx.fillText('╱╱ pulled', mid, topPad - 8);
+
+  if (!rows.length) {
+    ctx.fillStyle = '#5b6572';
+    ctx.font = '9px Inter, sans-serif';
+    ctx.fillText('no book', mid, topPad + chartH / 2);
+    ctx.restore();
+    return;
+  }
+
+  let peak = 0;
+  let totalBid = 0;
+  let totalAsk = 0;
+  let cancelBid = 0;
+  let cancelAsk = 0;
+  for (const row of rows) {
+    peak = Math.max(peak, row.bid + row.cancelBid, row.ask + row.cancelAsk);
+    totalBid += row.bid;
+    totalAsk += row.ask;
+    cancelBid += row.cancelBid;
+    cancelAsk += row.cancelAsk;
+  }
+  if (peak <= 0) peak = 1;
+
+  // Square-root scale: one huge wall would flatten every other level to nothing
+  // on a linear scale, and the smaller levels are exactly what shows structure.
+  const wFor = (v) => (v > 0 ? Math.max(1, Math.sqrt(v / peak) * halfW) : 0);
+  const barH = Math.max(2, Math.min(rh - 1, 14));
+  let topBid = null;
+  let topAsk = null;
+  for (const row of rows) {
+    const y = yForPrice(row.price);
+    if (y < topPad + 1 || y > topPad + chartH - 1) continue;
+    const y0 = y - barH / 2;
+
+    const bidW = wFor(row.bid);
+    if (bidW) {
+      ctx.fillStyle = 'rgba(34, 211, 238, 0.62)';
+      ctx.fillRect(mid - 1 - bidW, y0, bidW, barH);
+      if (!topBid || row.bid > topBid.v) topBid = { v: row.bid, y, w: bidW };
+    }
+    if (row.cancelBid > 0) {
+      drawPulledBlock(ctx, mid - 1 - bidW - wFor(row.cancelBid), y0, wFor(row.cancelBid), barH);
+    }
+    const askW = wFor(row.ask);
+    if (askW) {
+      ctx.fillStyle = 'rgba(251, 146, 60, 0.62)';
+      ctx.fillRect(mid + 1, y0, askW, barH);
+      if (!topAsk || row.ask > topAsk.v) topAsk = { v: row.ask, y, w: askW };
+    }
+    if (row.cancelAsk > 0) {
+      drawPulledBlock(ctx, mid + 1 + askW, y0, wFor(row.cancelAsk), barH);
+    }
+  }
+
+  // Size the single biggest wall on each side, so magnitude is readable without
+  // decoding bar widths.
+  ctx.font = 'bold 9px JetBrains Mono, monospace';
+  if (topBid) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#a5f3fc';
+    ctx.fillText(fmtVolShort(topBid.v), mid - topBid.w + 1, topBid.y);
+  }
+  if (topAsk) {
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#fed7aa';
+    ctx.fillText(fmtVolShort(topAsk.v), mid + topAsk.w - 1, topAsk.y);
+  }
+
+  // Centre spine + live price notch
+  ctx.strokeStyle = '#2a3342';
+  ctx.beginPath();
+  ctx.moveTo(mid + 0.5, topPad);
+  ctx.lineTo(mid + 0.5, topPad + chartH);
+  ctx.stroke();
+  if (livePx) {
+    const y = yForPrice(livePx);
+    if (y >= topPad && y <= topPad + chartH) {
+      ctx.fillStyle = '#60a5fa';
+      ctx.fillRect(x0 + 1, y - 0.75, railW - 2, 1.5);
+    }
+  }
+
+  // Footer totals — the one-line read of who has size on the book and who is pulling it.
+  ctx.font = 'bold 9px JetBrains Mono, monospace';
+  const fy = topPad + chartH + 14;
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#22d3ee';
+  ctx.fillText(fmtVolShort(totalBid), mid - 4, fy);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#fb923c';
+  ctx.fillText(fmtVolShort(totalAsk), mid + 4, fy);
+  if (cancelBid + cancelAsk > 0) {
+    ctx.font = 'bold 9px JetBrains Mono, monospace';
+    ctx.fillStyle = '#f472b6';
+    ctx.textAlign = 'right';
+    ctx.fillText(`✕${fmtVolShort(cancelBid)}`, mid - 4, fy + 13);
+    ctx.textAlign = 'left';
+    ctx.fillText(`✕${fmtVolShort(cancelAsk)}`, mid + 4, fy + 13);
+  }
+  ctx.restore();
+}
+
+/** Hatched block marking passive size that was cancelled rather than filled. */
+function drawPulledBlock(ctx, x, y, w, h) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.fillStyle = 'rgba(244, 114, 182, 0.14)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = 'rgba(244, 114, 182, 0.75)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = -h; i < w + h; i += 4) {
+    ctx.moveTo(x + i, y + h);
+    ctx.lineTo(x + i + h, y);
+  }
+  ctx.stroke();
   ctx.restore();
 }
 
