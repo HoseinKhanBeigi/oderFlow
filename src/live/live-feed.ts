@@ -13,7 +13,7 @@ import type { LiquidationEvent, MarketTrade, MarketType, OrderBookSnapshot } fro
 import type { WindowSnapshot } from '../models/signals.js';
 import { isVolatileWindow } from '../analysis/alerts.js';
 import type { PassiveLiquiditySnapshot } from '../models/passive-liquidity.js';
-import type { BinanceAggTrade, BinanceBookTicker, BinanceForceOrder, BinanceTrade } from '../exchange/types.js';
+import type { BinanceAggTrade, BinanceForceOrder, BinanceTrade } from '../exchange/types.js';
 import { DEFAULT_WATCHLIST, minUsdFor, type WatchCoin } from './watchlist.js';
 import { VenueTradeFan } from './venue-trades.js';
 
@@ -283,9 +283,11 @@ export class LiveBinanceFeed {
   }
 
   private streamList(coins: WatchCoin[], tradeChannel: string): string {
-    return coins
-      .flatMap((c) => [streamName(c.symbol, tradeChannel), streamName(c.symbol, 'bookTicker')])
-      .join('/');
+    // Depth comes from depth20@100ms only. bookTicker is top-of-book and must
+    // never be applied as a full snapshot — LocalOrderBook.applySnapshot clears
+    // all levels, which wiped the ladder between depth updates and poisoned
+    // passive / market-battle confidence.
+    return coins.map((c) => streamName(c.symbol, tradeChannel)).join('/');
   }
 
   private depthList(coins: WatchCoin[]): string {
@@ -332,13 +334,13 @@ export class LiveBinanceFeed {
     const stream = String(msg.stream ?? '');
     const data = unwrapBinancePayload(msg);
     if (!data) return;
-    const event = (data.e as string | undefined) ?? (data.b && data.a && !Array.isArray(data.b) ? 'bookTicker' : undefined);
+    const event = data.e as string | undefined;
     const symbol = String(data.s ?? stream.split('@')[0] ?? '').toUpperCase();
 
     if (stream.includes('depth20') || (Array.isArray(data.bids) && Array.isArray(data.asks))) {
       this.handleDepth(symbol, data, market);
     } else if (event === 'depthUpdate' && Array.isArray(data.b) && Array.isArray(data.a)) {
-      this.handleDepth(symbol, { bids: data.b, asks: data.a, lastUpdateId: data.u }, market);
+      this.handleDepth(symbol, { bids: data.b, asks: data.a, lastUpdateId: data.u, E: data.E, T: data.T }, market);
     }
 
     if (event === 'forceOrder' || stream.includes('forceOrder')) {
@@ -376,14 +378,8 @@ export class LiveBinanceFeed {
       this.handleTrade(trade);
     }
 
-    if (event === 'bookTicker') {
-      const book =
-        market === 'spot'
-          ? this.spot.normalizeBookTicker(data as unknown as BinanceBookTicker)
-          : this.futures.normalizeBookTicker(data as unknown as BinanceBookTicker);
-      if (!this.coins.some((c) => c.symbol === book.symbol)) return;
-      this.engine.ingestBookSnapshot(book);
-    }
+    // Ignore bookTicker if it arrives on a shared socket — top-of-book only.
+    if (event === 'bookTicker' || stream.includes('bookTicker')) return;
 
     const now = Date.now();
     if (now - this.lastSummary >= this.config.summaryMs) {
@@ -398,10 +394,19 @@ export class LiveBinanceFeed {
     const asks = parseBookLevels(data.asks ?? data.a);
     if (!bids.length && !asks.length) return;
 
+    const exchangeTs =
+      typeof data.E === 'number'
+        ? data.E
+        : typeof data.T === 'number'
+          ? data.T
+          : typeof data.eventTime === 'number'
+            ? data.eventTime
+            : Date.now();
+
     const snapshot: OrderBookSnapshot = {
       symbol,
       marketType: market === 'spot' ? 'spot' : 'perp',
-      timestamp: Date.now(),
+      timestamp: exchangeTs,
       bids,
       asks,
       lastUpdateId: typeof data.lastUpdateId === 'number' ? data.lastUpdateId : undefined,

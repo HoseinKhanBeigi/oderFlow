@@ -76,14 +76,14 @@ const RETENTION_DAYS = Number(process.env.FOOTPRINT_RETENTION_DAYS ?? 30);
 const perpFeed = new LiveBinanceFeed({
   coins,
   market: 'perp',
-  summaryMs: 2_000,
+  summaryMs: 500,
   exchanges: EXCHANGES,
 });
 
 const spotFeed = new LiveBinanceFeed({
   coins: cryptoCoins,
   market: 'spot',
-  summaryMs: 2_000,
+  summaryMs: 500,
   exchanges: SPOT_EXCHANGES,
 });
 

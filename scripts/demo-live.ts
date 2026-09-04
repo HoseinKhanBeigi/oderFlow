@@ -14,7 +14,7 @@ import { BinanceFuturesAdapter, BinanceSpotAdapter } from '../src/exchange/binan
 import { BINANCE_FUTURES_WS_RAW, BINANCE_SPOT_WS, streamName, unwrapBinancePayload } from '../src/exchange/types.js';
 import { formatQuote, formatTapeTime } from '../src/core/integrity.js';
 import type { MarketTrade } from '../src/models/trade.js';
-import type { BinanceAggTrade, BinanceBookTicker, BinanceTrade } from '../src/exchange/types.js';
+import type { BinanceAggTrade, BinanceTrade } from '../src/exchange/types.js';
 
 const SYMBOL = (process.env.SYMBOL ?? 'BTCUSDT').toUpperCase();
 const MARKET = (process.env.MARKET ?? 'perp').toLowerCase() === 'spot' ? 'spot' : 'perp';
@@ -51,7 +51,9 @@ engine.on((ev) => {
 
 // Futures `@aggTrade` can be unavailable on some networks; `@trade` is the reliable fallback.
 const tradeChannel = MARKET === 'spot' ? 'aggTrade' : 'trade';
-const streams = [streamName(SYMBOL, tradeChannel), streamName(SYMBOL, 'bookTicker')].join('/');
+// Trades only — do not subscribe to bookTicker. Top-of-book applied as a full
+// snapshot clears LocalOrderBook and corrupts liquidity accounting.
+const streams = streamName(SYMBOL, tradeChannel);
 const url =
   MARKET === 'spot'
     ? `${BINANCE_SPOT_WS}?streams=${streams}`
@@ -74,7 +76,7 @@ ws.on('message', (raw) => {
 
   const data = unwrapBinancePayload(parsed);
   if (!data) return;
-  const event = (data.e as string | undefined) ?? (data.b && data.a ? 'bookTicker' : undefined);
+  const event = data.e as string | undefined;
 
   if (event === 'aggTrade') {
     const trade =
@@ -94,14 +96,6 @@ ws.on('message', (raw) => {
     engine.ingestTrade(trade);
     tradeCount += 1;
     printAggressiveTrade(trade);
-  }
-
-  if (event === 'bookTicker') {
-    const book =
-      MARKET === 'spot'
-        ? spotAdapter.normalizeBookTicker(data as unknown as BinanceBookTicker)
-        : futuresAdapter.normalizeBookTicker(data as unknown as BinanceBookTicker);
-    engine.ingestBookSnapshot(book);
   }
 
   const now = Date.now();
