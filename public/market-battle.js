@@ -312,7 +312,16 @@ export function getMarketBattleTf() {
 }
 
 export function ingestMarketBattle(summary) {
-  if (!summary) return;
+  if (!summary) {
+    state.summary = null;
+    state.symbol = null;
+    state.detail = null;
+    render();
+    return;
+  }
+  if (state.symbol && state.symbol !== summary.symbol) {
+    state.detail = null;
+  }
   state.summary = summary;
   state.symbol = summary.symbol;
   render();
