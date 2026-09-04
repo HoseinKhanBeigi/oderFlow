@@ -1904,6 +1904,7 @@ button.mb-block.mb-attack.open {
 .mb-block-tag.sell { color: var(--sell); }
 .mb-mini { margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.18rem; }
 .mb-side-meta.warn { color: var(--warn); font-family: var(--mono); font-size: 0.82rem; font-weight: 700; }
+.mb-side-sub.warn { color: var(--warn); font-weight: 600; }
 .mb-detail {
   margin: 0 0.9rem 0.55rem;
   padding: 0.7rem 0.85rem;

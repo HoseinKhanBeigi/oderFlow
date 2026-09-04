@@ -186,8 +186,9 @@ function renderUpsideCard(up) {
       <div class="mb-block-tag buy">ATTACK · Footprint</div>
       <div class="mb-side-row">
         <span class="mb-side-label">Aggressive Buyers</span>
-        <span class="mb-side-score buy">${agg.hasData ? `${Math.round(agg.power)} / 100` : '—'}</span>
+        <span class="mb-side-score buy">${agg.hasData ? Math.round(agg.power) : '—'}</span>
       </div>
+      <div class="mb-side-meta buy">${agg.hasData ? fmtUsd(agg.volume) : 'NO DATA'}</div>
       ${renderAttackMetrics(agg, 'buy')}
     </button>
 
@@ -197,8 +198,9 @@ function renderUpsideCard(up) {
       <div class="mb-block-tag sell">DEFENSE · Order book</div>
       <div class="mb-side-row">
         <span class="mb-side-label">Passive Sellers</span>
-        <span class="mb-side-score sell">${pas.reliable ? `${Math.round(pas.defensePower)} / 100` : '—'}</span>
+        <span class="mb-side-score sell">${pas.reliable ? Math.round(pas.defensePower) : '—'}</span>
       </div>
+      <div class="mb-side-meta sell">${pas.reliable ? fmtUsd(pas.nearDepth) : 'LOW CONFIDENCE'}</div>
       ${renderDefenseMetrics(pas, 'ask')}
     </div>
 
@@ -226,8 +228,9 @@ function renderDownsideCard(dn) {
       <div class="mb-block-tag sell">ATTACK · Footprint</div>
       <div class="mb-side-row">
         <span class="mb-side-label">Aggressive Sellers</span>
-        <span class="mb-side-score sell">${agg.hasData ? `${Math.round(agg.power)} / 100` : '—'}</span>
+        <span class="mb-side-score sell">${agg.hasData ? Math.round(agg.power) : '—'}</span>
       </div>
+      <div class="mb-side-meta sell">${agg.hasData ? fmtUsd(agg.volume) : 'NO DATA'}</div>
       ${renderAttackMetrics(agg, 'sell')}
     </button>
 
@@ -237,8 +240,9 @@ function renderDownsideCard(dn) {
       <div class="mb-block-tag buy">DEFENSE · Order book</div>
       <div class="mb-side-row">
         <span class="mb-side-label">Passive Buyers</span>
-        <span class="mb-side-score buy">${pas.reliable ? `${Math.round(pas.defensePower)} / 100` : '—'}</span>
+        <span class="mb-side-score buy">${pas.reliable ? Math.round(pas.defensePower) : '—'}</span>
       </div>
+      <div class="mb-side-meta buy">${pas.reliable ? fmtUsd(pas.nearDepth) : 'LOW CONFIDENCE'}</div>
       ${renderDefenseMetrics(pas, 'bid')}
     </div>
 
@@ -251,28 +255,25 @@ function renderDownsideCard(dn) {
 
 function renderAttackMetrics(agg, side) {
   if (!agg.hasData) {
-    return `<div class="mb-side-meta warn">FOOTPRINT DATA UNAVAILABLE</div>
-            <div class="mb-side-sub">Click disabled · no executed tape</div>`;
-  }
-  if (agg.lowConfidence) {
-    return `<div class="mb-side-meta warn">LOW CONFIDENCE</div>
-            <div class="mb-side-sub">Footprint delayed or incomplete</div>`;
+    return `<div class="mb-side-sub warn">FOOTPRINT DATA UNAVAILABLE</div>`;
   }
   const delta = side === 'buy'
     ? `+${fmtUsd(agg.deltaContribution)}`
     : fmtUsd(agg.deltaContribution);
   const imbLabel = side === 'buy' ? 'Buy Imbalances' : 'Sell Imbalances';
   const largeLabel = side === 'buy' ? 'Large Buy Volume' : 'Large Sell Volume';
+  const confNote = agg.lowConfidence
+    ? `<div class="mb-side-sub warn">LOW CONFIDENCE · footprint delayed</div>`
+    : `<div class="mb-side-sub">Power ${Math.round(agg.power)}/100 · click for contributions</div>`;
   return `
     <div class="mb-mini">
-      <div class="mb-metric"><span class="k">Executed</span><span class="v">${fmtUsd(agg.volume)}</span></div>
       <div class="mb-metric"><span class="k">Percentile</span><span class="v">${Math.round(agg.percentile)}th</span></div>
       <div class="mb-metric"><span class="k">Delta Contribution</span><span class="v">${delta}</span></div>
       <div class="mb-metric"><span class="k">Execution Velocity</span><span class="v">${fmtVel(agg.velocityPerSec)}</span></div>
       <div class="mb-metric"><span class="k">${imbLabel}</span><span class="v">${agg.imbalanceCount}</span></div>
       <div class="mb-metric"><span class="k">${largeLabel}</span><span class="v">${fmtUsd(agg.largeVolume)}</span></div>
     </div>
-    <div class="mb-side-sub">Click for power contributions · footprint levels</div>`;
+    ${confNote}`;
 }
 
 function renderDefenseMetrics(pas, side) {
@@ -280,18 +281,17 @@ function renderDefenseMetrics(pas, side) {
     return `<div class="mb-side-meta warn">LOW CONFIDENCE</div>
             <div class="mb-side-sub">Order book unreliable</div>`;
   }
-  const nearLabel = side === 'ask' ? 'Near Ask Depth' : 'Near Bid Depth';
   const cons = side === 'ask' ? 'Ask Consumption' : 'Bid Consumption';
   const repl = side === 'ask' ? 'Ask Replenishment' : 'Bid Replenishment';
   const surv = side === 'ask' ? 'Ask Survival' : 'Bid Survival';
   const withd = side === 'ask' ? 'Ask Withdrawal' : 'Bid Withdrawal';
   return `
     <div class="mb-mini">
-      <div class="mb-metric"><span class="k">${nearLabel}</span><span class="v">${fmtUsd(pas.nearDepth)}</span></div>
       <div class="mb-metric"><span class="k">${cons}</span><span class="v ${intensityClass(pas.consumption)}">${pas.consumption}</span></div>
       <div class="mb-metric"><span class="k">${repl}</span><span class="v ${intensityClass(pas.replenishment)}">${pas.replenishment}</span></div>
       <div class="mb-metric"><span class="k">${surv}</span><span class="v ${intensityClass(pas.survivalLabel)}">${pas.survivalLabel}</span></div>
       <div class="mb-metric"><span class="k">${withd}</span><span class="v ${intensityClass(pas.withdrawal)}">${pas.withdrawal}</span></div>
+      <div class="mb-metric"><span class="k">Defense Power</span><span class="v">${Math.round(pas.defensePower)}/100</span></div>
     </div>`;
 }
 
