@@ -286,11 +286,34 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[extname(path)] ?? 'application/octet-stream' });
     res.end(body);
   } catch {
+    // SPA coin routes: /btc, /eth, /spot/sol → serve the app shell.
+    if (isSpaCoinRoute(requested)) {
+      try {
+        const body = await readFile(join(PUBLIC, 'index.html'));
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(body);
+        return;
+      } catch {
+        // fall through to 404
+      }
+    }
     res.writeHead(404);
     res.end('Not found');
   }
 });
 
+/** Paths like /btc or /spot/eth that are not real static files. */
+function isSpaCoinRoute(pathname: string): boolean {
+  if (!pathname || pathname === '/') return false;
+  if (pathname.startsWith('/api') || pathname === '/ws' || pathname.startsWith('/ws/')) return false;
+  if (pathname.includes('.')) return false;
+  const parts = pathname.split('/').filter(Boolean);
+  if (parts.length === 1) return /^[a-zA-Z0-9_-]+$/.test(parts[0]!);
+  if (parts.length === 2 && (parts[0] === 'spot' || parts[0] === 'perp')) {
+    return /^[a-zA-Z0-9_-]+$/.test(parts[1]!);
+  }
+  return false;
+}
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 /** Drop clients whose outbound buffer grows unbounded (slow consumer / sleep). */

@@ -399,7 +399,7 @@ function renderCoinBar(assets) {
   }
 }
 
-function openTab(symbol, label) {
+function openTab(symbol, label, { fromRoute = false } = {}) {
   if (isSpotView() && config?.coins?.find((c) => c.symbol === symbol)?.venue === 'equity') {
     applyDataMode('perp');
   }
@@ -411,6 +411,7 @@ function openTab(symbol, label) {
   liveLastPriceAt = 0;
   renderOpenTabs();
   applySymbolFilter();
+  if (!fromRoute) syncCoinRoute();
 }
 
 function closeTab(symbol) {
@@ -431,6 +432,7 @@ function closeTab(symbol) {
   }
   renderOpenTabs();
   applySymbolFilter();
+  syncCoinRoute();
 }
 
 function renderOpenTabs() {
@@ -454,11 +456,88 @@ function renderOpenTabs() {
     }
     const tab = e.target.closest('.open-tab');
     if (tab) {
-      selectedSymbol = tab.dataset.symbol;
+      const coin = config?.coins?.find((c) => c.symbol === tab.dataset.symbol);
+      openTab(tab.dataset.symbol, coin?.label ?? tab.dataset.symbol.replace(/USDT$/i, ''));
+    }
+  };
+}
+
+/** URL slug for a coin — /btc, /eth, /aapl */
+function coinSlug(coin) {
+  if (!coin) return '';
+  return String(coin.label || String(coin.symbol).replace(/USDT$/i, '')).toLowerCase();
+}
+
+function pathForSymbol(symbol = selectedSymbol) {
+  const coin = config?.coins?.find((c) => c.symbol === symbol);
+  const slug = coinSlug(coin) || String(symbol).replace(/USDT$/i, '').toLowerCase();
+  return dataMode === 'spot' ? `/spot/${slug}` : `/${slug}`;
+}
+
+function parseCoinRoute(pathname = location.pathname) {
+  const parts = String(pathname || '/').split('/').filter(Boolean);
+  if (parts.length === 1) return { mode: null, slug: parts[0].toLowerCase() };
+  if (parts.length === 2 && (parts[0] === 'spot' || parts[0] === 'perp')) {
+    return { mode: parts[0], slug: parts[1].toLowerCase() };
+  }
+  return { mode: null, slug: null };
+}
+
+function findCoinBySlug(slug) {
+  if (!slug || !config?.coins?.length) return null;
+  const s = String(slug).toLowerCase();
+  return (
+    config.coins.find((c) => coinSlug(c) === s) ||
+    config.coins.find((c) => String(c.symbol).toLowerCase() === s) ||
+    config.coins.find((c) => String(c.symbol).toLowerCase() === `${s}usdt`) ||
+    null
+  );
+}
+
+let syncingFromRoute = false;
+
+function syncCoinRoute(replace = false) {
+  if (syncingFromRoute || !selectedSymbol) return;
+  const path = pathForSymbol(selectedSymbol);
+  if (location.pathname === path) {
+    const coin = config?.coins?.find((c) => c.symbol === selectedSymbol);
+    if (coin) document.title = `${coin.label} — Order Flow`;
+    return;
+  }
+  const url = `${path}${location.search}${location.hash}`;
+  const state = { symbol: selectedSymbol, mode: dataMode };
+  if (replace) history.replaceState(state, '', url);
+  else history.pushState(state, '', url);
+  const coin = config?.coins?.find((c) => c.symbol === selectedSymbol);
+  document.title = coin ? `${coin.label} — Order Flow` : 'Order Flow — Footprint';
+}
+
+function applyRouteFromLocation({ replace = false } = {}) {
+  const route = parseCoinRoute();
+  syncingFromRoute = true;
+  try {
+    if (route.mode === 'spot' || route.mode === 'perp') {
+      applyDataMode(route.mode);
+    }
+    const coin = findCoinBySlug(route.slug);
+    if (coin) {
+      if (!openTabs.find((t) => t.symbol === coin.symbol)) {
+        openTabs.push({ symbol: coin.symbol, label: coin.label });
+      }
+      selectedSymbol = coin.symbol;
+      liveLastPrice = 0;
+      liveLastPriceAt = 0;
       renderOpenTabs();
       applySymbolFilter();
     }
-  };
+  } finally {
+    syncingFromRoute = false;
+  }
+  syncCoinRoute(replace || !route.slug);
+}
+
+function setupCoinRouting() {
+  window.addEventListener('popstate', () => applyRouteFromLocation({ replace: true }));
 }
 
 function updateOverview(coins, market = 'perp') {
@@ -831,6 +910,7 @@ function setupDataMode() {
     const btn = e.target.closest('[data-mode]');
     if (!btn) return;
     applyDataMode(btn.dataset.mode);
+    syncCoinRoute();
   });
   $('imb-ratio')?.addEventListener('change', () => {
     const n = Number($('imb-ratio').value);
@@ -1386,13 +1466,9 @@ function initChart() {
     document.getElementById('chart-live-btn')?.addEventListener('click', snapChartToLive);
     document.getElementById('chart-symbol-select')?.addEventListener('change', (e) => {
       const symbol = e.target.value;
-      if (!visibleCoins().some((coin) => coin.symbol === symbol)) return;
-      selectedSymbol = symbol;
-      setPassiveSymbol(symbol);
-      syncExchangeTabs();
-      buildFpGrid();
-      seedFootprintKlines();
-      subscribeFootprint();
+      const coin = visibleCoins().find((c) => c.symbol === symbol);
+      if (!coin) return;
+      openTab(symbol, coin.label);
     });
   }
   buildFpGrid();
@@ -2948,13 +3024,9 @@ function setupAlertUi() {
 
 function openAlertSymbol(symbol) {
   if (!symbol) return;
-  if (!visibleCoins().some((coin) => coin.symbol === symbol)) return;
-  selectedSymbol = symbol;
-  setPassiveSymbol(symbol);
-  syncExchangeTabs();
-  buildFpGrid();
-  seedFootprintKlines();
-  subscribeFootprint();
+  const coin = visibleCoins().find((c) => c.symbol === symbol);
+  if (!coin) return;
+  openTab(symbol, coin.label);
   const card = document.getElementById(`fp-card-${symbol}`);
   if (card) {
     document.querySelectorAll('.fp-card.focus').forEach((el) => el.classList.remove('focus'));
@@ -3009,6 +3081,7 @@ async function init() {
   setupTabs();
   setupDataMode();
   setupAlertUi();
+  setupCoinRouting();
   initPassiveLiquidity({
     getMarket: () => dataMode,
   });
@@ -3026,8 +3099,26 @@ async function init() {
     imbalanceRatio = Number(config.imbalanceRatio) || 3;
     if ($('imb-ratio') !== _noopEl) $('imb-ratio').value = String(imbalanceRatio);
     if (config.coins?.length) selectedSymbol = config.coins[0].symbol;
-    applyDataMode(config.market === 'spot' ? 'spot' : 'perp');
+    const route = parseCoinRoute();
+    const initialMode =
+      route.mode === 'spot' || route.mode === 'perp'
+        ? route.mode
+        : config.market === 'spot'
+          ? 'spot'
+          : 'perp';
+    applyDataMode(initialMode);
     setPassiveCoins(visibleCoins());
+    applyRouteFromLocation({ replace: true });
+    if (!openTabs.length) {
+      const coin = config.coins.find((c) => c.symbol === selectedSymbol) ?? config.coins[0];
+      if (coin) {
+        openTabs.push({ symbol: coin.symbol, label: coin.label });
+        selectedSymbol = coin.symbol;
+        renderOpenTabs();
+        applySymbolFilter();
+      }
+      syncCoinRoute(true);
+    }
   } catch {
     initChart();
     setPassiveCoins([{ symbol: 'BTCUSDT', label: 'BTC' }]);
