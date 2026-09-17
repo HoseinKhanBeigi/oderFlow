@@ -1,17 +1,4 @@
-import {
-  initPassiveLiquidity,
-  ingestPassiveLiquidity,
-  setPassiveCoins,
-  setPassiveSymbol,
-  setPassiveFightFlow,
-} from './passive-liquidity.js?v=fight-ui3';
-import {
-  initMarketBattle,
-  ingestMarketBattle,
-  setMarketBattleTf,
-  setMarketBattleSymbol,
-  onMarketBattleTf,
-} from './market-battle.js?v=fight-ui3';
+import { readThreeCandleFootprint, renderLast3 } from './three-candle.js?v=last3-5';
 
 const _noopEl = {
   textContent: '',
@@ -308,18 +295,6 @@ function renderEvents() {
   $('events-count').textContent = `${list.length} events`;
 }
 
-function pushPassiveFightFlow(summary) {
-  if (!summary?.symbol) return;
-  const w = summary.windows?.['1m'] || summary.windows?.['30s'] || summary.windows?.['10s'];
-  if (!w) return;
-  setPassiveFightFlow({
-    symbol: summary.symbol,
-    tf: w.window || '1m',
-    aggressiveBuy: w.aggressiveBuyVolume ?? w.marketBattle?.upside?.aggressive?.volume ?? 0,
-    aggressiveSell: w.aggressiveSellVolume ?? w.marketBattle?.downside?.aggressive?.volume ?? 0,
-  });
-}
-
 function clearMainPanels() {
   lastSummary = null;
   $('price').textContent = '—';
@@ -350,7 +325,6 @@ function clearMainPanels() {
   if ($('battle-pas-sell')) $('battle-pas-sell').textContent = '0';
   if ($('battle-agg-sell')) $('battle-agg-sell').textContent = '0';
   if ($('battle-pas-buy')) $('battle-pas-buy').textContent = '0';
-  ingestMarketBattle(null);
 }
 
 function syncExchangeTabs() {
@@ -374,19 +348,12 @@ function applySymbolFilter() {
   });
   lastSummary = summaries[selectedSymbol] ?? null;
   lastSpotFlow = spotFlowBySymbol[selectedSymbol] ?? null;
-  setPassiveSymbol(selectedSymbol);
-  setMarketBattleSymbol(selectedSymbol);
   if (isSpotView()) {
     updateSpotUi();
-    ingestMarketBattle(null);
   } else if (lastSummary) {
     updateUi();
   } else {
     clearMainPanels();
-  }
-  if (!isSpotView()) {
-    ingestMarketBattle(lastSummary);
-    pushPassiveFightFlow(lastSummary);
   }
   syncExchangeTabs();
   renderTape();
@@ -675,8 +642,6 @@ function updateUi() {
   renderFlowBattle(w);
   renderCompare(lastSummary);
   renderLiquidityResponse();
-  ingestMarketBattle(lastSummary);
-  pushPassiveFightFlow(lastSummary);
 }
 
 function battleLabel(s) {
@@ -921,9 +886,6 @@ function updateSummary(s) {
     if (s.symbol === selectedSymbol && !isSpotView()) {
       lastSummary = s;
       updateUi();
-      setMarketBattleSymbol(selectedSymbol);
-      ingestMarketBattle(s);
-      pushPassiveFightFlow(s);
     }
   }
 }
@@ -974,9 +936,6 @@ function applyDataMode(mode) {
   const coins = visibleCoins();
   if (coins.length && !coins.some((coin) => coin.symbol === selectedSymbol)) selectedSymbol = coins[0].symbol;
   initChart();
-  setPassiveCoins(coins);
-  setPassiveSymbol(selectedSymbol);
-  setMarketBattleSymbol(selectedSymbol);
   seedFootprintKlines();
   subscribeFootprint();
   scheduleDraw();
@@ -1183,7 +1142,6 @@ function setupTabs() {
     if (!btn) return;
     selectedTf = btn.dataset.tf;
     document.querySelectorAll('#tf-tabs .tf-tab').forEach((b) => b.classList.toggle('active', b === btn));
-    setMarketBattleTf(selectedTf);
     if (isSpotView()) updateSpotUi();
     else updateUi();
   });
@@ -2211,6 +2169,7 @@ function drawFootprint(symbol = selectedSymbol) {
 
   const liveBtn = document.getElementById('chart-live-btn');
   const bars = footprintBars(symbol);
+  if (symbol === selectedSymbol) updateLast3(symbol, bars);
   if (bars.length === 0) {
     liveBtn?.classList.add('hidden');
     ctx.fillStyle = '#8b949e';
@@ -2470,6 +2429,23 @@ function drawFootprint(symbol = selectedSymbol) {
       : fmtPriceAxis(px);
   }
   ctx.lineWidth = 1;
+}
+
+function updateLast3(symbol, bars) {
+  const host = document.getElementById('last3-panel');
+  if (!host) return;
+  const source = bars ?? footprintBars(symbol);
+  const plain = source.map((bar) => ({
+    time: bar.time,
+    open: bar.open,
+    high: bar.high,
+    low: bar.low,
+    close: bar.close,
+    totalBuy: bar.totalBuy ?? 0,
+    totalSell: bar.totalSell ?? 0,
+    levels: bar.levels instanceof Map ? [...bar.levels.values()] : [...(bar.levels ?? [])],
+  }));
+  renderLast3(host, readThreeCandleFootprint(plain), { tfMinutes: chartTfMinutes });
 }
 
 function drawChartPriceLine(ctx, y, color, label, leftPad, plotRight, labelOffset = 0) {
@@ -2854,8 +2830,8 @@ function applyFootprintTick(ev) {
 
 // ═══════ Footprint Alerts (session toasts, all coins) ═══════
 
-const ALERT_TF_MINUTES = 60; // alerts always evaluate on 1h bars
-const ALERT_KEEP_1M = 720; // ~12h of 1m bars → enough prior for 1h vacuum context
+const ALERT_TF_MINUTES = [30, 60]; // evaluate stories on 30m and 1h bars
+const ALERT_KEEP_1M = 720; // ~12h of 1m bars → enough prior for 30m / 1h vacuum context
 const ALERT_MAX_SESSION = 80;
 const ALERT_TOAST_MS = 7000;
 const alertFpStore = {};
@@ -3000,7 +2976,11 @@ function pushFpAlert(alert) {
 }
 
 function evaluateSymbolAlerts(symbol) {
-  const bars = alertBarsForSymbol(symbol, ALERT_TF_MINUTES);
+  for (const tf of ALERT_TF_MINUTES) evaluateSymbolAlertsOnTf(symbol, tf);
+}
+
+function evaluateSymbolAlertsOnTf(symbol, tfMinutes) {
+  const bars = alertBarsForSymbol(symbol, tfMinutes);
   if (!bars.length) return;
   const idx = bars.length - 1;
   const bar = bars[idx];
@@ -3016,12 +2996,12 @@ function evaluateSymbolAlerts(symbol) {
   if (!kind) return;
 
   const label = alertLabel(symbol);
-  const tf = tfShort(ALERT_TF_MINUTES);
+  const tf = tfShort(tfMinutes);
   const barKey = bar.time;
-  if (!canFireAlert(`${symbol}:story:${kind.key}:${barKey}`, 120_000)) return;
+  if (!canFireAlert(`${symbol}:story:${kind.key}:${tf}:${barKey}`, 120_000)) return;
 
   pushFpAlert({
-    id: `${symbol}-${kind.key}-${barKey}`,
+    id: `${symbol}-${kind.key}-${tf}-${barKey}`,
     symbol,
     kind: kind.key,
     side: kind.side,
@@ -3077,7 +3057,7 @@ function renderAlertList() {
   if (count) count.textContent = String(sessionAlerts.length);
   if (!list) return;
   if (!sessionAlerts.length) {
-    list.innerHTML = '<div class="alert-empty">No alerts yet — ping only when the 1h range is expanding</div>';
+    list.innerHTML = '<div class="alert-empty">No alerts yet — ping when the 30m or 1h range is expanding</div>';
     return;
   }
   list.innerHTML = sessionAlerts.map((a) => `
@@ -3117,18 +3097,6 @@ async function init() {
   setupDataMode();
   setupAlertUi();
   setupCoinRouting();
-  initPassiveLiquidity({
-    getMarket: () => dataMode,
-    getSymbol: () => selectedSymbol,
-    onSelectSymbol: (symbol) => openCoinBrowserTab(symbol),
-  });
-  initMarketBattle();
-  setMarketBattleTf(selectedTf);
-  onMarketBattleTf((tf) => {
-    selectedTf = tf;
-    if (isSpotView()) updateSpotUi();
-    else updateUi();
-  });
   try {
     config = await fetch('/api/config').then((r) => r.json());
     fpHistoryEnabled = Boolean(config.history?.enabled);
@@ -3141,8 +3109,6 @@ async function init() {
     const routeCoin = findCoinBySlug(route.slug);
     selectedSymbol =
       routeCoin?.symbol ?? config.coins?.[0]?.symbol ?? selectedSymbol;
-    setMarketBattleSymbol(selectedSymbol);
-    setPassiveSymbol(selectedSymbol);
 
     const initialMode =
       route.mode === 'spot' || route.mode === 'perp'
@@ -3151,7 +3117,6 @@ async function init() {
           ? 'spot'
           : 'perp';
     applyDataMode(initialMode);
-    setPassiveCoins(visibleCoins());
     applyRouteFromLocation({ replace: true });
     if (!openTabs.length) {
       const coin = config.coins.find((c) => c.symbol === selectedSymbol) ?? config.coins[0];
@@ -3165,7 +3130,6 @@ async function init() {
     }
   } catch {
     initChart();
-    setPassiveCoins([{ symbol: 'BTCUSDT', label: 'BTC' }]);
   }
   renderAlertList();
   connectLiveSocket();
@@ -3239,11 +3203,6 @@ function connectLiveSocket() {
         break;
       case 'overview':
         updateOverview(ev.coins, ev.market === 'spot' ? 'spot' : 'perp');
-        break;
-      case 'passive_liquidity':
-        if ((ev.market === 'spot' ? 'spot' : 'perp') === dataMode) {
-          ingestPassiveLiquidity(ev.symbol, ev.snapshot);
-        }
         break;
       default:
         break;

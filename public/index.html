@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Order Flow — Footprint</title>
-  <link rel="stylesheet" href="/styles.css?v=fight-ui1" />
+  <link rel="stylesheet" href="/styles.css?v=last3-6" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -32,11 +32,11 @@
 
   <div class="alert-panel hidden" id="alert-panel" aria-live="polite">
     <div class="alert-panel-head">
-      <strong>Session alerts · 1h control</strong>
+      <strong>Session alerts · 30m + 1h</strong>
       <button type="button" class="alert-panel-clear" id="alert-clear">Clear</button>
     </div>
     <div class="alert-panel-list" id="alert-list">
-      <div class="alert-empty">No alerts yet — ping only when the 1h range is expanding</div>
+      <div class="alert-empty">No alerts yet — ping when the 30m or 1h range is expanding</div>
     </div>
   </div>
   <div class="alert-toasts" id="alert-toasts" aria-live="assertive"></div>
@@ -93,47 +93,14 @@
           <span class="legend-item fp-dist">Distribution at highs</span>
           <span class="legend-item fp-hunt">Stop hunt</span>
         </div>
+        <section class="last3-panel" id="last3-panel" aria-label="Last 3 footprint candles">
+          <div class="last3-empty">Waiting for footprint…</div>
+        </section>
         <div id="fp-grid" class="fp-grid" aria-label="Footprint charts"></div>
-      </section>
-
-      <section class="panel pl-panel" id="pl-panel">
-        <div class="panel-head">
-          <div>
-            <h2>Passive liquidity <span id="pl-symbol" class="pl-symbol">—</span></h2>
-            <p class="hint">Aggressive flow vs resting asks/bids: executed, cancelled, refilled, and absorbed size for the coin open in this tab.</p>
-          </div>
-          <div class="pl-head-meta">
-            <span id="pl-state" class="pl-state">—</span>
-            <span id="pl-quality" class="pl-quality">—</span>
-          </div>
-        </div>
-        <div id="pl-coin-tabs" class="pl-coin-tabs" aria-label="Open another coin"></div>
-        <div id="classic-fight-root" class="classic-fight-root" aria-label="Aggressive vs passive"></div>
-        <div class="pl-legend">
-          <span class="legend-item pl-lg-bid">Passive buyers (bids)</span>
-          <span class="legend-item pl-lg-ask">Passive sellers (asks)</span>
-          <span class="legend-item pl-lg-repl">Replenishing / defending</span>
-          <span class="legend-item pl-lg-pull">Withdrawing / unreliable</span>
-        </div>
-        <div class="pl-grids">
-          <div class="pl-card" id="pl-sides"></div>
-        </div>
-      </section>
-
-      <section class="panel mb-panel" id="mb-panel">
-        <div class="panel-head">
-          <div>
-            <h2>Market Battle <span id="mb-symbol" class="pl-symbol">—</span></h2>
-            <p class="hint">Two fights at once: buyers attacking the sell wall above, sellers attacking the buy wall below. Attack from footprint volume, defense from the resting book. Model TF selects the scoring window; chart windows below select display history.</p>
-          </div>
-          <div class="tf-tabs" id="mb-tf-tabs" aria-label="Market battle model window"></div>
-        </div>
-        <div class="mb-health hidden" id="mb-health"></div>
-        <div id="mb-viz" class="mb-viz" aria-label="Market battle charts"></div>
       </section>
     </main>
   </div>
 
-  <script src="/app.js?v=fight-ui3" type="module"></script>
+  <script src="/app.js?v=last3-7" type="module"></script>
 </body>
 </html>

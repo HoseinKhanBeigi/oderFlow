@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { FootprintAggregator } from '../src/footprint/aggregator.js';
 import { rollup } from '../src/footprint/rollup.js';
+import { readAttackMomentum, readThreeCandleFootprint } from '../src/footprint/structure.js';
 import { barTime, priceToTick, tickSize } from '../src/footprint/tick-size.js';
 import { classifyTrade } from '../src/flow/trade-classifier.js';
-import type { FootprintBar } from '../src/footprint/types.js';
+import type { FootprintBar, FootprintLevel } from '../src/footprint/types.js';
 
 const MINUTE = 60_000;
 /** Hour-aligned so that every timeframe boundary in these tests lines up. */
@@ -191,5 +192,243 @@ describe('footprint rollup', () => {
     const base = barTime(T0, 5);
     const out = rollup([bar(base + 600), bar(base), bar(base + 300)], 5);
     expect(out.map((b) => b.time)).toEqual([base, base + 300, base + 600]);
+  });
+});
+
+describe('three-candle footprint structure', () => {
+  const T = T0 / 1000;
+
+  function candle(
+    time: number,
+    levels: FootprintLevel[],
+    ohlc: { open?: number; high: number; low: number; close: number },
+  ): FootprintBar {
+    return {
+      symbol: 'BTCUSDT',
+      exchange: 'binance',
+      market: 'perp',
+      time,
+      open: ohlc.open ?? ohlc.close,
+      high: ohlc.high,
+      low: ohlc.low,
+      close: ohlc.close,
+      totalBuy: levels.reduce((s, l) => s + l.buy, 0),
+      totalSell: levels.reduce((s, l) => s + l.sell, 0),
+      trades: 1,
+      levels,
+    };
+  }
+
+  it('returns null when there are no bars', () => {
+    expect(readThreeCandleFootprint([])).toBeNull();
+    expect(readThreeCandleFootprint(undefined)).toBeNull();
+  });
+
+  it('formats each candle as timestamp, bid×ask levels high-to-low, and delta', () => {
+    const read = readThreeCandleFootprint([
+      candle(T, [{ price: 100, buy: 10, sell: 20 }, { price: 100.5, buy: 5, sell: 4 }], {
+        high: 100.5,
+        low: 100,
+        close: 100,
+      }),
+    ]);
+    expect(read?.candles).toHaveLength(1);
+    expect(read?.candles[0]).toEqual({
+      t: T,
+      delta: -9,
+      levels: [
+        [100.5, 5, 4],
+        [100, 10, 20],
+      ],
+    });
+  });
+
+  it('is indeterminate when the largest ask cluster is on the latest candle', () => {
+    const read = readThreeCandleFootprint([
+      candle(T, [{ price: 100, buy: 20_000, sell: 10_000 }], { high: 100, low: 100, close: 100 }),
+      candle(T + 60, [{ price: 100, buy: 15_000, sell: 12_000 }], { high: 100.5, low: 100, close: 100.5 }),
+      candle(T + 120, [{ price: 100.5, buy: 8_000, sell: 90_000 }], { high: 100.5, low: 100, close: 100 }),
+    ]);
+    expect(read?.askCluster?.price).toBe(100.5);
+    expect(read?.defense).toBe('unobserved');
+    expect(read?.structure).toBe('indeterminate');
+  });
+
+  it('is indeterminate when no level is sell-dominant', () => {
+    const read = readThreeCandleFootprint([
+      candle(T, [{ price: 100, buy: 50_000, sell: 10_000 }], { high: 100, low: 100, close: 100 }),
+      candle(T + 60, [{ price: 100.5, buy: 40_000, sell: 8_000 }], { high: 100.5, low: 100, close: 100.5 }),
+      candle(T + 120, [{ price: 101, buy: 30_000, sell: 5_000 }], { high: 101, low: 100.5, close: 101 }),
+    ]);
+    expect(read?.askCluster).toBeNull();
+    expect(read?.structure).toBe('indeterminate');
+  });
+
+  it('labels absorption when subsequent bids defend the ask cluster and price holds', () => {
+    const read = readThreeCandleFootprint([
+      candle(
+        T,
+        [
+          { price: 100.5, buy: 8_000, sell: 6_000 },
+          { price: 100, buy: 10_000, sell: 80_000 },
+        ],
+        { high: 100.5, low: 99.5, close: 100 },
+      ),
+      candle(T + 60, [{ price: 100, buy: 50_000, sell: 10_000 }], { high: 100.5, low: 100, close: 100.5 }),
+      candle(T + 120, [{ price: 100, buy: 40_000, sell: 5_000 }], { high: 101, low: 100, close: 100.5 }),
+    ]);
+    expect(read?.askCluster).toMatchObject({ price: 100, t: T, ask: 80_000, bid: 10_000 });
+    expect(read?.subsequentBid).toBe(90_000);
+    expect(read?.subsequentAsk).toBe(15_000);
+    expect(read?.defense).toBe('defended');
+    expect(read?.structure).toBe('absorption');
+  });
+
+  it('labels absorption when price gaps up after the ask cluster', () => {
+    const read = readThreeCandleFootprint([
+      candle(T, [{ price: 100, buy: 5_000, sell: 80_000 }], { high: 100.5, low: 100, close: 100 }),
+      candle(T + 60, [{ price: 101, buy: 20_000, sell: 5_000 }], { high: 101.5, low: 101, close: 101.5 }),
+      candle(T + 120, [{ price: 101.5, buy: 15_000, sell: 5_000 }], { high: 102, low: 101.5, close: 102 }),
+    ]);
+    expect(read?.defense).toBe('defended');
+    expect(read?.structure).toBe('absorption');
+  });
+
+  it('labels breakout when bids fail and price accepts below the cluster', () => {
+    const read = readThreeCandleFootprint([
+      candle(
+        T,
+        [
+          { price: 102, buy: 10_000, sell: 5_000 },
+          { price: 101, buy: 8_000, sell: 8_000 },
+          { price: 100, buy: 5_000, sell: 80_000 },
+        ],
+        { high: 102, low: 100, close: 100 },
+      ),
+      candle(T + 60, [{ price: 99, buy: 8_000, sell: 20_000 }], { high: 99.5, low: 98.5, close: 99 }),
+      candle(T + 120, [{ price: 98.5, buy: 5_000, sell: 15_000 }], { high: 99, low: 98, close: 98.5 }),
+    ]);
+    expect(read?.askCluster?.price).toBe(100);
+    expect(read?.defense).toBe('collapsed');
+    expect(read?.structure).toBe('breakout');
+  });
+
+  it('labels distribution when the ask cluster sits at the high and subsequent candles roll over while still overlapping', () => {
+    const read = readThreeCandleFootprint([
+      candle(
+        T,
+        [
+          { price: 100.5, buy: 10_000, sell: 20_000 },
+          { price: 100, buy: 20_000, sell: 15_000 },
+        ],
+        { high: 100.5, low: 100, close: 100.5 },
+      ),
+      candle(
+        T + 60,
+        [
+          { price: 100.5, buy: 8_000, sell: 90_000 },
+          { price: 100, buy: 10_000, sell: 15_000 },
+        ],
+        { high: 100.5, low: 100, close: 100 },
+      ),
+      candle(
+        T + 120,
+        [
+          { price: 100.5, buy: 12_000, sell: 20_000 },
+          { price: 100, buy: 15_000, sell: 25_000 },
+        ],
+        { high: 100.5, low: 99.5, close: 99.5 },
+      ),
+    ]);
+    expect(read?.askCluster).toMatchObject({ price: 100.5, t: T + 60, ask: 90_000 });
+    expect(read?.defense).toBe('collapsed');
+    expect(read?.structure).toBe('distribution');
+  });
+
+  it('counts bid volume within one tick of the cluster', () => {
+    const read = readThreeCandleFootprint([
+      candle(T, [{ price: 100, buy: 5_000, sell: 80_000 }], { high: 100, low: 100, close: 100 }),
+      candle(T + 60, [{ price: 100.5, buy: 40_000, sell: 5_000 }], { high: 100.5, low: 100, close: 100.5 }),
+      candle(T + 120, [{ price: 99.5, buy: 20_000, sell: 4_000 }], { high: 100, low: 99.5, close: 100 }),
+    ]);
+    expect(read?.subsequentBid).toBe(60_000);
+    expect(read?.defense).toBe('defended');
+    expect(read?.structure).toBe('absorption');
+  });
+});
+
+describe('three-candle attack momentum', () => {
+  const T = T0 / 1000;
+
+  function candle(
+    time: number,
+    buy: number,
+    sell: number,
+    ohlc: { open: number; close: number },
+  ): FootprintBar {
+    return {
+      symbol: 'BTCUSDT',
+      exchange: 'binance',
+      market: 'perp',
+      time,
+      open: ohlc.open,
+      high: Math.max(ohlc.open, ohlc.close),
+      low: Math.min(ohlc.open, ohlc.close),
+      close: ohlc.close,
+      totalBuy: buy,
+      totalSell: sell,
+      trades: 1,
+      levels: [{ price: ohlc.close, buy, sell }],
+    };
+  }
+
+  it('is flat when fewer than 3 candles exist', () => {
+    const m = readAttackMomentum([candle(T, 80, 20, { open: 100, close: 100.5 })]);
+    expect(m.scores).toEqual([null, null, 60]);
+    expect(m.state).toBe('flat');
+  });
+
+  it('is building when buy attack expands and price rises', () => {
+    const m = readAttackMomentum([
+      candle(T, 40_000, 60_000, { open: 100, close: 100 }),
+      candle(T + 60, 55_000, 45_000, { open: 100, close: 100.5 }),
+      candle(T + 120, 80_000, 20_000, { open: 100.5, close: 101.5 }),
+    ]);
+    expect(m.scores).toEqual([-20, 10, 60]);
+    expect(m.priceFrom).toBe(100);
+    expect(m.priceTo).toBe(101.5);
+    expect(m.state).toBe('building');
+    expect(m.implies).toMatch(/momentum_state = building/);
+  });
+
+  it('is building when sell attack expands and price falls', () => {
+    const m = readAttackMomentum([
+      candle(T, 60_000, 40_000, { open: 101, close: 101 }),
+      candle(T + 60, 45_000, 55_000, { open: 101, close: 100.5 }),
+      candle(T + 120, 20_000, 80_000, { open: 100.5, close: 99.5 }),
+    ]);
+    expect(m.scores).toEqual([20, -10, -60]);
+    expect(m.state).toBe('building');
+  });
+
+  it('is diverging when buy attack expands but price does not follow', () => {
+    const m = readAttackMomentum([
+      candle(T, 55_000, 45_000, { open: 100, close: 100 }),
+      candle(T + 60, 70_000, 30_000, { open: 100, close: 100 }),
+      candle(T + 120, 85_000, 15_000, { open: 100, close: 99.5 }),
+    ]);
+    expect(m.scores[0]).toBe(10);
+    expect(m.scores[2]).toBe(70);
+    expect(m.state).toBe('diverging');
+    expect(m.implies).toMatch(/momentum_state = diverging/);
+  });
+
+  it('is flat when attack and price barely change', () => {
+    const m = readAttackMomentum([
+      candle(T, 52_000, 48_000, { open: 100, close: 100 }),
+      candle(T + 60, 51_000, 49_000, { open: 100, close: 100 }),
+      candle(T + 120, 53_000, 47_000, { open: 100, close: 100 }),
+    ]);
+    expect(m.state).toBe('flat');
   });
 });
