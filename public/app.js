@@ -1,5 +1,3 @@
-import { readThreeCandleFootprint, renderLast3 } from './three-candle.js?v=last3-5';
-
 const _noopEl = {
   textContent: '',
   innerHTML: '',
@@ -2169,7 +2167,6 @@ function drawFootprint(symbol = selectedSymbol) {
 
   const liveBtn = document.getElementById('chart-live-btn');
   const bars = footprintBars(symbol);
-  if (symbol === selectedSymbol) updateLast3(symbol, bars);
   if (bars.length === 0) {
     liveBtn?.classList.add('hidden');
     ctx.fillStyle = '#8b949e';
@@ -2429,23 +2426,6 @@ function drawFootprint(symbol = selectedSymbol) {
       : fmtPriceAxis(px);
   }
   ctx.lineWidth = 1;
-}
-
-function updateLast3(symbol, bars) {
-  const host = document.getElementById('last3-panel');
-  if (!host) return;
-  const source = bars ?? footprintBars(symbol);
-  const plain = source.map((bar) => ({
-    time: bar.time,
-    open: bar.open,
-    high: bar.high,
-    low: bar.low,
-    close: bar.close,
-    totalBuy: bar.totalBuy ?? 0,
-    totalSell: bar.totalSell ?? 0,
-    levels: bar.levels instanceof Map ? [...bar.levels.values()] : [...(bar.levels ?? [])],
-  }));
-  renderLast3(host, readThreeCandleFootprint(plain), { tfMinutes: chartTfMinutes });
 }
 
 function drawChartPriceLine(ctx, y, color, label, leftPad, plotRight, labelOffset = 0) {
