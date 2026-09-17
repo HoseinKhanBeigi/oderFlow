@@ -11,6 +11,10 @@
   --sell-dim: rgba(239, 68, 68, 0.12);
   --accent: #60a5fa;
   --warn: #fbbf24;
+  --passive: #5b7c99;
+  --exec: #3d9a6a;
+  --cancel: #d4893a;
+  --refill: #4a9bb8;
   --font: 'Inter', system-ui, sans-serif;
   --mono: 'JetBrains Mono', monospace;
 }
@@ -2176,3 +2180,317 @@ button.mb-block.mb-attack.open {
   border-bottom: 1px solid rgba(255,255,255,0.04);
 }
 .mb-metric .muted { color: var(--muted); font-weight: 400; font-size: 0.65rem; }
+
+/* ── Classic fight (aggressive vs passive) ─────────────────────────── */
+.classic-fight-root {
+  margin: 0.55rem 0 0.75rem;
+}
+.classic-fight {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+}
+.fight-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel2);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fight-card.buy { border-left: 3px solid var(--buy); }
+.fight-card.sell { border-left: 3px solid var(--sell); }
+.fight-card.is-absorbing { box-shadow: inset 3px 0 0 var(--warn); }
+.fight-card .flow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.fight-card .flow .agg { font-weight: 650; }
+.fight-card.buy .flow .agg { color: var(--buy); }
+.fight-card.sell .flow .agg { color: var(--sell); }
+.fight-card .flow .pas { color: var(--passive); font-weight: 650; }
+.fight-card .flow .arrow { color: var(--muted); }
+.fight-card .flow .tf {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+.fight-meter {
+  display: flex;
+  height: 12px;
+  border-radius: 2px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #1a2030;
+}
+.fight-meter .force { background: var(--buy); flex: none; min-width: 0; }
+.fight-card.sell .fight-meter .force { background: var(--sell); }
+.fight-meter .resist { background: var(--passive); opacity: 0.75; flex: none; min-width: 0; }
+.fight-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--muted);
+}
+.fight-stats span {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 72px;
+}
+.fight-stats b {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+}
+.fight-stats .exec b { color: var(--exec); }
+.fight-stats .cancel b { color: var(--cancel); }
+.fight-stats .refill b { color: var(--refill); }
+.fight-stats .pas b { color: var(--passive); }
+.fight-stats .absorb b { color: var(--warn); }
+.fight-stats .absorb-tag {
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--warn);
+  margin-top: 2px;
+}
+.fight-stats .cov-note {
+  display: block;
+  font-style: normal;
+  color: var(--warn);
+  font-size: 9px;
+  opacity: 0.85;
+}
+.fight-stats span.absorbing {
+  outline: 1px solid rgba(251, 191, 36, 0.45);
+  outline-offset: 2px;
+  border-radius: 3px;
+  padding: 2px 4px;
+}
+.fight-result {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+.fight-hint { font-size: 10px; color: var(--muted); }
+.state-buy { color: var(--buy); }
+.state-sell { color: var(--sell); }
+.state-absorb { color: var(--warn); }
+.state-wall { color: var(--accent); }
+.state-neutral { color: var(--muted); }
+
+/* ── Market Battle viz (attack / defense charts) ───────────────────── */
+.mb-viz { margin-top: 0.55rem; }
+.bv-root,
+.bv-wrap {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel2);
+  padding: 10px 12px 8px;
+}
+.bv-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+.bv-toolbar-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.bv-windows { display: flex; gap: 4px; margin-left: auto; }
+.bv-windows button {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.bv-windows button.active {
+  color: var(--text);
+  border-color: #2a3448;
+  background: #1a2030;
+}
+.bv-price-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.bv-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.bv-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 8px 10px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.bv-head { display: flex; align-items: center; gap: 8px; }
+.bv-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.bv-model {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.bv-banner {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  background: #1a2030;
+}
+.bv-banner.warn { color: var(--warn); border-color: rgba(251, 191, 36, 0.35); }
+.bv-banner.bad { color: var(--sell); border-color: rgba(239, 68, 68, 0.4); }
+.bv-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+.bv-kicker {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.bv-score {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.05;
+  color: var(--text);
+  margin: 1px 0 2px;
+}
+.bv-panel.up .bv-metric.atk .bv-score { color: var(--buy); }
+.bv-panel.up .bv-metric.def .bv-score { color: var(--sell); }
+.bv-panel.down .bv-metric.atk .bv-score { color: var(--sell); }
+.bv-panel.down .bv-metric.def .bv-score { color: var(--buy); }
+.bv-score.pos { color: var(--buy); }
+.bv-score.neg { color: var(--sell); }
+.bv-trend {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.bv-trend.rise { color: var(--buy); }
+.bv-trend.fall { color: var(--sell); }
+.bv-state {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  color: var(--text);
+}
+.bv-state.atk { color: var(--buy); }
+.bv-state.def { color: var(--sell); }
+.bv-state.shift { color: var(--warn); }
+.bv-state.bal { color: var(--muted); }
+.bv-legend {
+  display: flex;
+  gap: 12px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  font-weight: 650;
+}
+.bv-panel.up .bv-legend .atk { color: var(--buy); }
+.bv-panel.up .bv-legend .def { color: var(--sell); }
+.bv-panel.down .bv-legend .atk { color: var(--sell); }
+.bv-panel.down .bv-legend .def { color: var(--buy); }
+.bv-plot,
+.bv-spread-plot { position: relative; width: 100%; }
+.bv-plot { height: 110px; }
+.bv-spread-plot { height: 64px; }
+.bv-plot canvas,
+.bv-spread-plot canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: crosshair;
+}
+.bv-spread-label {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.bv-tip {
+  position: absolute;
+  min-width: 168px;
+  padding: 6px 8px;
+  border: 1px solid #2a3448;
+  border-radius: 3px;
+  background: var(--panel);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 3;
+}
+.bv-tip-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  margin-bottom: 5px;
+}
+.bv-tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.bv-tip-row span { color: var(--muted); }
+.bv-tip-row b { color: var(--text); font-weight: 600; }
+.bv-tip-row b.atk { color: var(--buy); }
+.bv-tip-row b.def { color: var(--sell); }
+.bv-panel.down .bv-tip-row b.atk { color: var(--sell); }
+.bv-panel.down .bv-tip-row b.def { color: var(--buy); }
+.bv-tip-row b.pos { color: var(--buy); }
+.bv-tip-row b.neg { color: var(--sell); }
+
+@media (max-width: 900px) {
+  .classic-fight { grid-template-columns: 1fr; }
+  .bv-grid { grid-template-columns: 1fr; }
+}

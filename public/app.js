@@ -3,14 +3,15 @@ import {
   ingestPassiveLiquidity,
   setPassiveCoins,
   setPassiveSymbol,
-} from './passive-liquidity.js?v=coin-lock2';
+  setPassiveFightFlow,
+} from './passive-liquidity.js?v=fight-ui3';
 import {
   initMarketBattle,
   ingestMarketBattle,
   setMarketBattleTf,
   setMarketBattleSymbol,
   onMarketBattleTf,
-} from './market-battle.js?v=coin-lock2';
+} from './market-battle.js?v=fight-ui3';
 
 const _noopEl = {
   textContent: '',
@@ -307,6 +308,18 @@ function renderEvents() {
   $('events-count').textContent = `${list.length} events`;
 }
 
+function pushPassiveFightFlow(summary) {
+  if (!summary?.symbol) return;
+  const w = summary.windows?.['1m'] || summary.windows?.['30s'] || summary.windows?.['10s'];
+  if (!w) return;
+  setPassiveFightFlow({
+    symbol: summary.symbol,
+    tf: w.window || '1m',
+    aggressiveBuy: w.aggressiveBuyVolume ?? w.marketBattle?.upside?.aggressive?.volume ?? 0,
+    aggressiveSell: w.aggressiveSellVolume ?? w.marketBattle?.downside?.aggressive?.volume ?? 0,
+  });
+}
+
 function clearMainPanels() {
   lastSummary = null;
   $('price').textContent = '—';
@@ -371,7 +384,10 @@ function applySymbolFilter() {
   } else {
     clearMainPanels();
   }
-  if (!isSpotView()) ingestMarketBattle(lastSummary);
+  if (!isSpotView()) {
+    ingestMarketBattle(lastSummary);
+    pushPassiveFightFlow(lastSummary);
+  }
   syncExchangeTabs();
   renderTape();
   renderEvents();
@@ -660,6 +676,7 @@ function updateUi() {
   renderCompare(lastSummary);
   renderLiquidityResponse();
   ingestMarketBattle(lastSummary);
+  pushPassiveFightFlow(lastSummary);
 }
 
 function battleLabel(s) {
@@ -906,6 +923,7 @@ function updateSummary(s) {
       updateUi();
       setMarketBattleSymbol(selectedSymbol);
       ingestMarketBattle(s);
+      pushPassiveFightFlow(s);
     }
   }
 }

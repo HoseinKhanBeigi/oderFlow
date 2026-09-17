@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Order Flow — Footprint</title>
-  <link rel="stylesheet" href="/styles.css?v=fp-passive3" />
+  <link rel="stylesheet" href="/styles.css?v=fight-ui1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 </head>
@@ -96,33 +96,11 @@
         <div id="fp-grid" class="fp-grid" aria-label="Footprint charts"></div>
       </section>
 
-      <section class="panel mb-panel" id="mb-panel">
-        <div class="panel-head">
-          <div>
-            <h2>Market Battle <span id="mb-symbol" class="pl-symbol">—</span></h2>
-            <p class="hint">Two fights at once: buyers attacking the sell wall above, sellers attacking the buy wall below. Attack comes from executed footprint volume, defense from the resting order book. Follows the coin open in this tab.</p>
-          </div>
-          <div class="tf-tabs" id="mb-tf-tabs" aria-label="Market battle window"></div>
-        </div>
-        <div class="mb-health hidden" id="mb-health"></div>
-        <div class="mb-summary" id="mb-summary">
-          <div class="mb-summary-top">
-            <span class="mb-summary-label">RIGHT NOW</span>
-            <span class="mb-bias" id="mb-summary-bias">—</span>
-          </div>
-          <div class="mb-summary-state" id="mb-summary-state">—</div>
-          <p class="mb-summary-plain" id="mb-summary-plain"></p>
-          <p class="mb-summary-why" id="mb-summary-why"></p>
-        </div>
-        <div class="mb-grid" id="mb-grid"></div>
-        <div class="mb-detail hidden" id="mb-detail"></div>
-      </section>
-
       <section class="panel pl-panel" id="pl-panel">
         <div class="panel-head">
           <div>
             <h2>Passive liquidity <span id="pl-symbol" class="pl-symbol">—</span></h2>
-            <p class="hint">Resting bid/ask behaviour for the coin open in this tab: where liquidity sits, how long it has been there, whether it is consumed, cancelled or replenished, and what it does as price approaches. Click a wall for its full history.</p>
+            <p class="hint">Aggressive flow vs resting asks/bids: executed, cancelled, refilled, and absorbed size for the coin open in this tab.</p>
           </div>
           <div class="pl-head-meta">
             <span id="pl-state" class="pl-state">—</span>
@@ -130,6 +108,7 @@
           </div>
         </div>
         <div id="pl-coin-tabs" class="pl-coin-tabs" aria-label="Open another coin"></div>
+        <div id="classic-fight-root" class="classic-fight-root" aria-label="Aggressive vs passive"></div>
         <div class="pl-legend">
           <span class="legend-item pl-lg-bid">Passive buyers (bids)</span>
           <span class="legend-item pl-lg-ask">Passive sellers (asks)</span>
@@ -137,18 +116,24 @@
           <span class="legend-item pl-lg-pull">Withdrawing / unreliable</span>
         </div>
         <div class="pl-grids">
-          <div class="pl-card pl-net-card" id="pl-net"></div>
-          <div class="pl-card" id="pl-bands"></div>
           <div class="pl-card" id="pl-sides"></div>
-          <div class="pl-card" id="pl-aggression"></div>
-          <div class="pl-card" id="pl-walls"></div>
-          <div class="pl-card" id="pl-why"></div>
-          <div class="pl-card" id="pl-level"></div>
         </div>
+      </section>
+
+      <section class="panel mb-panel" id="mb-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Market Battle <span id="mb-symbol" class="pl-symbol">—</span></h2>
+            <p class="hint">Two fights at once: buyers attacking the sell wall above, sellers attacking the buy wall below. Attack from footprint volume, defense from the resting book. Model TF selects the scoring window; chart windows below select display history.</p>
+          </div>
+          <div class="tf-tabs" id="mb-tf-tabs" aria-label="Market battle model window"></div>
+        </div>
+        <div class="mb-health hidden" id="mb-health"></div>
+        <div id="mb-viz" class="mb-viz" aria-label="Market battle charts"></div>
       </section>
     </main>
   </div>
 
-  <script src="/app.js?v=coin-lock2" type="module"></script>
+  <script src="/app.js?v=fight-ui3" type="module"></script>
 </body>
 </html>

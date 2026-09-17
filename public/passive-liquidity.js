@@ -9,20 +9,27 @@
 
 const RENDER_MS = 80;
 const DEFAULT_SYMBOL = 'BTCUSDT';
+const FIGHT_TF = '1m';
+const FIGHT_WINDOW_SEC = 60;
 
 const state = {
   snapshots: new Map(),
   coins: [],
   symbol: DEFAULT_SYMBOL,
   market: 'perp',
-  selected: null,
-  detail: null,
   dirty: false,
   lastRender: 0,
   rafId: 0,
   getMarket: null,
   getSymbol: null,
   onSelectSymbol: null,
+  /** Aggressive volumes from the matching summary window (USD). */
+  fightFlow: {
+    symbol: null,
+    tf: FIGHT_TF,
+    aggressiveBuy: 0,
+    aggressiveSell: 0,
+  },
 };
 
 const el = {};
@@ -37,32 +44,8 @@ function fmtUsd(value) {
   const sign = n < 0 ? '-' : '';
   if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
   if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(abs >= 10_000 ? 0 : 2)}K`;
   return `${sign}$${abs.toFixed(0)}`;
-}
-
-function fmtQty(value) {
-  const n = Number(value) || 0;
-  if (n >= 1000) return n.toFixed(0);
-  if (n >= 1) return n.toFixed(2);
-  return n.toFixed(4);
-}
-
-function fmtPrice(value) {
-  const n = Number(value) || 0;
-  if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 1 });
-  if (n >= 1) return n.toFixed(3);
-  return n.toFixed(6);
-}
-
-function fmtAge(ms) {
-  const s = Math.max(0, Math.round(Number(ms) || 0) / 1000);
-  if (s < 60) return `${s.toFixed(1)}s`;
-  const m = Math.floor(s / 60);
-  const rem = Math.round(s - m * 60);
-  if (m < 60) return `${m}m ${rem}s`;
-  const h = Math.floor(m / 60);
-  return `${h}h ${m - h * 60}m`;
 }
 
 function label(value) {
@@ -111,8 +94,6 @@ export function setPassiveSymbol(symbol) {
     return;
   }
   state.symbol = symbol;
-  state.selected = null;
-  state.detail = null;
   state.dirty = true;
   renderCoinTabs();
   updateSymbolLabel();
@@ -122,6 +103,23 @@ export function ingestPassiveLiquidity(symbol, snapshot) {
   if (!symbol || !snapshot) return;
   state.snapshots.set(symbol, snapshot);
   if (symbol === state.symbol) state.dirty = true;
+}
+
+/**
+ * Feed aggressive buy/sell notional from the summary window so classic-fight
+ * cards can show aggression alongside book cancel/refill/exec.
+ */
+export function setPassiveFightFlow(payload) {
+  if (!payload?.symbol) return;
+  const locked = typeof state.getSymbol === 'function' ? state.getSymbol() : state.symbol;
+  if (locked && payload.symbol !== locked) return;
+  state.fightFlow = {
+    symbol: payload.symbol,
+    tf: payload.tf || FIGHT_TF,
+    aggressiveBuy: Number(payload.aggressiveBuy) || 0,
+    aggressiveSell: Number(payload.aggressiveSell) || 0,
+  };
+  if (payload.symbol === state.symbol) state.dirty = true;
 }
 
 function current() {
@@ -147,13 +145,8 @@ export function initPassiveLiquidity(hooks = {}) {
   el.quality = $('pl-quality');
   el.symbol = $('pl-symbol');
   el.coinTabs = $('pl-coin-tabs');
-  el.bands = $('pl-bands');
-  el.net = $('pl-net');
   el.sides = $('pl-sides');
-  el.aggression = $('pl-aggression');
-  el.walls = $('pl-walls');
-  el.why = $('pl-why');
-  el.level = $('pl-level');
+  el.classicFight = $('classic-fight-root');
 
   if (el.coinTabs) {
     el.coinTabs.addEventListener('click', (ev) => {
@@ -165,14 +158,6 @@ export function initPassiveLiquidity(hooks = {}) {
         return;
       }
       setPassiveSymbol(symbol);
-    });
-  }
-
-  if (el.walls) {
-    el.walls.addEventListener('click', (ev) => {
-      const row = ev.target.closest('[data-pl-side][data-pl-price]');
-      if (!row) return;
-      void selectLevel(row.dataset.plSide, Number(row.dataset.plPrice));
     });
   }
 
@@ -227,33 +212,11 @@ function loop() {
   }
 }
 
-async function selectLevel(side, price) {
-  if (!side || !Number.isFinite(price)) return;
-  state.selected = { side, price };
-  state.dirty = true;
-  try {
-    const res = await fetch(
-      `/api/passive-liquidity/level?symbol=${encodeURIComponent(state.symbol)}&market=${state.market}` +
-        `&side=${side}&price=${price}`,
-    );
-    const body = await res.json();
-    state.detail = body.detail ?? null;
-  } catch {
-    state.detail = null;
-  }
-  state.dirty = true;
-}
-
 function render() {
   const snap = current();
   renderHeader(snap);
-  renderBands(snap);
-  renderNetLiquidity(snap);
+  renderClassicFight(snap);
   renderSides(snap);
-  renderAggression(snap);
-  renderWalls(snap);
-  renderWhy(snap);
-  renderLevel(snap);
 }
 
 function renderHeader(snap) {
@@ -271,6 +234,171 @@ function renderHeader(snap) {
     el.quality.className = `pl-quality ${trusted ? '' : 'bad'}`;
     el.quality.title = (q?.reasons ?? []).join(' · ') || 'stream healthy';
   }
+}
+
+function fightStat(labelText, value, cls = '', tag = '', covNote = '') {
+  const tagHtml = tag ? `<em class="absorb-tag">${tag}</em>` : '';
+  const cov = covNote ? `<em class="cov-note">${covNote}</em>` : '';
+  return `<span class="${cls}${tag ? ' absorbing' : ''}">${labelText} <b>${fmtUsd(value)}</b>${tagHtml}${cov}</span>`;
+}
+
+function bookConsumptionPerMinute(volume, windowSec, depth) {
+  const d = Number(depth);
+  const w = Number(windowSec);
+  if (!Number.isFinite(d) || d <= 0 || !Number.isFinite(w) || w <= 0) return 0;
+  return (((Number(volume) || 0) / w) * 60) / d;
+}
+
+function battleShare(battle) {
+  const attack = Math.max(0, Math.min(1, Number(battle?.attackScore) || 0));
+  const exec = Math.max(0, Math.min(1, Number(battle?.executionRatio) || 0));
+  const refill = Math.max(0, Math.min(1, Number(battle?.refillRatio) || 0));
+  const force = Math.max(0.05, Math.min(0.95, 0.5 * attack + 0.35 * exec + 0.15 * (1 - refill)));
+  return { force, resist: 1 - force };
+}
+
+function fightResultClass(result = '') {
+  const s = String(result).toUpperCase();
+  if (s.includes('ABSORB') || s.includes('DEFENDING')) return 'state-absorb';
+  if (s.includes('ASK CANCELLATION') || s.includes('BUYERS') || s.includes('UPSIDE')) return 'state-buy';
+  if (s.includes('BID CANCELLATION') || s.includes('SELLERS') || s.includes('DOWNSIDE')) return 'state-sell';
+  if (s.includes('VACUUM') || s.includes('WALL')) return 'state-wall';
+  return 'state-neutral';
+}
+
+function classifyBuyFight(snap, ask) {
+  if (snap?.sellerAbsorption?.detected) return 'ASK ABSORPTION · BUYERS ABSORBED';
+  const cancelShare = snap?.context?.askCancellationShare ?? ask?.cancelledPercentile / 100;
+  if ((ask?.cancelledPercentile ?? 0) >= 90 || cancelShare >= 0.72) return 'ASK CANCELLATION SURGE';
+  if (String(snap?.state || '').includes('VACUUM') && String(snap.state).includes('UPSIDE')) {
+    return 'ASK LIQUIDITY WITHDRAWING';
+  }
+  if (snap?.state === 'PASSIVE_SELLERS_DEFENDING') return 'SELLERS DEFENDING';
+  if (snap?.state === 'SELLERS_EXPANDING' || snap?.state === 'BUYERS_EXPANDING') {
+    return label(snap.state);
+  }
+  return label(snap?.state || 'NEUTRAL');
+}
+
+function classifySellFight(snap, bid) {
+  if (snap?.buyerAbsorption?.detected) return 'BID ABSORPTION · SELLERS ABSORBED';
+  const cancelShare = snap?.context?.bidCancellationShare ?? bid?.cancelledPercentile / 100;
+  if ((bid?.cancelledPercentile ?? 0) >= 90 || cancelShare >= 0.72) return 'BID CANCELLATION SURGE';
+  if (String(snap?.state || '').includes('VACUUM') && String(snap.state).includes('DOWNSIDE')) {
+    return 'BID LIQUIDITY WITHDRAWING';
+  }
+  if (snap?.state === 'PASSIVE_BUYERS_DEFENDING') return 'BUYERS DEFENDING';
+  if (snap?.state === 'SELLERS_EXPANDING' || snap?.state === 'BUYERS_EXPANDING') {
+    return label(snap.state);
+  }
+  return label(snap?.state || 'NEUTRAL');
+}
+
+function coverageNote(snap) {
+  const net = snap?.netLiquidity;
+  if (!net) return '';
+  const avail = Number(net.availableMs);
+  const win = Number(net.windowMs) || FIGHT_WINDOW_SEC * 1000;
+  if (!Number.isFinite(avail) || net.coverageComplete || avail >= win - 2000) return '';
+  const sec = Math.max(0, Math.round(avail / 1000));
+  return `${sec < 60 ? `${sec}s` : `${Math.round(sec / 60)}m`} of ${FIGHT_TF}`;
+}
+
+function renderClassicFight(snap) {
+  if (!el.classicFight) return;
+  if (!snap) {
+    el.classicFight.innerHTML =
+      '<div class="classic-fight"><div class="fight-card buy"><div class="flow"><span class="agg">Aggressive buyers</span><span class="arrow">→</span><span class="pas">Passive asks</span></div><p class="pl-empty">Waiting for book…</p></div><div class="fight-card sell"><div class="flow"><span class="agg">Aggressive sellers</span><span class="arrow">→</span><span class="pas">Passive bids</span></div><p class="pl-empty">Waiting for book…</p></div></div>';
+    return;
+  }
+
+  const ask = snap.ask;
+  const bid = snap.bid;
+  const flowOk = state.fightFlow.symbol === state.symbol;
+  const aggBuy = flowOk ? state.fightFlow.aggressiveBuy : ask?.consumedNotional ?? 0;
+  const aggSell = flowOk ? state.fightFlow.aggressiveSell : bid?.consumedNotional ?? 0;
+
+  const buyExecuted = ask?.consumedNotional ?? 0;
+  const buyCancelled = ask?.cancelledNotional ?? 0;
+  const buyRefill = ask?.replenishedNotional ?? 0;
+  const buyLiq = ask?.depthNotional ?? ask?.nearDepthNotional ?? 0;
+  const buyAbsorbed = Math.min(aggBuy, buyExecuted, buyRefill);
+
+  const sellExecuted = bid?.consumedNotional ?? 0;
+  const sellCancelled = bid?.cancelledNotional ?? 0;
+  const sellRefill = bid?.replenishedNotional ?? 0;
+  const sellLiq = bid?.depthNotional ?? bid?.nearDepthNotional ?? 0;
+  const sellAbsorbed = Math.min(aggSell, sellExecuted, sellRefill);
+
+  const buyMeter = battleShare({
+    attackScore: bookConsumptionPerMinute(aggBuy, FIGHT_WINDOW_SEC, buyLiq),
+    executionRatio:
+      buyExecuted + buyCancelled > 0 ? buyExecuted / Math.max(buyExecuted + buyCancelled, 1e-9) : 0,
+    refillRatio: buyExecuted > 0 ? buyRefill / Math.max(buyExecuted, 1e-9) : 0,
+  });
+  const sellMeter = battleShare({
+    attackScore: bookConsumptionPerMinute(aggSell, FIGHT_WINDOW_SEC, sellLiq),
+    executionRatio:
+      sellExecuted + sellCancelled > 0
+        ? sellExecuted / Math.max(sellExecuted + sellCancelled, 1e-9)
+        : 0,
+    refillRatio: sellExecuted > 0 ? sellRefill / Math.max(sellExecuted, 1e-9) : 0,
+  });
+
+  const buyResult = classifyBuyFight(snap, ask);
+  const sellResult = classifySellFight(snap, bid);
+  const askAbsorbing = Boolean(snap.sellerAbsorption?.detected);
+  const bidAbsorbing = Boolean(snap.buyerAbsorption?.detected);
+  const cov = coverageNote(snap);
+  const tf = (flowOk ? state.fightFlow.tf : FIGHT_TF).toUpperCase();
+
+  el.classicFight.innerHTML = `
+    <div class="classic-fight" aria-label="Classic aggressive vs passive summary">
+      <div class="fight-card buy${askAbsorbing ? ' is-absorbing' : ''}">
+        <div class="flow">
+          <span class="agg">Aggressive buyers</span>
+          <span class="arrow">→</span>
+          <span class="pas">Passive asks</span>
+          <span class="tf">${tf} · USD</span>
+        </div>
+        <div class="fight-meter" title="Force (aggression) vs Resistance (resting asks)">
+          <div class="force" style="width:${(buyMeter.force * 100).toFixed(0)}%"></div>
+          <div class="resist" style="width:${(buyMeter.resist * 100).toFixed(0)}%"></div>
+        </div>
+        <div class="fight-stats">
+          ${fightStat('Aggressive', aggBuy, '', askAbsorbing ? 'ABSORBED' : '')}
+          ${fightStat('Ask liq', buyLiq, 'pas', askAbsorbing ? 'ABSORBING' : '')}
+          ${fightStat('Executed', buyExecuted, 'exec', '', cov)}
+          ${fightStat('Cancelled', buyCancelled, 'cancel', '', cov)}
+          ${fightStat('Refilled', buyRefill, 'refill', '', cov)}
+          ${fightStat('Absorbed', buyAbsorbed, 'absorb', askAbsorbing ? 'ACTIVE' : '', cov)}
+        </div>
+        <div class="fight-result ${fightResultClass(buyResult)}">${buyResult}</div>
+        <div class="fight-hint">Absorbed = min(aggression, executed, refilled) — size soaked by asks (est.).</div>
+      </div>
+      <div class="fight-card sell${bidAbsorbing ? ' is-absorbing' : ''}">
+        <div class="flow">
+          <span class="agg">Aggressive sellers</span>
+          <span class="arrow">→</span>
+          <span class="pas">Passive bids</span>
+          <span class="tf">${tf} · USD</span>
+        </div>
+        <div class="fight-meter" title="Force (aggression) vs Resistance (resting bids)">
+          <div class="force" style="width:${(sellMeter.force * 100).toFixed(0)}%"></div>
+          <div class="resist" style="width:${(sellMeter.resist * 100).toFixed(0)}%"></div>
+        </div>
+        <div class="fight-stats">
+          ${fightStat('Aggressive', aggSell, '', bidAbsorbing ? 'ABSORBED' : '')}
+          ${fightStat('Bid liq', sellLiq, 'pas', bidAbsorbing ? 'ABSORBING' : '')}
+          ${fightStat('Executed', sellExecuted, 'exec', '', cov)}
+          ${fightStat('Cancelled', sellCancelled, 'cancel', '', cov)}
+          ${fightStat('Refilled', sellRefill, 'refill', '', cov)}
+          ${fightStat('Absorbed', sellAbsorbed, 'absorb', bidAbsorbing ? 'ACTIVE' : '', cov)}
+        </div>
+        <div class="fight-result ${fightResultClass(sellResult)}">${sellResult}</div>
+        <div class="fight-hint">Absorbed = min(aggression, executed, refilled) — size soaked by bids (est.).</div>
+      </div>
+    </div>`;
 }
 
 function metric(key, value, cls = '', title = '') {
@@ -294,101 +422,6 @@ function pctCls(percentile) {
 function pct(percentile) {
   const p = Number(percentile);
   return Number.isFinite(p) ? `${Math.round(p)}th` : '—';
-}
-
-function signedUsd(value) {
-  const n = Number(value) || 0;
-  return `${n > 0 ? '+' : ''}${fmtUsd(n)}`;
-}
-
-function signedPercent(value, reliable) {
-  if (!reliable || value == null || !Number.isFinite(value)) return 'unreliable base';
-  return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
-}
-
-function netTone(side) {
-  const stateName = String(side?.state ?? 'LOW_CONFIDENCE');
-  if (stateName.includes('GROWING')) return 'buy';
-  if (stateName.includes('SHRINKING')) return 'sell';
-  return stateName === 'LOW_CONFIDENCE' ? 'low' : '';
-}
-
-function renderNetLiquidity(snap) {
-  if (!el.net) return;
-  const net = snap?.netLiquidity ?? null;
-  if (!net) {
-    el.net.innerHTML = card('Net liquidity', '<p class="pl-empty">collecting depth history…</p>');
-    return;
-  }
-  const side = (value, name) => `<div class="pl-net-side">
-    <h4 class="${name === 'BID' ? 'buy' : 'sell'}">${name}</h4>
-    <div class="pl-metrics">
-      ${metric('Starting', fmtUsd(value.startingDepth))}
-      ${metric('Current', fmtUsd(value.currentDepth))}
-      ${metric('Net change', signedUsd(value.bookNetChange), netTone(value))}
-      ${metric('Change', signedPercent(value.netChangePercent, value.percentageReliable), netTone(value))}
-      ${metric('New liquidity', signedUsd(value.newAdded), 'buy')}
-      ${metric('Replenished', signedUsd(value.replenished), 'buy')}
-      ${metric('Cancelled', signedUsd(-value.cancelled), 'sell')}
-      ${metric('Consumed', signedUsd(-value.consumed), 'sell')}
-      ${metric('Velocity', `${signedUsd(value.velocityPerSec)}/s`, netTone(value))}
-      ${metric('State', label(value.state), netTone(value))}
-      ${metric('Primary cause', label(value.primaryCause))}
-    </div>
-  </div>`;
-  const near = net.near10Bps;
-  const imbalance = net.liquidityChangeImbalance;
-  const flags = net.flags?.length
-    ? `<div class="pl-net-flags">${net.flags.map((flag) => `<span>${label(flag)}</span>`).join('')}</div>`
-    : '';
-  const windowLabel = net.windowMs >= 60_000
-    ? `${Math.round(net.windowMs / 60_000)}m`
-    : `${Math.round(net.windowMs / 1_000)}s`;
-  el.net.innerHTML = card(
-    `Net liquidity <span class="muted">${windowLabel}</span>`,
-    `<div class="pl-sides">${side(net.bid, 'BID')}${side(net.ask, 'ASK')}</div>
-     <div class="pl-net-summary">
-       ${metric('Near 10bps bid', signedUsd(near.bid.behavioralNetChange), netTone(near.bid))}
-       ${metric('Near 10bps ask', signedUsd(near.ask.behavioralNetChange), netTone(near.ask))}
-       ${metric('Change imbalance', signedUsd(imbalance), imbalance >= 0 ? 'buy' : 'sell')}
-       <p>${net.interpretation}</p>
-     </div>${flags}`,
-  );
-}
-
-function renderBands(snap) {
-  if (!el.bands) return;
-  const bands = snap?.bands ?? [];
-  if (!bands.length) {
-    el.bands.innerHTML = card('Liquidity bands', '<p class="pl-empty">—</p>');
-    return;
-  }
-  const rows = bands
-    .map((band) => {
-      const total = band.bidNotional + band.askNotional;
-      const bidShare = total > 0 ? (band.bidNotional / total) * 100 : 50;
-      return `<div class="pl-band">
-        <span class="pl-band-label">${band.label}</span>
-        <span class="pl-band-bar"><i style="width:${bidShare.toFixed(1)}%"></i></span>
-        <span class="pl-band-val buy">${fmtUsd(band.bidNotional)}</span>
-        <span class="pl-band-val sell">${fmtUsd(band.askNotional)}</span>
-      </div>`;
-    })
-    .join('');
-  const cuts = (snap.imbalanceCuts ?? [])
-    .map((cut) =>
-      metric(
-        `${cut.withinBps}bps imbalance`,
-        cut.imbalance.toFixed(2),
-        cut.imbalance >= 0 ? 'pos' : 'neg',
-        `bid ${fmtUsd(cut.bidNotional)} vs ask ${fmtUsd(cut.askNotional)}`,
-      ),
-    )
-    .join('');
-  el.bands.innerHTML = card(
-    'Liquidity bands <span class="muted">bid / ask</span>',
-    `<div class="pl-bands">${rows}</div><div class="pl-metrics">${cuts}</div>`,
-  );
 }
 
 function renderSides(snap) {
@@ -421,188 +454,4 @@ function renderSides(snap) {
     `Passive strength <span class="muted">buyers ${Math.round(snap.passiveBuyerStrength)} · sellers ${Math.round(snap.passiveSellerStrength)}</span>`,
     `<div class="pl-sides">${side(snap.bid, 'BIDS')}${side(snap.ask, 'ASKS')}</div>`,
   );
-}
-
-function renderAggression(snap) {
-  if (!el.aggression) return;
-  if (!snap) {
-    el.aggression.innerHTML = card('Aggression vs liquidity', '<p class="pl-empty">—</p>');
-    return;
-  }
-  const p = snap.aggressionVsLiquidity;
-  const step = (name, measure) =>
-    `<div class="pl-step">
-      <span class="pl-step-name">${name}</span>
-      <span class="pl-step-val">${fmtUsd(measure.raw)}</span>
-      <span class="pl-step-pct ${pctCls(measure.percentile)}">${pct(measure.percentile)}</span>
-    </div>`;
-
-  const evr = snap.effortVsResult;
-  const vacuum = `${Math.round(snap.upsideVacuum.score)} up · ${Math.round(snap.downsideVacuum.score)} down`;
-
-  el.aggression.innerHTML = card(
-    `Aggression vs liquidity <span class="muted">${p.aggressiveSide}</span>`,
-    `<div class="pl-steps">
-      ${step('Aggression', p.aggression)}
-      ${step('Consumption', p.consumption)}
-      ${step('Replenishment', p.replenishment)}
-      ${step('Withdrawal', p.withdrawal)}
-      <div class="pl-step">
-        <span class="pl-step-name">Displacement</span>
-        <span class="pl-step-val">${p.displacementBps.raw.toFixed(1)} bps</span>
-        <span class="pl-step-pct ${pctCls(p.displacementBps.percentile)}">${pct(p.displacementBps.percentile)}</span>
-      </div>
-    </div>
-    <div class="pl-metrics">
-      ${metric('Seller absorption', `${Math.round(snap.sellerAbsorption.score)}/100`, snap.sellerAbsorption.detected ? 'extreme' : '')}
-      ${metric('Buyer absorption', `${Math.round(snap.buyerAbsorption.score)}/100`, snap.buyerAbsorption.detected ? 'extreme' : '')}
-      ${metric('Vacuum score', vacuum)}
-      ${metric('Effort', `${Math.round(evr.effortScore)}/100`)}
-      ${metric('Result', `${Math.round(evr.resultScore)}/100`)}
-      ${metric('Passive defense', `${Math.round(evr.passiveDefenseScore)}/100`)}
-      ${evr.labels.length ? metric('Read', evr.labels.map(label).join(' · ')) : ''}
-    </div>`,
-  );
-}
-
-function renderWalls(snap) {
-  if (!el.walls) return;
-  const walls = (snap?.walls ?? []).slice(0, 10);
-  const zones = (snap?.zones ?? []).slice(0, 4);
-  if (!walls.length && !zones.length) {
-    el.walls.innerHTML = card('Walls & structure', '<p class="pl-empty">no statistically unusual levels</p>');
-    return;
-  }
-  const wallRows = walls
-    .map((wall) => {
-      const selected =
-        state.selected &&
-        state.selected.side === wall.side &&
-        state.selected.price === wall.price;
-      return `<div class="pl-wall${selected ? ' selected' : ''}" data-pl-side="${wall.side}" data-pl-price="${wall.price}">
-        <span class="pl-wall-side ${wall.side === 'BID' ? 'buy' : 'sell'}">${wall.side}</span>
-        <span class="pl-wall-price">${fmtPrice(wall.price)}</span>
-        <span class="pl-wall-size">${fmtUsd(wall.notional)}</span>
-        <span class="pl-wall-dist">${wall.distanceBps.toFixed(1)}bps</span>
-        <span class="pl-wall-score" title="strength ${Math.round(wall.strength)} · reliability ${Math.round(wall.reliability)} · size ${pct(wall.sizePercentile)} · age ${fmtAge(wall.ageMs)}">${Math.round(wall.strength)}/${Math.round(wall.reliability)}</span>
-        <span class="pl-wall-life ${wall.lifecycle === 'WITHDRAWN' || wall.lifecycle === 'BROKEN' ? 'bad' : ''}">${label(wall.lifecycle)}</span>
-        ${wall.labels.length ? `<span class="pl-wall-flag" title="${wall.labels.map(label).join(' · ')}">!</span>` : ''}
-      </div>`;
-    })
-    .join('');
-  const zoneRows = zones
-    .map(
-      (zone) => `<div class="pl-zone">
-        <span class="pl-zone-state ${zone.side === 'BID' ? 'buy' : 'sell'}">${label(zone.state)}</span>
-        <span>${fmtPrice(zone.priceMin)}–${fmtPrice(zone.priceMax)}</span>
-        <span class="muted">${zone.defendedTests}/${zone.testCount} defended · ratio ${zone.replenishmentRatio.toFixed(2)} · ${Math.round(zone.strength)}/100</span>
-      </div>`,
-    )
-    .join('');
-
-  el.walls.innerHTML = card(
-    'Walls & structure <span class="muted">strength / reliability</span>',
-    `<div class="pl-walls">${wallRows}</div>${zoneRows ? `<div class="pl-zones">${zoneRows}</div>` : ''}`,
-  );
-}
-
-function renderWhy(snap) {
-  if (!el.why) return;
-  const facts = snap?.why ?? [];
-  if (!facts.length) {
-    el.why.innerHTML = card('Why', '<p class="pl-empty">—</p>');
-    return;
-  }
-  const rows = facts
-    .map((f) => {
-      if (f.label === 'Interpretation') {
-        return `<p class="pl-interpretation">${f.value}</p>`;
-      }
-      const band = f.band ? `<span class="pl-band-tag ${String(f.band).toLowerCase()}">${label(f.band)}</span>` : '';
-      const percentile = f.percentile == null ? '' : `<span class="pl-why-pct">${pct(f.percentile)}</span>`;
-      const title = [f.tooltip, f.detail].filter(Boolean).join(' — ');
-      return `<div class="pl-why-row"${title ? ` title="${title.replace(/"/g, '&quot;')}"` : ''}>
-        <span class="pl-why-k">${f.label}</span>
-        <span class="pl-why-v">${f.value}</span>
-        ${percentile}${band}
-      </div>`;
-    })
-    .join('');
-  el.why.innerHTML = card(`Why <span class="muted">${label(snap.state)}</span>`, rows);
-}
-
-function renderLevel(snap) {
-  if (!el.level) return;
-  const detail = state.detail;
-  if (!detail?.level) {
-    el.level.innerHTML = card(
-      'Price level',
-      '<p class="pl-empty">click a wall to inspect its history</p>',
-    );
-    return;
-  }
-  const l = detail.level;
-  const m = detail.memory;
-  const rows = [
-    metric('Price', fmtPrice(l.price)),
-    metric('Side', l.side, l.side === 'BID' ? 'buy' : 'sell'),
-    metric('Current', `${fmtUsd(l.notionalValue)} · ${fmtQty(l.quantity)}`),
-    metric('Max', fmtUsd(l.maxNotional)),
-    metric('Distance', `${l.distanceBps.toFixed(1)}bps`),
-    metric('Age', fmtAge(l.ageMs)),
-    metric('Present', fmtAge(l.presentMs)),
-    metric('Added', fmtUsd(l.addedNotional)),
-    metric('Consumed', fmtUsd(l.consumedNotional)),
-    metric('Cancelled', fmtUsd(l.cancelledNotional)),
-    metric('Replenished', fmtUsd(l.replenishedNotional)),
-    metric('Unresolved', fmtQty(l.unresolvedQuantity), '', 'drops still inside the trade matching window'),
-    metric('Attacks', `${l.attackCount} · ${l.defendedCount} defended`),
-    metric('Replenish ratio', l.replenishmentRatio.toFixed(2)),
-    metric('Persistence', `${Math.round(l.persistenceScore)}/100`),
-    metric('Withdrawal', `${Math.round(l.withdrawalScore)}/100`),
-    metric('Absorption', `${Math.round(l.absorptionScore)}/100`),
-    metric('Size percentile', pct(l.sizePercentile)),
-    metric('Closest approach', `${l.closestApproachBps.toFixed(1)}bps`),
-    metric('State', label(l.state), stateTone(l.state)),
-  ];
-  if (l.approachWithdrawal) {
-    rows.push(metric('Flag', 'APPROACH WITHDRAWAL', 'extreme', 'size was pulled as price closed in'));
-  }
-  if (m) {
-    rows.push(
-      metric('Level memory', `${m.attacks} attacks · ${m.defendedTests} defended`),
-      metric('Absorbed here', fmtUsd(m.totalAggressionAbsorbed)),
-      metric('Defense score', `${Math.round(m.defenseScore)}/100`),
-    );
-  }
-
-  el.level.innerHTML = card(
-    `Price level <span class="muted">${fmtPrice(l.price)} ${l.side}</span>`,
-    `<div class="pl-metrics">${rows.join('')}</div>${timelineHtml(detail.timeline)}`,
-  );
-  void snap;
-}
-
-function timelineHtml(timeline) {
-  const points = Array.isArray(timeline) ? timeline : [];
-  if (points.length < 2) return '';
-  let peak = 0;
-  for (const p of points) peak = Math.max(peak, p.notional);
-  if (peak <= 0) return '';
-  const bars = points
-    .map((p) => {
-      const h = Math.max(2, (p.notional / peak) * 100);
-      const cls =
-        p.event === 'LIQUIDITY_CONSUMED'
-          ? 'consumed'
-          : p.event === 'LIQUIDITY_REPLENISHED'
-            ? 'replenished'
-            : p.event === 'LIQUIDITY_CANCELLED'
-              ? 'cancelled'
-              : '';
-      const time = new Date(p.at).toLocaleTimeString('en-GB');
-      return `<i class="${cls}" style="height:${h.toFixed(1)}%" title="${time} · ${fmtUsd(p.notional)} · ${label(p.event)}"></i>`;
-    })
-    .join('');
-  return `<div class="pl-timeline-wrap"><span class="pl-timeline-label">Level timeline</span><div class="pl-timeline">${bars}</div></div>`;
 }
