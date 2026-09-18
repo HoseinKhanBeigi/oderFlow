@@ -25,26 +25,9 @@ export async function buildSimulator(watch = false): Promise<void> {
   if (watch) {
     const ctx = await esbuild.context(options);
     await ctx.watch();
-    const sweepCtx = await esbuild.context(sweepOptions());
-    await sweepCtx.watch();
     return;
   }
   await esbuild.build(options);
-  await esbuild.build(sweepOptions());
-}
-
-function sweepOptions(): esbuild.BuildOptions {
-  return {
-    absWorkingDir: root,
-    entryPoints: [join(root, 'src/footprint/sweep.ts')],
-    outfile: join(root, 'public/sweep.js'),
-    bundle: true,
-    format: 'esm',
-    platform: 'browser',
-    target: 'es2022',
-    sourcemap: true,
-    logLevel: 'warning',
-  };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

@@ -32,11 +32,11 @@
 
   <div class="alert-panel hidden" id="alert-panel" aria-live="polite">
     <div class="alert-panel-head">
-      <strong>Session alerts · 5m + 15m sweep</strong>
+      <strong>Session alerts · 5m + 15m</strong>
       <button type="button" class="alert-panel-clear" id="alert-clear">Clear</button>
     </div>
     <div class="alert-panel-list" id="alert-list">
-      <div class="alert-empty">No alerts yet — ping on 5m / 15m sweep or acceptance</div>
+      <div class="alert-empty">No alerts yet — ping when the 5m or 15m range is expanding</div>
     </div>
   </div>
   <div class="alert-toasts" id="alert-toasts" aria-live="assertive"></div>
@@ -91,13 +91,13 @@
           <span class="legend-item fp-rest-ask" title="Resting asks on the ladder — passive sell orders waiting">Passive sell (resting asks)</span>
           <span class="legend-item fp-withdraw" title="Passive orders pulled from the book without being traded against">Cancelled / pulled ✕</span>
           <span class="legend-item fp-dist">Distribution at highs</span>
-          <span class="legend-item fp-hunt">Sweep / rejection</span>
+          <span class="legend-item fp-hunt">Stop hunt</span>
         </div>
         <div id="fp-grid" class="fp-grid" aria-label="Footprint charts"></div>
       </section>
     </main>
   </div>
 
-  <script src="/app.js?v=sweep-4" type="module"></script>
+  <script src="/app.js?v=nolast3-7" type="module"></script>
 </body>
 </html>
