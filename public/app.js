@@ -2992,9 +2992,11 @@ function evaluateSymbolAlertsOnTf(symbol, tfMinutes) {
   const story = strategyStoryForBar(bars, idx);
   if (!story) return;
   const kind =
-    story.line1 === 'Stop hunt' ? { key: story.line2.includes('low') ? 'hunt-low' : 'hunt-high', side: story.badge === 'LONG' ? 'buy' : 'sell' }
-      : story.line1 === 'Distribution at highs' ? { key: 'distribution', side: 'sell' }
-        : null;
+    story.line1 === 'Buyers in control' ? { key: 'buyers', side: 'buy' }
+      : story.line1 === 'Sellers in control' ? { key: 'sellers', side: 'sell' }
+        : story.line1 === 'Stop hunt' ? { key: story.line2.includes('low') ? 'hunt-low' : 'hunt-high', side: story.badge === 'LONG' ? 'buy' : 'sell' }
+          : story.line1 === 'Distribution at highs' ? { key: 'distribution', side: 'sell' }
+            : null;
   if (!kind) return;
 
   const label = alertLabel(symbol);
