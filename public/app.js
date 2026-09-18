@@ -2810,8 +2810,8 @@ function applyFootprintTick(ev) {
 
 // ═══════ Footprint Alerts (session toasts, all coins) ═══════
 
-const ALERT_TF_MINUTES = [30, 60]; // evaluate stories on 30m and 1h bars
-const ALERT_KEEP_1M = 720; // ~12h of 1m bars → enough prior for 30m / 1h vacuum context
+const ALERT_TF_MINUTES = [15, 30, 60]; // evaluate stories on 15m, 30m and 1h bars
+const ALERT_KEEP_1M = 720; // ~12h of 1m bars → enough prior for 15m / 30m / 1h vacuum context
 const ALERT_MAX_SESSION = 80;
 const ALERT_TOAST_MS = 7000;
 const alertFpStore = {};
@@ -2968,11 +2968,9 @@ function evaluateSymbolAlertsOnTf(symbol, tfMinutes) {
   const story = strategyStoryForBar(bars, idx);
   if (!story) return;
   const kind =
-    story.line1 === 'Buyers in control' ? { key: 'buyers', side: 'buy' }
-      : story.line1 === 'Sellers in control' ? { key: 'sellers', side: 'sell' }
-        : story.line1 === 'Stop hunt' ? { key: story.line2.includes('low') ? 'hunt-low' : 'hunt-high', side: story.badge === 'LONG' ? 'buy' : 'sell' }
-          : story.line1 === 'Distribution at highs' ? { key: 'distribution', side: 'sell' }
-            : null;
+    story.line1 === 'Stop hunt' ? { key: story.line2.includes('low') ? 'hunt-low' : 'hunt-high', side: story.badge === 'LONG' ? 'buy' : 'sell' }
+      : story.line1 === 'Distribution at highs' ? { key: 'distribution', side: 'sell' }
+        : null;
   if (!kind) return;
 
   const label = alertLabel(symbol);
@@ -3037,7 +3035,7 @@ function renderAlertList() {
   if (count) count.textContent = String(sessionAlerts.length);
   if (!list) return;
   if (!sessionAlerts.length) {
-    list.innerHTML = '<div class="alert-empty">No alerts yet — ping when the 30m or 1h range is expanding</div>';
+    list.innerHTML = '<div class="alert-empty">No alerts yet — ping when the 15m, 30m or 1h range is expanding</div>';
     return;
   }
   list.innerHTML = sessionAlerts.map((a) => `
