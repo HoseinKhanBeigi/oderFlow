@@ -2810,8 +2810,8 @@ function applyFootprintTick(ev) {
 
 // ═══════ Footprint Alerts (session toasts, all coins) ═══════
 
-const ALERT_TF_MINUTES = [5, 15, 30]; // stop-hunt (and other alert stories) on 5m, 15m and 30m
-const ALERT_KEEP_1M = 720; // ~12h of 1m bars → enough prior for 5m / 15m / 30m vacuum context
+const ALERT_TF_MINUTES = [5, 15, 30, 60]; // stop-hunt (and other alert stories) on 5m, 15m, 30m and 1h
+const ALERT_KEEP_1M = 1440; // ~24h of 1m bars → enough prior for 5m / 15m / 30m / 1h vacuum context
 const ALERT_MAX_SESSION = 80;
 const ALERT_TOAST_MS = 7000;
 const alertFpStore = {};
@@ -3068,7 +3068,7 @@ function renderAlertList() {
   if (count) count.textContent = String(sessionAlerts.length);
   if (!list) return;
   if (!sessionAlerts.length) {
-    list.innerHTML = '<div class="alert-empty">No alerts yet — ping when the 5m, 15m or 30m range is expanding</div>';
+    list.innerHTML = '<div class="alert-empty">No alerts yet — ping when the 5m, 15m, 30m or 1h range is expanding</div>';
     return;
   }
   list.innerHTML = sessionAlerts.map((a) => `
