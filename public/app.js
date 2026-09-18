@@ -2818,6 +2818,28 @@ const alertFpStore = {};
 const alertSeen = new Map();
 const sessionAlerts = [];
 let alertUiBound = false;
+let extensionBridgeReady = false;
+const OF_ALERT_SOURCE = 'oderflow-alerts';
+
+function publishFpAlert(alert) {
+  try {
+    window.postMessage({ source: OF_ALERT_SOURCE, type: 'alert', alert }, window.location.origin);
+  } catch { /* ignore */ }
+}
+
+function publishFpAlertSnapshot() {
+  try {
+    window.postMessage({ source: OF_ALERT_SOURCE, type: 'snapshot', alerts: sessionAlerts.slice(0, ALERT_MAX_SESSION) }, window.location.origin);
+  } catch { /* ignore */ }
+}
+
+window.addEventListener('message', (event) => {
+  if (event.source !== window || event.origin !== window.location.origin) return;
+  const data = event.data;
+  if (!data || data.source !== OF_ALERT_SOURCE) return;
+  if (data.type === 'bridge-ready') extensionBridgeReady = true;
+  if (data.type === 'request-snapshot') publishFpAlertSnapshot();
+});
 
 function alertStoreKey(symbol, exchange) {
   return `${footprintMarket()}_${symbol}_${exchange}_1`;
@@ -2932,6 +2954,7 @@ function barIsVolatile(bar, prior = []) {
 }
 
 function pingVolatility(alert) {
+  if (extensionBridgeReady) return;
   if (typeof Notification === 'undefined') return;
   const title = alert.title || 'Volatility';
   const body = alert.detail || '';
@@ -2953,6 +2976,7 @@ function pushFpAlert(alert) {
   renderAlertList();
   showAlertToast(alert);
   pingVolatility(alert);
+  publishFpAlert(alert);
 }
 
 function evaluateSymbolAlerts(symbol) {
@@ -3004,6 +3028,7 @@ function setupAlertUi() {
   clearBtn?.addEventListener('click', () => {
     sessionAlerts.length = 0;
     renderAlertList();
+    publishFpAlertSnapshot();
   });
   list?.addEventListener('click', (e) => {
     const row = e.target.closest('[data-alert-symbol]');
@@ -3022,10 +3047,16 @@ function setupAlertUi() {
   });
 }
 
+function bitunixTradeUrl(symbol) {
+  const pair = String(symbol || '').toUpperCase();
+  if (!pair) return '';
+  return `https://www.bitunix.com/contract-trade/${pair}`;
+}
+
 function openAlertSymbol(symbol) {
   if (!symbol) return;
-  if (!visibleCoins().some((c) => c.symbol === symbol)) return;
-  openCoinBrowserTab(symbol);
+  const url = bitunixTradeUrl(symbol);
+  if (url) window.open(url, '_blank', 'noopener,noreferrer');
   document.getElementById('alert-panel')?.classList.add('hidden');
 }
 
