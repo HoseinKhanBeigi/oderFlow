@@ -3,3 +3,4 @@ export * from './tick-size.js';
 export * from './aggregator.js';
 export * from './rollup.js';
 export * from './structure.js';
+export * from './sweep.js';

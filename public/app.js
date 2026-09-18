@@ -1,3 +1,5 @@
+import { detectLiquiditySweep, formatSweepAlert, sweepStory } from './sweep.js?v=sweep-1';
+
 const _noopEl = {
   textContent: '',
   innerHTML: '',
@@ -1607,6 +1609,7 @@ function seedFootprintKlines() {
   void (async () => {
     if (fpHistoryEnabled) await loadFootprintHistory();
     await seedFromKlines();
+    await seedAlertKlines();
   })();
 }
 
@@ -2001,22 +2004,6 @@ function absorptionReversalKind(bar, next) {
   return null;
 }
 
-/** Sweep of prior swing high/low (stop liquidity), then close back through the level. */
-function stopHuntKind(bar, prior) {
-  const { support, resistance } = priorSwingLevels(prior);
-  if (support == null || resistance == null || resistance <= support) return null;
-  const atr = recentBarAtr(prior, bar);
-  const range = bar.high - bar.low;
-  if (range <= 0) return null;
-  const closePos = (bar.close - bar.low) / range;
-  const band = Math.max((resistance - support) * 0.08, atr * 0.35);
-  // Sweep highs → reverse down
-  if (bar.high >= resistance + band * 0.2 && bar.close < resistance && closePos <= 0.42) return 'HIGH';
-  // Sweep lows → reverse up
-  if (bar.low <= support - band * 0.2 && bar.close > support && closePos >= 0.58) return 'LOW';
-  return null;
-}
-
 /** Distribution near highs: liquidity taken above resistance, buyers fade, reverse down. */
 function distributionAtHighsKind(bar, next, prior) {
   const location = barLocationFromPrior(bar, prior);
@@ -2060,9 +2047,12 @@ function strategyStoryForBar(allBars, idx) {
   else if (location === 'BELOW_SUPPORT' && score < 0) setup = 'BREAKDOWN';
   else if (location === 'MID_RANGE' && Math.abs(score) >= 28) setup = 'FLOW_CONTINUATION';
 
-  const hunt = stopHuntKind(bar, prior);
-  if (hunt === 'HIGH') return { badge: 'SHORT', line1: 'Stop hunt', line2: 'swept high · reverse', color: '#e879f9' };
-  if (hunt === 'LOW') return { badge: 'LONG', line1: 'Stop hunt', line2: 'swept low · reverse', color: '#e879f9' };
+  const sweep = detectLiquiditySweep(allBars.slice(0, idx + 1), {
+    timeframeMinutes: chartTfMinutes,
+    config: { staleTfMultiple: 0 },
+  });
+  const sweepLabel = sweepStory(sweep);
+  if (sweepLabel) return sweepLabel;
 
   const dist = distributionAtHighsKind(bar, next, prior);
   if (dist) return { badge: 'SHORT', line1: 'Distribution at highs', line2: 'liq grabbed · reverse', color: '#c084fc' };
@@ -2257,7 +2247,7 @@ function drawFootprint(symbol = selectedSymbol) {
   if (view.panBars >= 0.15) {
     ctx.fillText('drag / scroll · Latest jumps to live', leftPad + 2, 8);
   } else {
-    ctx.fillText('Stop hunt · distribution · vacuum', leftPad + 2, 8);
+    ctx.fillText('Sweep / rejection · distribution · vacuum', leftPad + 2, 8);
   }
 
   for (let i = 0; i < visible.length; i++) {
@@ -2815,6 +2805,8 @@ const ALERT_KEEP_1M = 720; // ~12h of 1m bars → enough prior for 5m / 15m vacu
 const ALERT_MAX_SESSION = 80;
 const ALERT_TOAST_MS = 7000;
 const alertFpStore = {};
+const alertKlineStore = {};
+let alertKlineReq = 0;
 const alertSeen = new Map();
 const sessionAlerts = [];
 let alertUiBound = false;
@@ -2858,6 +2850,60 @@ function trimAlertStore(store) {
   for (let i = 0; i < drop; i++) store.delete(times[i]);
 }
 
+function getAlertKlineSeed(symbol, tf) {
+  const key = `${footprintMarket()}_${symbol}_${tf}`;
+  if (!alertKlineStore[key]) alertKlineStore[key] = new Map();
+  return alertKlineStore[key];
+}
+
+async function seedAlertKlines() {
+  const coins = visibleCoins();
+  const exchange = klineExchange();
+  const market = footprintMarket();
+  const req = ++alertKlineReq;
+  const jobs = [];
+  for (const coin of coins) {
+    for (const tf of ALERT_TF_MINUTES) jobs.push({ symbol: coin.symbol, tf });
+  }
+  await mapPool(jobs, 4, async ({ symbol, tf }) => {
+    if (req !== alertKlineReq) return;
+    try {
+      const interval = tf % 60 === 0 ? `${tf / 60}h` : `${tf}m`;
+      const rows = await fetch(
+        `/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&exchange=${encodeURIComponent(exchange)}&market=${encodeURIComponent(market)}&limit=48`,
+      ).then((r) => r.json());
+      if (req !== alertKlineReq) return;
+      if (!Array.isArray(rows) || !rows.length) return;
+      const seed = getAlertKlineSeed(symbol, tf);
+      seed.clear();
+      for (const k of rows) {
+        const time = Math.floor(Number(k[0]) / 1000);
+        const open = Number(k[1]);
+        const high = Number(k[2]);
+        const low = Number(k[3]);
+        const close = Number(k[4]);
+        if (![time, open, high, low, close].every(Number.isFinite)) continue;
+        const bar = {
+          time,
+          open,
+          high,
+          low,
+          close,
+          levels: new Map(),
+          totalBuy: 0,
+          totalSell: 0,
+        };
+        fillKlineProxyLevels(bar, Number(k[5] ?? 0), Number(k[7] ?? k[6] ?? 0), Number(k[10] ?? k[9] ?? NaN));
+        seed.set(time, bar);
+      }
+    } catch {
+      /* live 1m rollup still used */
+    }
+  });
+  if (req !== alertKlineReq) return;
+  for (const coin of visibleCoins()) evaluateSymbolAlerts(coin.symbol);
+}
+
 function ingestAlertBar(symbol, exchange, wire) {
   const store = getAlertStore(symbol, exchange);
   const bar = wireBarToFp(wire);
@@ -2880,18 +2926,23 @@ function alertBarsForSymbol(symbol, tf = chartTfMinutes) {
   }
   const bucket = tf * 60;
   const out = new Map();
+  for (const bar of getAlertKlineSeed(symbol, tf).values()) {
+    out.set(bar.time, cloneFpBar(bar));
+  }
+  const live = new Map();
   for (const ex of exchanges) {
     for (const bar of getAlertStore(symbol, ex).values()) {
       const t = bar.time - (bar.time % bucket);
-      if (!out.has(t)) {
+      if (!live.has(t)) {
         const c = cloneFpBar(bar);
         c.time = t;
-        out.set(t, c);
+        live.set(t, c);
       } else {
-        mergeFootprintBar(out.get(t), bar);
+        mergeFootprintBar(live.get(t), bar);
       }
     }
   }
+  for (const [t, bar] of live) out.set(t, bar);
   return [...out.values()].sort((a, b) => a.time - b.time);
 }
 
@@ -2935,24 +2986,6 @@ function canFireAlert(key, cooldownMs = 90_000) {
   return true;
 }
 
-function barIsVolatile(bar, prior = []) {
-  if (!bar) return false;
-  const mid = bar.close || bar.open || 0;
-  if (!(mid > 0)) return false;
-  const range = Math.max(0, (bar.high ?? bar.close) - (bar.low ?? bar.close));
-  const body = Math.abs((bar.close ?? mid) - (bar.open ?? mid));
-  const rangePct = (range / mid) * 100;
-  const bodyPct = (body / mid) * 100;
-  if (bodyPct >= 0.35) return true;
-  if (rangePct >= 0.6) return true;
-  const sample = prior.slice(-14);
-  if (sample.length >= 5) {
-    const atr = sample.reduce((s, b) => s + Math.max(0, (b.high ?? b.close) - (b.low ?? b.close)), 0) / sample.length;
-    if (atr > 0 && range >= atr * 1.25) return true;
-  }
-  return false;
-}
-
 function pingVolatility(alert) {
   if (extensionBridgeReady) return;
   if (typeof Notification === 'undefined') return;
@@ -2988,27 +3021,21 @@ function evaluateSymbolAlertsOnTf(symbol, tfMinutes) {
   if (!bars.length) return;
   const idx = bars.length - 1;
   const bar = bars[idx];
-  if (!barIsVolatile(bar, bars.slice(0, idx))) return;
-  const story = strategyStoryForBar(bars, idx);
-  if (!story) return;
-  const kind =
-    story.line1 === 'Stop hunt' ? { key: story.line2.includes('low') ? 'hunt-low' : 'hunt-high', side: story.badge === 'LONG' ? 'buy' : 'sell' }
-      : story.line1 === 'Distribution at highs' ? { key: 'distribution', side: 'sell' }
-        : null;
-  if (!kind) return;
+  const sweep = detectLiquiditySweep(bars, { timeframeMinutes: tfMinutes });
+  const copy = formatSweepAlert(sweep, alertLabel(symbol));
+  if (!copy) return;
 
-  const label = alertLabel(symbol);
   const tf = tfShort(tfMinutes);
   const barKey = bar.time;
-  if (!canFireAlert(`${symbol}:story:${kind.key}:${tf}:${barKey}`, 120_000)) return;
+  if (!canFireAlert(`${symbol}:sweep:${copy.kind}:${tf}:${barKey}`, 120_000)) return;
 
   pushFpAlert({
-    id: `${symbol}-${kind.key}-${tf}-${barKey}`,
+    id: `${symbol}-${copy.kind}-${tf}-${barKey}`,
     symbol,
-    kind: kind.key,
-    side: kind.side,
-    title: `${label} · ${story.line1}`,
-    detail: `${story.line2 || 'setup'} · ${tf} · range expanding`,
+    kind: copy.kind,
+    side: copy.side,
+    title: copy.title,
+    detail: copy.detail,
     at: Date.now(),
   });
 }
@@ -3066,7 +3093,7 @@ function renderAlertList() {
   if (count) count.textContent = String(sessionAlerts.length);
   if (!list) return;
   if (!sessionAlerts.length) {
-    list.innerHTML = '<div class="alert-empty">No alerts yet — ping when the 5m or 15m range is expanding</div>';
+    list.innerHTML = '<div class="alert-empty">No alerts yet — ping on 5m / 15m sweep or acceptance</div>';
     return;
   }
   list.innerHTML = sessionAlerts.map((a) => `
