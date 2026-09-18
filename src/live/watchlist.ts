@@ -8,7 +8,6 @@ export interface WatchCoin {
 }
 
 export const DEFAULT_WATCHLIST: WatchCoin[] = [
-  { symbol: 'BTCUSDT', label: 'BTC', minUsd: 10_000, venue: 'crypto' },
   { symbol: 'ETHUSDT', label: 'ETH', minUsd: 5_000, venue: 'crypto' },
   { symbol: 'AVAXUSDT', label: 'AVAX', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'NEARUSDT', label: 'NEAR', minUsd: 1_000, venue: 'crypto' },
@@ -18,7 +17,6 @@ export const DEFAULT_WATCHLIST: WatchCoin[] = [
   { symbol: 'XRPUSDT', label: 'XRP', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'DOGEUSDT', label: 'DOGE', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'SUIUSDT', label: 'SUI', minUsd: 1_000, venue: 'crypto' },
-  { symbol: 'FARTCOINUSDT', label: 'FARTCOIN', minUsd: 500, venue: 'crypto' },
   { symbol: 'PAXGUSDT', label: 'PAXG', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'HYPEUSDT', label: 'HYPE', minUsd: 1_000, venue: 'crypto' },
   { symbol: 'PUMPUSDT', label: 'PUMP', minUsd: 500, venue: 'crypto' },

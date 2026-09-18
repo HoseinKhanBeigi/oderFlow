@@ -25,7 +25,7 @@ const MAX_EVENTS = 80;
 let eventCount = 0;
 
 let selectedTf = '10s';
-let selectedSymbol = 'BTCUSDT';
+let selectedSymbol = 'ETHUSDT';
 let selectedExchange = 'all';
 let dataMode = 'perp'; // perp | spot | compare
 let imbalanceRatio = 3;
